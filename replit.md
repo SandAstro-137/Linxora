@@ -1,10 +1,10 @@
-# FreelanceHub - Professional Freelancer Marketplace
+# Pixelcut - Professional Freelancer Job Marketplace
 
-A full-stack freelancer marketplace platform with role-based access control, crypto wallet integration, and Discord synchronization.
+A full-stack job marketplace platform built with React, Express, and MongoDB Atlas. Features role-based access control, team collaboration with profit splitting, crypto wallet integration, and Discord synchronization.
 
 ## Overview
 
-FreelanceHub connects freelancers with customers through a moderated job board system. The platform features secure crypto payments (USDT, BTC, SOL, LTC), real-time Discord integrations, and comprehensive freelancer management tools.
+Pixelcut connects freelancers with customers through a moderated job board system. Freelancers can claim jobs, invite team members to collaborate, and receive equal profit splits. The platform features secure crypto payments (USDT, BTC, SOL, LTC), real-time Discord integrations, and comprehensive freelancer management tools.
 
 ## Features
 
@@ -13,12 +13,17 @@ FreelanceHub connects freelancers with customers through a moderated job board s
 - **Role-based access control**: Freelancer, Customer, Staff, Moderator
 - Session management with secure cookies
 
-### Job Board
-- **Customers** can create job posts (moderation required)
-- **Freelancers** can search and claim jobs
-- **Keyword and category** search functionality
-- **Collaboration system** - invite other freelancers to jobs
-- **Moderation queue** for staff approval
+### Job Board (Marketplace)
+- **Job Listing**: Browse all approved jobs with search and category filters
+- **Job Detail View**: Dedicated page showing full job description, client Discord username, budget, and requirements
+- **Claim Jobs**: Freelancers can request to take available jobs (blue button when eligible)
+- **Team Collaboration**: 
+  - "Offer Team" button appears when a job is already taken
+  - Invite other freelancers to join the team
+  - Profits automatically split equally among all team members (2 people = 50/50, 4 people = 25/25/25/25, etc.)
+  - Visual display of each team member's share and percentage
+- **Job Creation**: Customers can create job posts (requires moderator approval)
+- **Moderation Queue**: Staff and moderators approve/reject pending jobs
 
 ### Crypto Wallet
 - Track balances in USDT, SOL, BTC, and LTC
@@ -51,8 +56,9 @@ FreelanceHub connects freelancers with customers through a moderated job board s
 
 ### Backend
 - **Node.js** with Express
-- **MongoDB** (optional - falls back to in-memory storage)
-- **Discord.js** for Discord integration
+- **MongoDB Atlas** for persistent storage (with in-memory fallback for development)
+- **TypeScript** for type safety
+- **Discord Webhooks** for notifications
 - **Express Session** for authentication
 - **CoinGecko API** for crypto prices
 
@@ -113,8 +119,15 @@ The Replit Discord connector is currently used for app-level Discord integration
 
 ### Jobs
 - `GET /api/jobs` - List active jobs
-- `POST /api/jobs` - Create new job
-- `POST /api/jobs/:id/claim` - Claim a job
+- `GET /api/jobs/:id` - Get job details with enriched data (customer info, collaborators, profit splits)
+- `POST /api/jobs` - Create new job (requires customer role)
+- `POST /api/jobs/:id/claim` - Claim a job (changes status from active to claimed)
+- `POST /api/jobs/:jobId/invite` - Invite freelancer to join team
+
+### Invitations
+- `GET /api/invitations` - Get user's invitations
+- `POST /api/invitations/:id/accept` - Accept team invitation (adds to collaborators)
+- `POST /api/invitations/:id/reject` - Reject team invitation
 
 ### Wallet
 - `GET /api/wallet` - Get user wallet
@@ -134,13 +147,39 @@ The Replit Discord connector is currently used for app-level Discord integration
 
 The application runs on port 5000 and serves both the API and frontend. Hot reload is enabled for development.
 
-## Recent Changes
+## Recent Changes (November 2025)
 
-- Initial project setup with complete schema design
-- Full frontend implementation with all pages and components
-- Backend API with authentication, job management, wallet, and moderation
-- Discord and CoinGecko integrations
-- Demo data seeding for testing
+### New Features Implemented
+- **Job Detail Page** (`/jobs/:id`): 
+  - Full job description and requirements display
+  - Customer Discord username visible to freelancers
+  - Conditional action buttons based on job status and user role
+  - Team member listing with profit split breakdown
+- **Team Collaboration & Profit Splitting**:
+  - Equal profit distribution among all team members
+  - Visual display showing each member's dollar amount and percentage
+  - Team invitation system with Discord notifications
+- **MongoDB Atlas Integration**:
+  - Complete `MongoStorage` class implementing full `IStorage` interface
+  - Automatic fallback to in-memory storage if MongoDB connection fails
+  - Connection pooling and error handling
+  - Indexes on critical fields (discordId, status, userId, etc.)
+- **Enhanced API Endpoints**:
+  - Enriched `/api/jobs/:id` endpoint returns customer info, collaborator details, and calculated profit splits
+  - User search endpoint for finding team members to invite
+
+### Technical Improvements
+- Fixed TypeScript type errors in storage layer
+- Proper null coalescing for optional fields
+- Improved error messages for MongoDB connection issues
+- Better logging and user feedback for storage backend selection
+
+### UI/UX Enhancements
+- Blue primary button for "Request to Take Job" when eligible
+- Grey secondary button when job is already taken
+- "Offer Team" button appears below for collaboration
+- Clean profit split visualization with avatars and amounts
+- Responsive job detail layout with sidebar for key information
 
 ## Next Phase
 

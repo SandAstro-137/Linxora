@@ -26,7 +26,16 @@ export class MongoStorage implements IStorage {
   private invitations: Collection;
 
   constructor(mongoUri: string) {
-    this.client = new MongoClient(mongoUri);
+    // Add connection options if not already in URI
+    const hasOptions = mongoUri.includes('?');
+    const connectionString = hasOptions 
+      ? mongoUri 
+      : `${mongoUri}${mongoUri.includes('mongodb+srv://') ? '?' : '&'}retryWrites=true&w=majority`;
+    
+    this.client = new MongoClient(connectionString, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+    });
     this.db = this.client.db();
     this.users = this.db.collection('users');
     this.jobs = this.db.collection('jobs');
@@ -38,8 +47,9 @@ export class MongoStorage implements IStorage {
 
   async connect(): Promise<void> {
     await this.client.connect();
+    await this.db.command({ ping: 1 });
     await this.createIndexes();
-    console.log('Connected to MongoDB successfully');
+    console.log('✓ Connected to MongoDB successfully');
   }
 
   async close(): Promise<void> {

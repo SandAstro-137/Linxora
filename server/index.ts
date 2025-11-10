@@ -69,13 +69,19 @@ import { setStorage } from "./storage";
   const mongoUri = process.env.MONGODB_URI;
   if (mongoUri) {
     try {
+      console.log('Attempting to connect to MongoDB Atlas...');
       const mongoStorage = new MongoStorage(mongoUri);
       await mongoStorage.connect();
       setStorage(mongoStorage);
-      console.log('Using MongoDB storage');
-    } catch (error) {
-      console.error('Failed to connect to MongoDB:', error);
-      console.log('Falling back to in-memory storage');
+      console.log('✓ Using MongoDB Atlas for persistent storage');
+    } catch (error: any) {
+      console.error('✗ Failed to connect to MongoDB:', error.message);
+      if (error.message?.includes('SSL') || error.message?.includes('TLS')) {
+        console.log('  → This appears to be an SSL/TLS issue with MongoDB Atlas');
+        console.log('  → Please check your MongoDB Atlas IP whitelist (allow 0.0.0.0/0 for Replit)');
+        console.log('  → Verify your connection string includes the database name');
+      }
+      console.log('  → Falling back to in-memory storage (data will not persist between restarts)');
     }
   } else {
     console.log('MONGODB_URI not configured, using in-memory storage');
