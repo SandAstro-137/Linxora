@@ -86,10 +86,14 @@ export class MemStorage implements IStorage {
     const user: User = {
       ...insertUser,
       id,
-      level: insertUser.level || 1,
-      completedJobs: insertUser.completedJobs || 0,
-      rating: insertUser.rating || "0",
-      workingHours: insertUser.workingHours || {},
+      email: insertUser.email ?? null,
+      avatar: insertUser.avatar ?? null,
+      specialization: insertUser.specialization ?? null,
+      role: insertUser.role ?? "freelancer",
+      level: insertUser.level ?? 1,
+      completedJobs: insertUser.completedJobs ?? 0,
+      rating: insertUser.rating ?? "0",
+      workingHours: insertUser.workingHours ?? {},
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -140,7 +144,11 @@ export class MemStorage implements IStorage {
     const job: Job = {
       ...insertJob,
       id,
-      collaborators: insertJob.collaborators || [],
+      status: insertJob.status ?? "pending",
+      freelancerId: insertJob.freelancerId ?? null,
+      requirements: insertJob.requirements ?? null,
+      deadline: insertJob.deadline ?? null,
+      collaborators: insertJob.collaborators ?? [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -172,10 +180,11 @@ export class MemStorage implements IStorage {
     const wallet: Wallet = {
       ...insertWallet,
       id,
-      usdtBalance: insertWallet.usdtBalance || "0",
-      solBalance: insertWallet.solBalance || "0",
-      btcBalance: insertWallet.btcBalance || "0",
-      ltcBalance: insertWallet.ltcBalance || "0",
+      walletAddress: insertWallet.walletAddress ?? null,
+      usdtBalance: insertWallet.usdtBalance ?? "0",
+      solBalance: insertWallet.solBalance ?? "0",
+      btcBalance: insertWallet.btcBalance ?? "0",
+      ltcBalance: insertWallet.ltcBalance ?? "0",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -203,6 +212,9 @@ export class MemStorage implements IStorage {
     const transaction: Transaction = {
       ...insertTransaction,
       id,
+      status: insertTransaction.status ?? null,
+      usdAmount: insertTransaction.usdAmount ?? null,
+      transactionHash: insertTransaction.transactionHash ?? null,
       createdAt: new Date(),
     };
     this.transactions.set(id, transaction);
@@ -226,6 +238,7 @@ export class MemStorage implements IStorage {
     const request: PTORequest = {
       ...insertRequest,
       id,
+      status: insertRequest.status ?? "pending",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -253,6 +266,7 @@ export class MemStorage implements IStorage {
     const invitation: Invitation = {
       ...insertInvitation,
       id,
+      status: insertInvitation.status ?? null,
       createdAt: new Date(),
     };
     this.invitations.set(id, invitation);
@@ -268,4 +282,8 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export let storage: IStorage = new MemStorage();
+
+export function setStorage(newStorage: IStorage) {
+  storage = newStorage;
+}

@@ -61,11 +61,25 @@ app.use((req, res, next) => {
 });
 
 import { seedData } from "./lib/seed-data";
-import { connectMongoDB } from "./lib/mongodb";
+import { MongoStorage } from "./lib/mongo-storage";
+import { setStorage } from "./storage";
 
 (async () => {
-  // Connect to MongoDB (optional)
-  await connectMongoDB();
+  // Initialize storage
+  const mongoUri = process.env.MONGODB_URI;
+  if (mongoUri) {
+    try {
+      const mongoStorage = new MongoStorage(mongoUri);
+      await mongoStorage.connect();
+      setStorage(mongoStorage);
+      console.log('Using MongoDB storage');
+    } catch (error) {
+      console.error('Failed to connect to MongoDB:', error);
+      console.log('Falling back to in-memory storage');
+    }
+  } else {
+    console.log('MONGODB_URI not configured, using in-memory storage');
+  }
   
   // Seed initial data
   await seedData();

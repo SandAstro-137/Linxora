@@ -252,11 +252,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
-      res.json(job);
+
+      // Enrich job data with customer info
+      const customer = await storage.getUser(job.customerId);
+      
+      // Enrich with collaborator info
+      const collaboratorIds = job.collaborators || [];
+      const allMemberIds = job.freelancerId 
+        ? [job.freelancerId, ...collaboratorIds]
+        : collaboratorIds;
+      
+      const collaboratorData = await Promise.all(
+        allMemberIds.map(async (id) => {
+          const user = await storage.getUser(id);
+          return user ? {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            specialization: user.specialization,
+          } : null;
+        })
+      );
+
+      // Calculate profit splits
+      const profitSplits = allMemberIds.length > 0 ? calculateProfitSplits(job, allMemberIds) : [];
+
+      const enrichedJob = {
+        ...job,
+        customerUsername: customer?.username,
+        customerDiscordId: customer?.discordId,
+        collaboratorData: collaboratorData.filter(Boolean),
+        profitSplits,
+      };
+
+      res.json(enrichedJob);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  function calculateProfitSplits(job: any, memberIds: string[]) {
+    const budget = parseFloat(job.budget);
+    const totalMembers = memberIds.length;
+    const percentage = 100 / totalMembers;
+    const shareAmount = budget / totalMembers;
+
+    return memberIds.map((userId) => ({
+      userId,
+      percentage: parseFloat(percentage.toFixed(2)),
+      amount: shareAmount.toFixed(2),
+    }));
+  }
 
   app.post("/api/jobs", requireAuth, async (req, res) => {
     try {

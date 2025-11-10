@@ -13,6 +13,7 @@ import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import JobsPage from "@/pages/jobs";
+import JobDetailPage from "@/pages/job-detail";
 import CreateJobPage from "@/pages/create-job";
 import WalletPage from "@/pages/wallet";
 import ProfilePage from "@/pages/profile";
@@ -74,6 +75,11 @@ function Router() {
       <Route path="/jobs/create">
         <ProtectedRoute allowedRoles={["customer"]}>
           <CreateJobPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/jobs/:id">
+        <ProtectedRoute>
+          <JobDetailPage />
         </ProtectedRoute>
       </Route>
       <Route path="/wallet">

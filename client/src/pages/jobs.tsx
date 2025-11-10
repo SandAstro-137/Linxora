@@ -119,12 +119,13 @@ export default function JobsPage() {
         <div className="text-center py-12">
           <p className="text-muted-foreground">No jobs found matching your criteria</p>
           <Button
-            variant="link"
+            variant="ghost"
             onClick={() => {
               setSearchQuery("");
               setSelectedCategory("All Categories");
             }}
             className="mt-2"
+            data-testid="button-clear-filters"
           >
             Clear filters
           </Button>
