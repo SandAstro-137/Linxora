@@ -1,0 +1,82 @@
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
+import { useAuth } from "@/lib/auth-context";
+import { Badge } from "@/components/ui/badge";
+
+export function AppSidebar() {
+  const [location] = useLocation();
+  const { user } = useAuth();
+
+  const freelancerItems = [
+    { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
+    { title: "My Wallet", url: "/wallet", icon: Wallet },
+    { title: "My Profile", url: "/profile", icon: User },
+    { title: "PTO Requests", url: "/pto", icon: Clock },
+    { title: "Notifications", url: "/notifications", icon: Bell },
+  ];
+
+  const customerItems = [
+    { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
+    { title: "Post a Job", url: "/jobs/create", icon: Briefcase },
+    { title: "My Wallet", url: "/wallet", icon: Wallet },
+  ];
+
+  const staffItems = [
+    { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Moderation Queue", url: "/moderation", icon: Shield },
+    { title: "All Jobs", url: "/jobs", icon: Briefcase },
+  ];
+
+  const getMenuItems = () => {
+    if (user?.role === "moderator" || user?.role === "staff") {
+      return staffItems;
+    }
+    if (user?.role === "customer") {
+      return customerItems;
+    }
+    return freelancerItems;
+  };
+
+  return (
+    <Sidebar>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel className="flex items-center gap-2 px-2 py-4">
+            <span className="text-lg font-bold text-primary">FreelanceHub</span>
+            {user && (
+              <Badge variant="secondary" className="ml-auto text-xs">
+                {user.role}
+              </Badge>
+            )}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {getMenuItems().map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                    <Link href={item.url}>
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
+}

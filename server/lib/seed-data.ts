@@ -1,0 +1,139 @@
+import { storage } from "../storage";
+
+export async function seedData() {
+  // Check if data already exists
+  const existingJobs = await storage.getJobs();
+  if (existingJobs.length > 0) {
+    console.log('Data already seeded, skipping...');
+    return;
+  }
+
+  console.log('Seeding initial data...');
+
+  // Create demo users
+  const freelancer1 = await storage.createUser({
+    discordId: "demo-freelancer-1",
+    username: "Alex Chen",
+    email: "alex@example.com",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alex",
+    role: "freelancer",
+    level: 3,
+    specialization: "Web Development",
+    completedJobs: 12,
+    rating: "4.8",
+  });
+
+  const freelancer2 = await storage.createUser({
+    discordId: "demo-freelancer-2",
+    username: "Sarah Johnson",
+    email: "sarah@example.com",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah",
+    role: "freelancer",
+    level: 5,
+    specialization: "UI/UX Design",
+    completedJobs: 28,
+    rating: "4.9",
+  });
+
+  const customer = await storage.createUser({
+    discordId: "demo-customer-1",
+    username: "Tech Startup Inc",
+    email: "hiring@techstartup.com",
+    avatar: "https://api.dicebear.com/7.x/initials/svg?seed=TSI",
+    role: "customer",
+  });
+
+  const moderator = await storage.createUser({
+    discordId: "demo-moderator-1",
+    username: "Admin User",
+    email: "admin@freelancehub.com",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Admin",
+    role: "moderator",
+  });
+
+  // Create demo jobs
+  await storage.createJob({
+    customerId: customer.id,
+    title: "Build a Modern E-commerce Dashboard",
+    description: "We need a responsive dashboard for our e-commerce platform with real-time analytics, order management, and inventory tracking.",
+    category: "Web Development",
+    budget: "2500",
+    requirements: "React.js, TypeScript, Tailwind CSS, Chart.js",
+    status: "active",
+  });
+
+  await storage.createJob({
+    customerId: customer.id,
+    title: "Mobile App UI/UX Design",
+    description: "Design a complete mobile app interface for a fitness tracking application. Should include onboarding, dashboard, workout tracking, and social features.",
+    category: "Design",
+    budget: "1800",
+    requirements: "Figma, mobile design experience, fitness app knowledge preferred",
+    status: "active",
+  });
+
+  await storage.createJob({
+    customerId: customer.id,
+    title: "API Integration for Payment System",
+    description: "Integrate Stripe payment gateway into existing Node.js application with webhook handling and subscription management.",
+    category: "Web Development",
+    budget: "1200",
+    status: "active",
+  });
+
+  await storage.createJob({
+    customerId: customer.id,
+    title: "Content Writing for Tech Blog",
+    description: "Write 5 high-quality articles about emerging web development trends, each 1500-2000 words.",
+    category: "Writing",
+    budget: "500",
+    status: "pending",
+  });
+
+  // Create demo wallets with initial balances
+  const freelancer1Wallet = await storage.createWallet({
+    userId: freelancer1.id,
+    usdtBalance: "1250.50",
+    solBalance: "12.5",
+    btcBalance: "0.05",
+    ltcBalance: "8.2",
+    walletAddress: "0xabc123def456ghi789jkl012mno345pqr678stu",
+  });
+
+  const freelancer2Wallet = await storage.createWallet({
+    userId: freelancer2.id,
+    usdtBalance: "3400.00",
+    solBalance: "25.8",
+    btcBalance: "0.12",
+    ltcBalance: "15.6",
+    walletAddress: "0xdef789abc012ghi345jkl678mno901pqr234stu",
+  });
+
+  // Create demo transactions
+  await storage.createTransaction({
+    walletId: freelancer1Wallet.id,
+    type: "deposit",
+    currency: "USDT",
+    amount: "500.00",
+    usdAmount: "500.00",
+    status: "completed",
+    transactionHash: "0x1234567890abcdef1234567890abcdef12345678",
+  });
+
+  await storage.createTransaction({
+    walletId: freelancer1Wallet.id,
+    type: "withdrawal",
+    currency: "BTC",
+    amount: "0.01",
+    usdAmount: "430.00",
+    status: "completed",
+    transactionHash: "0xabcdef1234567890abcdef1234567890abcdef12",
+  });
+
+  console.log('Initial data seeded successfully!');
+  console.log('\nDemo accounts created:');
+  console.log('- Freelancer: Alex Chen (ID:', freelancer1.discordId, ')');
+  console.log('- Freelancer: Sarah Johnson (ID:', freelancer2.discordId, ')');
+  console.log('- Customer: Tech Startup Inc (ID:', customer.discordId, ')');
+  console.log('- Moderator: Admin User (ID:', moderator.discordId, ')');
+}
