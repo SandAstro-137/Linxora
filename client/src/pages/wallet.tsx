@@ -45,7 +45,7 @@ export default function WalletPage() {
     refetchInterval: 30000,
   });
 
-  const { data: transactions } = useQuery({
+  const { data: transactions = [] } = useQuery<any[]>({
     queryKey: ["/api/wallet/transactions"],
   });
 

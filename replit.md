@@ -153,7 +153,18 @@ The Replit Discord connector is currently used for app-level Discord integration
 
 The application runs on port 5000 and serves both the API and frontend. Hot reload is enabled for development.
 
-## Recent Changes (November 2025)
+## Recent Changes (November 11, 2025)
+
+### Latest Updates
+- **Logo Integration**: Added Pixelcut logo to header navbar and favicon
+- **Profile Picture Upload**: Users can now upload profile pictures via camera button on avatar
+  - Client-side validation (image type, 5MB limit)
+  - Base64 encoding and storage
+  - Auto-updates across all UI components
+- **Cancellation UI Improvements**: Dynamic toast messages based on approval requirements
+  - "Cancellation being reviewed" for jobs requiring admin approval
+  - "Job cancelled" for immediate cancellations (pending/active jobs)
+- **Wallet TypeScript Fixes**: Resolved type errors in transaction history display
 
 ### New Features Implemented
 - **Request Changes Workflow**: Complete moderation feedback system

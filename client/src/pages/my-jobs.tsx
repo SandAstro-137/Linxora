@@ -37,7 +37,7 @@ export default function MyJobsPage() {
       setSelectedJob(null);
 
       toast({
-        title: data.approvalRequired ? "Cancellation request submitted" : "Job cancelled",
+        title: data.approvalRequired ? "Cancellation being reviewed" : "Job cancelled",
         description: data.message,
       });
     },

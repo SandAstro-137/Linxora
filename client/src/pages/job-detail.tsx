@@ -148,13 +148,15 @@ export default function JobDetailPage() {
         proofUrl,
       });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       setIsCancelDialogOpen(false);
       cancellationForm.reset();
       setProofFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       toast({
-        title: "Cancellation request submitted",
-        description: "Your request will be reviewed by an admin.",
+        title: data.approvalRequired ? "Cancellation being reviewed" : "Job cancelled",
+        description: data.message,
       });
     },
     onError: (error: any) => {
