@@ -23,6 +23,7 @@ import { randomUUID } from "crypto";
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -102,6 +103,10 @@ export class MemStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
+  }
+
+  async getUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
   }
 
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {

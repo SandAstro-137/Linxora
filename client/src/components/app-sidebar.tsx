@@ -39,7 +39,6 @@ export function AppSidebar() {
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
-    { title: "Post a Job", url: "/jobs/create", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
   ];
 
@@ -64,7 +63,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-2 px-2 py-4">
-            <span className="text-lg font-bold text-primary">FreelanceHub</span>
+            <span className="text-lg font-bold text-primary">Pixelcut</span>
             {user && (
               <Badge variant="secondary" className="ml-auto text-xs">
                 {user.role}

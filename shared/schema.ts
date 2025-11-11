@@ -17,6 +17,7 @@ export type UserRoleType = typeof UserRole[keyof typeof UserRole];
 export const JobStatus = {
   PENDING: "pending",
   ACTIVE: "active",
+  FREELANCER_REQUESTED: "freelancer_requested",
   CLAIMED: "claimed",
   IN_PROGRESS: "in_progress",
   COMPLETED: "completed",

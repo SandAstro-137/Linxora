@@ -365,9 +365,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (user.role !== "freelancer") {
-        return res.status(403).json({ error: "Only freelancers can claim jobs" });
+        return res.status(403).json({ error: "Only freelancers can request jobs" });
       }
 
+      // Check for one-job-at-a-time restriction
       const activeJobs = await storage.getJobs({ 
         freelancerId: req.session.userId!, 
         status: "in_progress" 
@@ -376,17 +377,157 @@ export async function registerRoutes(app: Express): Promise<Server> {
         freelancerId: req.session.userId!, 
         status: "claimed" 
       });
+      const requestedJobs = await storage.getJobs({ 
+        freelancerId: req.session.userId!, 
+        status: "freelancer_requested" 
+      });
 
-      if (activeJobs.length > 0 || claimedJobs.length > 0) {
-        return res.status(400).json({ error: "You can only take one job at a time. Complete or cancel your current job first." });
+      if (activeJobs.length > 0 || claimedJobs.length > 0 || requestedJobs.length > 0) {
+        return res.status(400).json({ error: "You can only have one job at a time. Complete or cancel your current job first." });
       }
 
-      const job = await storage.claimJob(req.params.id, req.session.userId!);
-      if (!job) {
-        return res.status(400).json({ error: "Cannot claim this job" });
+      const job = await storage.getJob(req.params.id);
+      if (!job || job.status !== "active") {
+        return res.status(400).json({ error: "This job is not available" });
       }
-      res.json(job);
+
+      // Set job to freelancer_requested status
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: "freelancer_requested",
+        freelancerId: req.session.userId!,
+      });
+
+      // Create notification for customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_request",
+        title: "New job request",
+        message: `${user.username} has requested to work on your job: ${job.title}`,
+        relatedId: job.id,
+      });
+
+      res.json(updatedJob);
     } catch (error) {
+      console.error("Error requesting job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer approve/reject freelancer request
+  app.post("/api/jobs/:id/approve-freelancer", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId!) {
+        return res.status(403).json({ error: "Only the job owner can approve freelancers" });
+      }
+
+      if (job.status !== "freelancer_requested") {
+        return res.status(400).json({ error: "No pending freelancer request for this job" });
+      }
+
+      // Transfer funds from customer wallet to company Exodus account
+      const customerWallet = await storage.getWallet(req.session.userId!);
+      if (!customerWallet) {
+        return res.status(404).json({ error: "Customer wallet not found" });
+      }
+
+      const jobBudget = parseFloat(job.budget);
+      const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
+
+      if (customerUSDT < jobBudget) {
+        return res.status(400).json({ error: "Insufficient USDT balance to approve this job" });
+      }
+
+      // Deduct from customer wallet
+      await storage.updateWallet(req.session.userId!, {
+        usdtBalance: (customerUSDT - jobBudget).toFixed(8),
+      });
+
+      // Record transaction
+      await storage.createTransaction({
+        walletId: customerWallet.id,
+        type: "withdrawal",
+        currency: "USDT",
+        amount: jobBudget.toFixed(8),
+        usdAmount: jobBudget.toFixed(2),
+        status: "completed",
+        transactionHash: `exodus-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      });
+
+      // Update job status to claimed
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: "claimed",
+      });
+
+      // Notify freelancer
+      if (job.freelancerId) {
+        await storage.createNotification({
+          userId: job.freelancerId,
+          type: "job_approved",
+          title: "Job request approved!",
+          message: `Your request for "${job.title}" has been approved. You can now start working!`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error approving freelancer:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/jobs/:id/reject-freelancer", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId!) {
+        return res.status(403).json({ error: "Only the job owner can reject freelancers" });
+      }
+
+      if (job.status !== "freelancer_requested") {
+        return res.status(400).json({ error: "No pending freelancer request for this job" });
+      }
+
+      const freelancerId = job.freelancerId;
+
+      // Update job status back to active and clear freelancer
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: "active",
+        freelancerId: null,
+      });
+
+      // Notify freelancer
+      if (freelancerId) {
+        await storage.createNotification({
+          userId: freelancerId,
+          type: "job_rejected",
+          title: "Job request declined",
+          message: `Your request for "${job.title}" was not accepted.`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error rejecting freelancer:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -741,10 +882,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/pto", requireAuth, async (req, res) => {
     try {
       const validated = insertPTORequestSchema.parse(req.body);
+      const user = await storage.getUser(req.session.userId!);
+      
       const request = await storage.createPTORequest({
         ...validated,
         freelancerId: req.session.userId!,
       });
+
+      // Get all admins and moderators
+      const allUsers = await storage.getUsers();
+      const admins = allUsers.filter(u => u.role === "staff" || u.role === "moderator");
+
+      // Send notification to each admin/moderator
+      for (const admin of admins) {
+        await storage.createNotification({
+          userId: admin.id,
+          type: "pto_request",
+          title: "New PTO Request",
+          message: `${user?.username || "A freelancer"} has requested PTO from ${validated.startDate} to ${validated.endDate}`,
+          relatedId: request.id,
+        });
+      }
+
       res.json(request);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid PTO request data" });

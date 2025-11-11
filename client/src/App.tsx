@@ -69,11 +69,6 @@ function Router() {
           <DashboardPage />
         </ProtectedRoute>
       </Route>
-      <Route path="/jobs">
-        <ProtectedRoute>
-          <JobsPage />
-        </ProtectedRoute>
-      </Route>
       <Route path="/jobs/create">
         <ProtectedRoute allowedRoles={["customer"]}>
           <CreateJobPage />
@@ -82,6 +77,11 @@ function Router() {
       <Route path="/jobs/:id">
         <ProtectedRoute>
           <JobDetailPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/jobs">
+        <ProtectedRoute>
+          <JobsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/wallet">
