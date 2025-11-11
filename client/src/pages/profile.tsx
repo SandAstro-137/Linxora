@@ -1,19 +1,62 @@
+import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Briefcase, Star, TrendingUp, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Briefcase, Star, TrendingUp, Clock, Edit2, Save } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { Separator } from "@/components/ui/separator";
 import { JobCard } from "@/components/job-card";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { WorkingHours } from "@shared/schema";
 
 export default function ProfilePage() {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [isEditingHours, setIsEditingHours] = useState(false);
+  const [workingHours, setWorkingHours] = useState({
+    monday: { start: "", end: "" },
+    tuesday: { start: "", end: "" },
+    wednesday: { start: "", end: "" },
+    thursday: { start: "", end: "" },
+    friday: { start: "", end: "" },
+    saturday: { start: "", end: "" },
+    sunday: { start: "", end: "" },
+  });
 
   const { data: completedJobs } = useQuery({
     queryKey: ["/api/profile/completed-jobs"],
+  });
+
+  const { data: savedWorkingHours } = useQuery({
+    queryKey: ["/api/profile/working-hours"],
+    enabled: user?.role === "freelancer",
+  });
+
+  const updateWorkingHoursMutation = useMutation({
+    mutationFn: (hours: WorkingHours) => apiRequest("PUT", "/api/profile/working-hours", hours),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/profile/working-hours"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      setIsEditingHours(false);
+      toast({
+        title: "Working hours updated",
+        description: "Your schedule has been saved successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
   });
 
   if (!user) return null;
@@ -122,24 +165,107 @@ export default function ProfilePage() {
             </Card>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Working Hours</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Clock className="w-4 h-4" />
-                <span>Configure your availability and working schedule</span>
-              </div>
-            </CardContent>
-          </Card>
+          {user.role === "freelancer" && (
+            <Card data-testid="card-working-hours">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Working Hours</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isEditingHours) {
+                        updateWorkingHoursMutation.mutate(workingHours);
+                      } else {
+                        if (savedWorkingHours && typeof savedWorkingHours === 'object') {
+                          setWorkingHours({ ...workingHours, ...savedWorkingHours });
+                        }
+                        setIsEditingHours(true);
+                      }
+                    }}
+                    data-testid="button-edit-working-hours"
+                  >
+                    {isEditingHours ? (
+                      <>
+                        <Save className="w-4 h-4 mr-1" />
+                        Save
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="w-4 h-4 mr-1" />
+                        Edit
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isEditingHours ? (
+                  <div className="space-y-3">
+                    {Object.entries(workingHours).map(([day, hours]) => (
+                      <div key={day} className="flex items-center gap-2">
+                        <Label className="w-24 capitalize">{day}</Label>
+                        <Input
+                          type="time"
+                          placeholder="Start"
+                          value={(hours as any).start}
+                          onChange={(e) =>
+                            setWorkingHours((prev) => ({
+                              ...prev,
+                              [day]: { ...prev[day as keyof typeof prev], start: e.target.value },
+                            }))
+                          }
+                          className="flex-1"
+                          data-testid={`input-${day}-start`}
+                        />
+                        <span className="text-muted-foreground">to</span>
+                        <Input
+                          type="time"
+                          placeholder="End"
+                          value={(hours as any).end}
+                          onChange={(e) =>
+                            setWorkingHours((prev) => ({
+                              ...prev,
+                              [day]: { ...prev[day as keyof typeof prev], end: e.target.value },
+                            }))
+                          }
+                          className="flex-1"
+                          data-testid={`input-${day}-end`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {savedWorkingHours && typeof savedWorkingHours === 'object' && Object.keys(savedWorkingHours).length > 0 ? (
+                      Object.entries(savedWorkingHours).map(([day, hours]: [string, any]) => (
+                        <div key={day} className="flex items-center justify-between">
+                          <span className="capitalize font-medium">{day}</span>
+                          <span className="text-muted-foreground">
+                            {hours.start && hours.end
+                              ? `${hours.start} - ${hours.end}`
+                              : "Not set"}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center gap-2 text-muted-foreground py-4">
+                        <Clock className="w-4 h-4" />
+                        <span>No working hours configured yet</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
               <CardTitle>Completed Projects</CardTitle>
             </CardHeader>
             <CardContent>
-              {completedJobs && completedJobs.length > 0 ? (
+              {Array.isArray(completedJobs) && completedJobs.length > 0 ? (
                 <div className="grid gap-4">
                   {completedJobs.slice(0, 3).map((job: any) => (
                     <JobCard key={job.id} job={job} showActions={false} />

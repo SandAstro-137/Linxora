@@ -2,9 +2,10 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
+import { z } from "zod";
 
 const uploadedFiles = new Map<string, string>();
 
@@ -454,28 +455,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/cancellation-requests", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
-      if (!user || user.role !== "freelancer") {
-        return res.status(403).json({ error: "Only freelancers can submit cancellation requests" });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
       }
 
-      const validated = insertCancellationRequestSchema.parse(req.body);
+      const { jobId, reason, proofUrl } = req.body;
       
-      const job = await storage.getJob(validated.jobId);
+      if (!jobId) {
+        return res.status(400).json({ error: "Job ID is required" });
+      }
+
+      const job = await storage.getJob(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      if (job.freelancerId !== req.session.userId) {
-        return res.status(403).json({ error: "You can only cancel jobs assigned to you" });
+      // Role-based access control
+      const isFreelancer = user.role === "freelancer" && job.freelancerId === user.id;
+      const isCustomer = user.role === "customer" && job.customerId === user.id;
+
+      if (!isFreelancer && !isCustomer) {
+        return res.status(403).json({ error: "You can only cancel your own jobs" });
       }
 
-      const request = await storage.createCancellationRequest({
-        ...validated,
-        requesterId: req.session.userId!,
+      // Determine if approval is required based on role and job status
+      let approvalRequired = false;
+      let newJobStatus: string = job.status;
+
+      if (isFreelancer) {
+        // Freelancer: always requires admin approval if job is taken/in-progress
+        if (job.status === "claimed" || job.status === "in_progress") {
+          approvalRequired = true;
+          if (!reason || reason.trim().length < 10) {
+            return res.status(400).json({ error: "Reason must be at least 10 characters" });
+          }
+        }
+      } else if (isCustomer) {
+        // Customer: immediate cancellation for active/pending, approval required for taken jobs
+        if (job.status === "pending" || job.status === "active") {
+          // Immediate cancellation - no approval needed
+          approvalRequired = false;
+          newJobStatus = "active"; // Reset to active (or could use a "cancelled" status)
+        } else if (job.status === "claimed" || job.status === "in_progress") {
+          // Requires admin approval
+          approvalRequired = true;
+        }
+      }
+
+      // Create cancellation request record for audit
+      const cancellationRequest = await storage.createCancellationRequest({
+        jobId,
+        requesterId: user.id,
+        reason: reason || "No reason provided",
+        proofUrl: proofUrl || null,
+        status: approvalRequired ? "pending" : "approved",
+        reviewerId: approvalRequired ? null : user.id,
+        reviewNotes: approvalRequired ? null : "Auto-approved: immediate customer cancellation",
       });
 
-      res.json(request);
+      // If no approval required, update job status immediately
+      let updatedJob = job;
+      if (!approvalRequired && isCustomer) {
+        updatedJob = await storage.updateJob(jobId, {
+          status: "active",
+          freelancerId: null,
+          collaborators: [],
+        }) || job;
+
+        // Create notification for admin/moderators
+        await storage.createNotification({
+          userId: user.id,
+          type: "cancellation_request",
+          title: "Job cancelled",
+          message: `Your job "${job.title}" has been cancelled`,
+          relatedId: jobId,
+        });
+      }
+
+      res.json({
+        cancellationRequest,
+        approvalRequired,
+        jobStatus: updatedJob.status,
+        message: approvalRequired 
+          ? "Cancellation request submitted for admin review" 
+          : "Job cancelled successfully",
+      });
     } catch (error: any) {
+      console.error("Cancellation request error:", error);
       res.status(400).json({ error: error.message || "Invalid cancellation request" });
     }
   });
@@ -773,23 +839,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Working Hours routes
+  app.get("/api/profile/working-hours", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user.workingHours || {});
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.put("/api/profile/working-hours", requireAuth, async (req, res) => {
+    try {
+      const validatedHours = workingHoursSchema.parse(req.body);
+      const user = await storage.updateUser(req.session.userId!, {
+        workingHours: validatedHours,
+      });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user.workingHours);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid working hours format", details: error.errors });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Chat Message routes
+  app.get("/api/jobs/:jobId/chat", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Verify user is part of the job (freelancer, collaborator, or customer)
+      const userId = req.session.userId!;
+      const isCustomer = job.customerId === userId;
+      const isFreelancer = job.freelancerId === userId;
+      const isCollaborator = job.collaborators?.includes(userId);
+
+      if (!isCustomer && !isFreelancer && !isCollaborator) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const messages = await storage.getChatMessages(req.params.jobId);
+      
+      // Mark messages as read for current user
+      await storage.markChatMessagesAsRead(req.params.jobId, userId);
+
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/jobs/:jobId/chat", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const userId = req.session.userId!;
+      const { message } = req.body;
+
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      // Verify user is part of the job
+      const isCustomer = job.customerId === userId;
+      const isFreelancer = job.freelancerId === userId;
+      const isCollaborator = job.collaborators?.includes(userId);
+
+      if (!isCustomer && !isFreelancer && !isCollaborator) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Determine receiver (customer if sender is freelancer/collaborator, freelancer if sender is customer)
+      const receiverId = isCustomer ? job.freelancerId! : job.customerId;
+
+      const chatMessage = await storage.createChatMessage({
+        jobId: req.params.jobId,
+        senderId: userId,
+        receiverId,
+        message: message.trim(),
+      });
+
+      // Create notification for receiver
+      const sender = await storage.getUser(userId);
+      await storage.createNotification({
+        userId: receiverId,
+        type: "chat_message",
+        title: "New message",
+        message: `${sender?.username} sent you a message`,
+        relatedId: job.id,
+      });
+
+      res.json(chatMessage);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Notifications routes
   app.get("/api/notifications", requireAuth, async (req, res) => {
     try {
-      const invitations = await storage.getInvitations(req.session.userId!);
-      
-      const notifications = invitations
-        .filter(inv => inv.toUserId === req.session.userId)
-        .map(inv => ({
-          id: inv.id,
-          type: "job_invite",
-          message: `You've been invited to collaborate on a job`,
-          read: inv.status !== "pending",
-          createdAt: inv.createdAt,
-          metadata: { invitationId: inv.id, jobId: inv.jobId },
-        }));
-
+      const notifications = await storage.getNotifications(req.session.userId!);
       res.json(notifications);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/notifications/unread-count", requireAuth, async (req, res) => {
+    try {
+      const count = await storage.getUnreadNotificationCount(req.session.userId!);
+      res.json({ count });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.put("/api/notifications/:id/read", requireAuth, async (req, res) => {
+    try {
+      const notification = await storage.markNotificationAsRead(req.params.id);
+      if (!notification) {
+        return res.status(404).json({ error: "Notification not found" });
+      }
+      res.json(notification);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.put("/api/notifications/mark-all-read", requireAuth, async (req, res) => {
+    try {
+      await storage.markAllNotificationsAsRead(req.session.userId!);
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

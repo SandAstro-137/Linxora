@@ -1,5 +1,6 @@
 import { Home, Briefcase, Wallet, User, Shield, Clock, Bell } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -17,8 +18,16 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
 
+  // Fetch unread notification count
+  const { data: unreadCount = 0 } = useQuery<number>({
+    queryKey: ["/api/notifications/unread-count"],
+    enabled: !!user && user.role === "freelancer",
+    refetchInterval: 5000, // Poll every 5 seconds
+  });
+
   const freelancerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Current Job", url: "/current-job", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
@@ -28,6 +37,7 @@ export function AppSidebar() {
 
   const customerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "Post a Job", url: "/jobs/create", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
@@ -69,6 +79,11 @@ export function AppSidebar() {
                     <Link href={item.url}>
                       <item.icon className="w-4 h-4" />
                       <span>{item.title}</span>
+                      {item.title === "Notifications" && unreadCount > 0 && (
+                        <Badge variant="destructive" className="ml-auto text-xs" data-testid="badge-unread-count">
+                          {unreadCount}
+                        </Badge>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

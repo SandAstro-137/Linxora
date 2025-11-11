@@ -13,6 +13,10 @@ import {
   type InsertInvitation,
   type CancellationRequest,
   type InsertCancellationRequest,
+  type ChatMessage,
+  type InsertChatMessage,
+  type Notification,
+  type InsertNotification,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -58,6 +62,18 @@ export interface IStorage {
   getAllCancellationRequests(): Promise<CancellationRequest[]>;
   createCancellationRequest(request: InsertCancellationRequest): Promise<CancellationRequest>;
   updateCancellationRequest(id: string, request: Partial<CancellationRequest>): Promise<CancellationRequest | undefined>;
+
+  // Chat Message operations
+  getChatMessages(jobId: string): Promise<ChatMessage[]>;
+  createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
+  markChatMessagesAsRead(jobId: string, userId: string): Promise<void>;
+
+  // Notification operations
+  getNotifications(userId: string): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: string): Promise<number>;
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  markNotificationAsRead(id: string): Promise<Notification | undefined>;
+  markAllNotificationsAsRead(userId: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -68,6 +84,8 @@ export class MemStorage implements IStorage {
   private ptoRequests: Map<string, PTORequest>;
   private invitations: Map<string, Invitation>;
   private cancellationRequests: Map<string, CancellationRequest>;
+  private chatMessages: Map<string, ChatMessage>;
+  private notifications: Map<string, Notification>;
 
   constructor() {
     this.users = new Map();
@@ -77,6 +95,8 @@ export class MemStorage implements IStorage {
     this.ptoRequests = new Map();
     this.invitations = new Map();
     this.cancellationRequests = new Map();
+    this.chatMessages = new Map();
+    this.notifications = new Map();
   }
 
   // User operations
@@ -340,6 +360,77 @@ export class MemStorage implements IStorage {
     const updated = { ...request, ...updates, updatedAt: new Date() };
     this.cancellationRequests.set(id, updated);
     return updated;
+  }
+
+  // Chat Message operations
+  async getChatMessages(jobId: string): Promise<ChatMessage[]> {
+    return Array.from(this.chatMessages.values())
+      .filter((msg) => msg.jobId === jobId)
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async createChatMessage(insertMessage: InsertChatMessage): Promise<ChatMessage> {
+    const id = randomUUID();
+    const message: ChatMessage = {
+      ...insertMessage,
+      id,
+      read: insertMessage.read ?? false,
+      createdAt: new Date(),
+    };
+    this.chatMessages.set(id, message);
+    return message;
+  }
+
+  async markChatMessagesAsRead(jobId: string, userId: string): Promise<void> {
+    const entries = Array.from(this.chatMessages.entries());
+    for (const [id, message] of entries) {
+      if (message.jobId === jobId && message.receiverId === userId && !message.read) {
+        this.chatMessages.set(id, { ...message, read: true });
+      }
+    }
+  }
+
+  // Notification operations
+  async getNotifications(userId: string): Promise<Notification[]> {
+    return Array.from(this.notifications.values())
+      .filter((notif) => notif.userId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    return Array.from(this.notifications.values())
+      .filter((notif) => notif.userId === userId && !notif.read)
+      .length;
+  }
+
+  async createNotification(insertNotification: InsertNotification): Promise<Notification> {
+    const id = randomUUID();
+    const notification: Notification = {
+      ...insertNotification,
+      id,
+      relatedId: insertNotification.relatedId ?? null,
+      read: insertNotification.read ?? false,
+      createdAt: new Date(),
+    };
+    this.notifications.set(id, notification);
+    return notification;
+  }
+
+  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+    const notification = this.notifications.get(id);
+    if (!notification) return undefined;
+    const updated = { ...notification, read: true };
+    this.notifications.set(id, updated);
+    return updated;
+  }
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    const entries = Array.from(this.notifications.entries());
+    for (const [id, notification] of entries) {
+      if (notification.userId === userId && !notification.read) {
+        this.notifications.set(id, { ...notification, read: true });
+      }
+    }
   }
 }
 

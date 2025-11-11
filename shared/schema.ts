@@ -92,6 +92,19 @@ export const insertUserSchema = createInsertSchema(users).omit({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
+// Working hours schema
+export const workingHoursSchema = z.object({
+  monday: z.object({ start: z.string(), end: z.string() }),
+  tuesday: z.object({ start: z.string(), end: z.string() }),
+  wednesday: z.object({ start: z.string(), end: z.string() }),
+  thursday: z.object({ start: z.string(), end: z.string() }),
+  friday: z.object({ start: z.string(), end: z.string() }),
+  saturday: z.object({ start: z.string(), end: z.string() }),
+  sunday: z.object({ start: z.string(), end: z.string() }),
+});
+
+export type WorkingHours = z.infer<typeof workingHoursSchema>;
+
 // Jobs table
 export const jobs = pgTable("jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -259,3 +272,52 @@ export const insertCancellationRequestSchema = createInsertSchema(cancellationRe
 
 export type InsertCancellationRequest = z.infer<typeof insertCancellationRequestSchema>;
 export type CancellationRequest = typeof cancellationRequests.$inferSelect;
+
+// Chat Messages table
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  receiverId: varchar("receiver_id").notNull(),
+  message: text("message").notNull(),
+  read: boolean("read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+
+// Notifications table
+export const NotificationType = {
+  CHAT_MESSAGE: "chat_message",
+  CANCELLATION_REQUEST: "cancellation_request",
+  JOB_APPROVED: "job_approved",
+  JOB_REJECTED: "job_rejected",
+  INVITATION: "invitation",
+} as const;
+
+export type NotificationTypeEnum = typeof NotificationType[keyof typeof NotificationType];
+
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  relatedId: varchar("related_id"),
+  read: boolean("read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;

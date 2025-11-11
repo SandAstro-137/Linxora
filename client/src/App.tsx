@@ -20,6 +20,8 @@ import ProfilePage from "@/pages/profile";
 import ModerationPage from "@/pages/moderation";
 import PTOPage from "@/pages/pto";
 import NotificationsPage from "@/pages/notifications";
+import CurrentJobPage from "@/pages/current-job";
+import MyJobsPage from "@/pages/my-jobs";
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: string[] }) {
   const { user, isLoading } = useAuth();
@@ -90,6 +92,16 @@ function Router() {
       <Route path="/profile">
         <ProtectedRoute allowedRoles={["freelancer"]}>
           <ProfilePage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/current-job">
+        <ProtectedRoute allowedRoles={["freelancer"]}>
+          <CurrentJobPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/my-jobs">
+        <ProtectedRoute allowedRoles={["customer"]}>
+          <MyJobsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/moderation">

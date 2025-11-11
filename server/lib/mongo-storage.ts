@@ -12,6 +12,12 @@ import {
   type InsertPTORequest,
   type Invitation,
   type InsertInvitation,
+  type CancellationRequest,
+  type InsertCancellationRequest,
+  type ChatMessage,
+  type InsertChatMessage,
+  type Notification,
+  type InsertNotification,
 } from "@shared/schema";
 import type { IStorage } from "../storage";
 
@@ -24,6 +30,9 @@ export class MongoStorage implements IStorage {
   private transactions: Collection;
   private ptoRequests: Collection;
   private invitations: Collection;
+  private cancellationRequests: Collection;
+  private chatMessages: Collection;
+  private notifications: Collection;
 
   constructor(mongoUri: string) {
     // Add connection options if not already in URI
@@ -43,6 +52,9 @@ export class MongoStorage implements IStorage {
     this.transactions = this.db.collection('transactions');
     this.ptoRequests = this.db.collection('ptoRequests');
     this.invitations = this.db.collection('invitations');
+    this.cancellationRequests = this.db.collection('cancellationRequests');
+    this.chatMessages = this.db.collection('chatMessages');
+    this.notifications = this.db.collection('notifications');
   }
 
   async connect(): Promise<void> {
@@ -69,6 +81,14 @@ export class MongoStorage implements IStorage {
     await this.invitations.createIndex({ jobId: 1 });
     await this.invitations.createIndex({ toUserId: 1 });
     await this.invitations.createIndex({ fromUserId: 1 });
+    await this.cancellationRequests.createIndex({ jobId: 1 });
+    await this.cancellationRequests.createIndex({ requesterId: 1 });
+    await this.cancellationRequests.createIndex({ status: 1 });
+    await this.chatMessages.createIndex({ jobId: 1 });
+    await this.chatMessages.createIndex({ senderId: 1 });
+    await this.chatMessages.createIndex({ receiverId: 1 });
+    await this.notifications.createIndex({ userId: 1 });
+    await this.notifications.createIndex({ read: 1 });
   }
 
   private toUser(doc: any): User {
@@ -155,6 +175,46 @@ export class MongoStorage implements IStorage {
       fromUserId: doc.fromUserId,
       toUserId: doc.toUserId,
       status: doc.status ?? null,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  private toCancellationRequest(doc: any): CancellationRequest {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      requesterId: doc.requesterId,
+      reason: doc.reason,
+      proofUrl: doc.proofUrl ?? null,
+      status: doc.status,
+      reviewerId: doc.reviewerId ?? null,
+      reviewNotes: doc.reviewNotes ?? null,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
+  }
+
+  private toChatMessage(doc: any): ChatMessage {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      senderId: doc.senderId,
+      receiverId: doc.receiverId,
+      message: doc.message,
+      read: doc.read ?? false,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  private toNotification(doc: any): Notification {
+    return {
+      id: doc._id.toString(),
+      userId: doc.userId,
+      type: doc.type,
+      title: doc.title,
+      message: doc.message,
+      relatedId: doc.relatedId ?? null,
+      read: doc.read ?? false,
       createdAt: doc.createdAt,
     };
   }
@@ -378,5 +438,128 @@ export class MongoStorage implements IStorage {
       { returnDocument: 'after' }
     );
     return result ? this.toInvitation(result) : undefined;
+  }
+
+  async getCancellationRequest(id: string): Promise<CancellationRequest | undefined> {
+    const doc = await this.cancellationRequests.findOne({ _id: new ObjectId(id) });
+    return doc ? this.toCancellationRequest(doc) : undefined;
+  }
+
+  async getCancellationRequests(filters?: { jobId?: string; requesterId?: string; status?: string }): Promise<CancellationRequest[]> {
+    const query: any = {};
+    if (filters?.jobId) query.jobId = filters.jobId;
+    if (filters?.requesterId) query.requesterId = filters.requesterId;
+    if (filters?.status) query.status = filters.status;
+
+    const docs = await this.cancellationRequests
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toCancellationRequest(doc));
+  }
+
+  async getAllCancellationRequests(): Promise<CancellationRequest[]> {
+    const docs = await this.cancellationRequests
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toCancellationRequest(doc));
+  }
+
+  async createCancellationRequest(insertRequest: InsertCancellationRequest): Promise<CancellationRequest> {
+    const now = new Date();
+    const doc = {
+      jobId: insertRequest.jobId,
+      requesterId: insertRequest.requesterId,
+      reason: insertRequest.reason,
+      proofUrl: insertRequest.proofUrl ?? null,
+      status: insertRequest.status ?? "pending",
+      reviewerId: insertRequest.reviewerId ?? null,
+      reviewNotes: insertRequest.reviewNotes ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await this.cancellationRequests.insertOne(doc);
+    return this.toCancellationRequest({ ...doc, _id: result.insertedId });
+  }
+
+  async updateCancellationRequest(id: string, updates: Partial<CancellationRequest>): Promise<CancellationRequest | undefined> {
+    const { id: _, ...updateDoc } = updates as any;
+    const result = await this.cancellationRequests.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { ...updateDoc, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    return result ? this.toCancellationRequest(result) : undefined;
+  }
+
+  async getChatMessages(jobId: string): Promise<ChatMessage[]> {
+    const docs = await this.chatMessages
+      .find({ jobId })
+      .sort({ createdAt: 1 })
+      .toArray();
+    return docs.map(doc => this.toChatMessage(doc));
+  }
+
+  async createChatMessage(insertMessage: InsertChatMessage): Promise<ChatMessage> {
+    const doc = {
+      jobId: insertMessage.jobId,
+      senderId: insertMessage.senderId,
+      receiverId: insertMessage.receiverId,
+      message: insertMessage.message,
+      read: insertMessage.read ?? false,
+      createdAt: new Date(),
+    };
+    const result = await this.chatMessages.insertOne(doc);
+    return this.toChatMessage({ ...doc, _id: result.insertedId });
+  }
+
+  async markChatMessagesAsRead(jobId: string, userId: string): Promise<void> {
+    await this.chatMessages.updateMany(
+      { jobId, receiverId: userId, read: false },
+      { $set: { read: true } }
+    );
+  }
+
+  async getNotifications(userId: string): Promise<Notification[]> {
+    const docs = await this.notifications
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toNotification(doc));
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    return await this.notifications.countDocuments({ userId, read: false });
+  }
+
+  async createNotification(insertNotification: InsertNotification): Promise<Notification> {
+    const doc = {
+      userId: insertNotification.userId,
+      type: insertNotification.type,
+      title: insertNotification.title,
+      message: insertNotification.message,
+      relatedId: insertNotification.relatedId ?? null,
+      read: insertNotification.read ?? false,
+      createdAt: new Date(),
+    };
+    const result = await this.notifications.insertOne(doc);
+    return this.toNotification({ ...doc, _id: result.insertedId });
+  }
+
+  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+    const result = await this.notifications.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { read: true } },
+      { returnDocument: 'after' }
+    );
+    return result ? this.toNotification(result) : undefined;
+  }
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    await this.notifications.updateMany(
+      { userId, read: false },
+      { $set: { read: true } }
+    );
   }
 }
