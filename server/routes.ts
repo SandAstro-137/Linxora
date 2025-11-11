@@ -245,10 +245,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Job routes
+  // Levenshtein distance for fuzzy matching (typo tolerance)
+  function levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+    
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1      // deletion
+          );
+        }
+      }
+    }
+    
+    return matrix[b.length][a.length];
+  }
+  
+  // Fuzzy match check (returns true if strings are similar enough)
+  function fuzzyMatch(search: string, target: string, threshold: number = 0.7): boolean {
+    search = search.toLowerCase();
+    target = target.toLowerCase();
+    
+    // Exact match or substring match
+    if (target.includes(search) || search.includes(target)) {
+      return true;
+    }
+    
+    // Check if search starts with target or vice versa (partial word matching)
+    if (target.startsWith(search) || search.startsWith(target)) {
+      return true;
+    }
+    
+    // Levenshtein distance for typo tolerance
+    const distance = levenshteinDistance(search, target);
+    const maxLength = Math.max(search.length, target.length);
+    const similarity = 1 - (distance / maxLength);
+    
+    return similarity >= threshold;
+  }
+
+  // Synonym mapping for smarter search
+  const SYNONYMS: Record<string, string[]> = {
+    "developer": ["programmer", "coder", "engineer", "dev", "software"],
+    "designer": ["artist", "creative", "ui", "ux", "graphic"],
+    "writer": ["author", "content", "copywriter", "blogger", "journalist"],
+    "marketing": ["seo", "advertising", "promotion", "social", "digital"],
+    "website": ["web", "site", "webapp", "portal", "page"],
+    "mobile": ["app", "ios", "android", "application", "smartphone"],
+    "data": ["analytics", "statistics", "analysis", "database", "science"],
+    "backend": ["server", "api", "database", "infrastructure"],
+    "frontend": ["ui", "interface", "client", "responsive"],
+    "fullstack": ["full-stack", "full stack", "end-to-end"],
+  };
+
+  // Job routes with enhanced fuzzy search
   app.get("/api/jobs", requireAuth, async (req, res) => {
     try {
-      const jobs = await storage.getJobs({ status: "active" });
+      const { search, category, minBudget, maxBudget } = req.query;
+      
+      // Get all active jobs first
+      let jobs = await storage.getJobs({ status: "active" });
+      
+      // Apply category filter
+      if (category && category !== "All Categories") {
+        jobs = jobs.filter(j => j.category === category);
+      }
+      
+      // Apply fuzzy search with synonym expansion
+      if (search && typeof search === "string" && search.trim()) {
+        const searchTerm = search.toLowerCase().trim();
+        
+        // Expand search with synonyms
+        const expandedTerms = [searchTerm];
+        Object.entries(SYNONYMS).forEach(([key, synonyms]) => {
+          // Add synonyms if search term fuzzy matches the key or any synonym
+          if (fuzzyMatch(searchTerm, key, 0.75) || 
+              synonyms.some(s => fuzzyMatch(searchTerm, s, 0.75))) {
+            expandedTerms.push(key, ...synonyms);
+          }
+        });
+        
+        jobs = jobs.filter(job => {
+          const searchableText = `${job.title} ${job.description} ${job.category}`.toLowerCase();
+          const words = searchableText.split(/\s+/);
+          
+          // Check if any expanded term fuzzy matches any word in the searchable text
+          return expandedTerms.some(term => 
+            words.some(word => fuzzyMatch(term, word, 0.7)) ||
+            searchableText.includes(term)
+          );
+        });
+      }
+      
+      // Apply budget range filter
+      if (minBudget || maxBudget) {
+        jobs = jobs.filter(job => {
+          const budget = parseFloat(job.budget);
+          if (isNaN(budget)) return false;
+          
+          const min = minBudget ? parseFloat(minBudget as string) : 0;
+          const max = maxBudget ? parseFloat(maxBudget as string) : Infinity;
+          
+          return budget >= min && budget <= max;
+        });
+      }
+      
       res.json(jobs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
