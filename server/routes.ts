@@ -1610,6 +1610,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rating routes
+  app.post("/api/jobs/:jobId/rating", requireRole("customer"), async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await storage.getJob(jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+      
+      // Verify customer owns the job
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can rate this job" });
+      }
+      
+      // Verify job is completed
+      if (job.status !== "completed") {
+        return res.status(400).json({ error: "Can only rate completed jobs" });
+      }
+      
+      // Verify job has a freelancer
+      if (!job.freelancerId) {
+        return res.status(400).json({ error: "No freelancer to rate for this job" });
+      }
+      
+      // Check if rating already exists
+      const existingRating = await storage.getRating(jobId);
+      if (existingRating) {
+        return res.status(400).json({ error: "Rating already submitted for this job" });
+      }
+      
+      // Validate rating data
+      const validatedData = insertRatingSchema.parse({
+        jobId,
+        customerId: req.session.userId!,
+        freelancerId: job.freelancerId,
+        score: req.body.score,
+        review: req.body.review,
+      });
+      
+      // Create rating
+      const rating = await storage.createRating(validatedData);
+      
+      // Update freelancer's average rating and total ratings
+      const freelancer = await storage.getUser(job.freelancerId);
+      if (freelancer) {
+        const currentRating = parseFloat(freelancer.rating || "0");
+        const currentTotal = freelancer.totalRatings || 0;
+        const newAverage = ((currentRating * currentTotal) + rating.score) / (currentTotal + 1);
+        
+        await storage.updateUser(job.freelancerId, {
+          rating: newAverage.toFixed(2),
+          totalRatings: currentTotal + 1,
+        });
+      }
+      
+      res.json(rating);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  
+  app.get("/api/jobs/:jobId/rating", requireAuth, async (req, res) => {
+    try {
+      const rating = await storage.getRating(req.params.jobId);
+      if (!rating) {
+        return res.status(404).json({ error: "Rating not found" });
+      }
+      res.json(rating);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  
+  app.get("/api/freelancers/:freelancerId/ratings", requireAuth, async (req, res) => {
+    try {
+      const ratings = await storage.getRatingsByFreelancer(req.params.freelancerId);
+      res.json(ratings);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // PTO routes
   app.get("/api/pto", requireAuth, async (req, res) => {
     try {

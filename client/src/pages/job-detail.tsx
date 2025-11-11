@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -522,6 +522,9 @@ export default function JobDetailPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false);
+  const [ratingScore, setRatingScore] = useState(0);
+  const [ratingReview, setRatingReview] = useState("");
 
   const cancellationFormSchema = z.object({
     reason: z.string().min(10, "Reason must be at least 10 characters"),
@@ -544,6 +547,42 @@ export default function JobDetailPage() {
   const { data: searchResults = [] } = useQuery<any[]>({
     queryKey: ["/api/users/search", searchQuery],
     enabled: searchQuery.length > 2,
+  });
+
+  const { data: existingRating } = useQuery<any>({
+    queryKey: ["/api/jobs", jobId, "rating"],
+    queryFn: async () => {
+      const response = await fetch(`/api/jobs/${jobId}/rating`, { credentials: "include" });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("Failed to fetch rating");
+      return response.json();
+    },
+    enabled: !!jobId && job?.status === "completed",
+  });
+
+  const submitRatingMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/rating`, {
+      score: ratingScore,
+      review: ratingReview,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "rating"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      setIsRatingDialogOpen(false);
+      setRatingScore(0);
+      setRatingReview("");
+      toast({
+        title: "Rating submitted!",
+        description: "Thank you for rating this freelancer.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to submit rating",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
   });
 
   const claimJobMutation = useMutation({
@@ -1065,6 +1104,111 @@ export default function JobDetailPage() {
                     </Form>
                   </DialogContent>
                 </Dialog>
+              )}
+              
+              {/* Rating UI for customers on completed jobs */}
+              {user?.role === "customer" && job.status === "completed" && job.customerId === user.id && (
+                <div className="border-t pt-3 mt-3">
+                  {existingRating ? (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Your Rating</p>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`w-5 h-5 ${
+                              star <= existingRating.score
+                                ? "fill-yellow-400 text-yellow-400"
+                                : "text-gray-300"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      {existingRating.review && (
+                        <p className="text-sm text-muted-foreground italic">
+                          "{existingRating.review}"
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <Dialog open={isRatingDialogOpen} onOpenChange={setIsRatingDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button
+                          className="w-full"
+                          variant="default"
+                          data-testid="button-rate-job"
+                        >
+                          <Star className="w-4 h-4 mr-2" />
+                          Rate This Job
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Rate Freelancer</DialogTitle>
+                          <DialogDescription>
+                            Share your experience with this freelancer to help others make informed decisions.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Rating *</Label>
+                            <div className="flex gap-2">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <button
+                                  key={star}
+                                  type="button"
+                                  onClick={() => setRatingScore(star)}
+                                  className="transition-transform hover:scale-110"
+                                  data-testid={`button-star-${star}`}
+                                >
+                                  <Star
+                                    className={`w-8 h-8 ${
+                                      star <= ratingScore
+                                        ? "fill-yellow-400 text-yellow-400"
+                                        : "text-gray-300 hover:text-yellow-200"
+                                    }`}
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="review">Review (Optional)</Label>
+                            <Textarea
+                              id="review"
+                              placeholder="Share your experience working with this freelancer..."
+                              className="min-h-24"
+                              value={ratingReview}
+                              onChange={(e) => setRatingReview(e.target.value)}
+                              data-testid="textarea-rating-review"
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setIsRatingDialogOpen(false);
+                              setRatingScore(0);
+                              setRatingReview("");
+                            }}
+                            data-testid="button-cancel-rating"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={() => submitRatingMutation.mutate()}
+                            disabled={ratingScore === 0 || submitRatingMutation.isPending}
+                            data-testid="button-submit-rating"
+                          >
+                            {submitRatingMutation.isPending ? "Submitting..." : "Submit Rating"}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
