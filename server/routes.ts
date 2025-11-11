@@ -1120,6 +1120,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/profile/avatar", requireAuth, async (req, res) => {
+    try {
+      const { avatar } = req.body;
+      
+      if (!avatar || typeof avatar !== "string") {
+        return res.status(400).json({ error: "Invalid avatar data" });
+      }
+
+      if (!avatar.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Avatar must be a valid image data URL" });
+      }
+
+      const user = await storage.updateUser(req.session.userId!, { avatar });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ avatar: user.avatar });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Chat Message routes
   app.get("/api/jobs/:jobId/chat", requireAuth, async (req, res) => {
     try {

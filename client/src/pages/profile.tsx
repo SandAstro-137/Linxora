@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Briefcase, Star, TrendingUp, Clock, Edit2, Save } from "lucide-react";
+import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Camera } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { Separator } from "@/components/ui/separator";
 import { JobCard } from "@/components/job-card";
@@ -19,6 +19,7 @@ import type { WorkingHours } from "@shared/schema";
 export default function ProfilePage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditingHours, setIsEditingHours] = useState(false);
   const [workingHours, setWorkingHours] = useState({
     monday: { start: "", end: "" },
@@ -59,6 +60,54 @@ export default function ProfilePage() {
     },
   });
 
+  const updateAvatarMutation = useMutation({
+    mutationFn: (avatar: string) => apiRequest("PUT", "/api/profile/avatar", { avatar }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({
+        title: "Profile picture updated",
+        description: "Your new profile picture has been saved",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid file type",
+        description: "Please select an image file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "Please select an image smaller than 5MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      updateAvatarMutation.mutate(base64String);
+    };
+    reader.readAsDataURL(file);
+  };
+
   if (!user) return null;
 
   const initials = user.username
@@ -84,10 +133,30 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex flex-col items-center text-center">
-              <Avatar className="w-24 h-24 mb-4">
-                <AvatarImage src={user.avatar || undefined} alt={user.username} />
-                <AvatarFallback className="text-2xl">{initials}</AvatarFallback>
-              </Avatar>
+              <div className="relative mb-4">
+                <Avatar className="w-24 h-24">
+                  <AvatarImage src={user.avatar || undefined} alt={user.username} />
+                  <AvatarFallback className="text-2xl">{initials}</AvatarFallback>
+                </Avatar>
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  className="absolute bottom-0 right-0 h-8 w-8 rounded-full"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={updateAvatarMutation.isPending}
+                  data-testid="button-upload-avatar"
+                >
+                  <Camera className="h-4 w-4" />
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  data-testid="input-avatar-file"
+                />
+              </div>
               <h3 className="text-xl font-semibold mb-1" data-testid="text-username">
                 {user.username}
               </h3>
