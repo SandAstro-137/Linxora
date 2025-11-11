@@ -772,6 +772,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark job as completed
       const updatedJob = await storage.updateJob(req.params.id, { status: "completed" });
 
+      // Update freelancer stats (completed jobs, completion %, level)
+      const freelancer = await storage.getUser(job.freelancerId);
+      if (freelancer) {
+        // Get all jobs and filter for those assigned to this freelancer
+        // Include jobs where they are primary OR collaborator, deduplicated by job ID
+        const allJobs = await storage.getJobs();
+        const assignedJobsMap = new Map();
+        
+        for (const j of allJobs) {
+          // Include if freelancer is primary assignee or in collaborators array
+          if (j.freelancerId === job.freelancerId || 
+              j.collaborators?.includes(job.freelancerId!)) {
+            // Only count jobs that represent actual assignments (claimed, in progress, or completed)
+            // Exclude: pending (not approved), active (not claimed), freelancer_requested (not approved),
+            // rejected (moderator rejected), changes_requested (needs revision)
+            if (j.status === "claimed" || j.status === "in_progress" || j.status === "completed") {
+              assignedJobsMap.set(j.id, j);
+            }
+          }
+        }
+        
+        const assignedJobs = Array.from(assignedJobsMap.values());
+        
+        // Count completed jobs
+        const completedJobs = assignedJobs.filter(j => j.status === "completed").length;
+        
+        // Calculate completion percentage (avoid division by zero)
+        const totalJobs = assignedJobs.length;
+        const completionPercentage = totalJobs > 0 
+          ? ((completedJobs / totalJobs) * 100).toFixed(2)
+          : "0.00";
+        
+        // Determine level based on completed jobs
+        let newLevel = 1;
+        if (completedJobs >= 50) newLevel = 5;
+        else if (completedJobs >= 30) newLevel = 4;
+        else if (completedJobs >= 15) newLevel = 3;
+        else if (completedJobs >= 5) newLevel = 2;
+        
+        // Update user with new stats
+        await storage.updateUser(job.freelancerId, {
+          completedJobs,
+          completionPercentage,
+          level: newLevel,
+        });
+      }
+
       // Notify freelancer
       await storage.createNotification({
         userId: job.freelancerId,
