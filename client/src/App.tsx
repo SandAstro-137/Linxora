@@ -141,9 +141,20 @@ function AppContent() {
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex items-center justify-between p-4 border-b bg-background">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <div className="flex items-center gap-2">
+          <header className="flex flex-wrap items-center justify-between gap-4 p-4 border-b bg-background">
+            <div className="flex flex-wrap items-center gap-4">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <div className="flex flex-wrap items-center gap-2">
+                <img 
+                  src="/favicon.png" 
+                  alt="Pixelcut Logo" 
+                  className="h-8 w-8"
+                  data-testid="img-logo"
+                />
+                <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <ThemeToggle />
               <UserNav />
             </div>
