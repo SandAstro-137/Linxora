@@ -9,10 +9,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 
@@ -52,6 +53,9 @@ export default function JobDetailPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
 
   const jobId = params?.id;
 
@@ -100,6 +104,48 @@ export default function JobDetailPage() {
       toast({
         title: "Failed to send invitation",
         description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cancelJobMutation = useMutation({
+    mutationFn: async () => {
+      let proofUrl = null;
+
+      if (proofFile) {
+        const reader = new FileReader();
+        const fileData = await new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(proofFile);
+        });
+
+        const uploadResponse = await apiRequest("POST", "/api/uploads", {
+          fileName: proofFile.name,
+          fileData,
+        }) as { url: string };
+        proofUrl = uploadResponse.url;
+      }
+
+      return apiRequest("POST", "/api/cancellation-requests", {
+        jobId: jobId!,
+        reason: cancelReason,
+        proofUrl,
+      });
+    },
+    onSuccess: () => {
+      setIsCancelDialogOpen(false);
+      setCancelReason("");
+      setProofFile(null);
+      toast({
+        title: "Cancellation request submitted",
+        description: "Your request will be reviewed by an admin.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to submit cancellation request",
+        description: error.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -416,6 +462,88 @@ export default function JobDetailPage() {
                         data-testid="button-send-invitation"
                       >
                         {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+              {isJobOwner && (job.status === "claimed" || job.status === "in_progress") && (
+                <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="w-full"
+                      variant="destructive"
+                      data-testid="button-request-cancellation"
+                    >
+                      <XCircle className="w-4 h-4 mr-2" />
+                      Request Cancellation
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Request Job Cancellation</DialogTitle>
+                      <DialogDescription>
+                        Submit a cancellation request with a reason and proof. An admin will review your request.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="reason">Reason for Cancellation *</Label>
+                        <Textarea
+                          id="reason"
+                          placeholder="Explain why you need to cancel this job..."
+                          value={cancelReason}
+                          onChange={(e) => setCancelReason(e.target.value)}
+                          data-testid="textarea-cancel-reason"
+                          className="min-h-24"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="proof">Proof (Optional)</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="proof"
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+                            data-testid="input-proof-file"
+                          />
+                          {proofFile && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setProofFile(null)}
+                              data-testid="button-remove-proof"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                        {proofFile && (
+                          <p className="text-sm text-muted-foreground">
+                            Selected: {proofFile.name}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setIsCancelDialogOpen(false);
+                          setCancelReason("");
+                          setProofFile(null);
+                        }}
+                        data-testid="button-cancel-dialog"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => cancelJobMutation.mutate()}
+                        disabled={!cancelReason.trim() || cancelJobMutation.isPending}
+                        data-testid="button-submit-cancellation"
+                      >
+                        {cancelJobMutation.isPending ? "Submitting..." : "Submit Request"}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
