@@ -42,6 +42,30 @@ export const PTOStatus = {
 
 export type PTOStatusType = typeof PTOStatus[keyof typeof PTOStatus];
 
+// Cancellation Request status
+export const CancellationStatus = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  DECLINED: "declined",
+  NEEDS_MORE_EVIDENCE: "needs_more_evidence"
+} as const;
+
+export type CancellationStatusType = typeof CancellationStatus[keyof typeof CancellationStatus];
+
+// Level payout percentages
+export const LEVEL_PAYOUTS = {
+  1: 0.60,
+  2: 0.70,
+  3: 0.75,
+  4: 0.80,
+  5: 0.85
+} as const;
+
+export function getLevelPayout(level: number): number {
+  const clampedLevel = Math.max(1, Math.min(5, level)) as keyof typeof LEVEL_PAYOUTS;
+  return LEVEL_PAYOUTS[clampedLevel];
+}
+
 // Users table
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -85,11 +109,24 @@ export const jobs = pgTable("jobs", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertJobSchema = createInsertSchema(jobs).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const insertJobSchema = createInsertSchema(jobs)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    deadline: z.coerce.date().optional().refine(
+      (date) => {
+        if (!date) return true;
+        const now = new Date();
+        const threeWeeksFromNow = new Date(now);
+        threeWeeksFromNow.setDate(now.getDate() + 21);
+        return date >= threeWeeksFromNow;
+      },
+      { message: "Deadline must be at least 3 weeks from now" }
+    ),
+  });
 
 export type InsertJob = z.infer<typeof insertJobSchema>;
 export type Job = typeof jobs.$inferSelect;
@@ -149,11 +186,35 @@ export const ptoRequests = pgTable("pto_requests", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertPTORequestSchema = createInsertSchema(ptoRequests).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const insertPTORequestSchema = createInsertSchema(ptoRequests)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    startDate: z.coerce.date().refine(
+      (date) => {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        return date >= now;
+      },
+      { message: "Start date cannot be in the past" }
+    ),
+    endDate: z.coerce.date(),
+  })
+  .refine(
+    (data) => {
+      const tenYearsFromNow = new Date();
+      tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
+      return data.startDate <= tenYearsFromNow && data.endDate <= tenYearsFromNow;
+    },
+    { message: "PTO dates cannot be more than 10 years in the future" }
+  )
+  .refine(
+    (data) => data.endDate >= data.startDate,
+    { message: "End date must be after or equal to start date" }
+  );
 
 export type InsertPTORequest = z.infer<typeof insertPTORequestSchema>;
 export type PTORequest = typeof ptoRequests.$inferSelect;
@@ -175,3 +236,26 @@ export const insertInvitationSchema = createInsertSchema(invitations).omit({
 
 export type InsertInvitation = z.infer<typeof insertInvitationSchema>;
 export type Invitation = typeof invitations.$inferSelect;
+
+// Cancellation Requests table
+export const cancellationRequests = pgTable("cancellation_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  requesterId: varchar("requester_id").notNull(),
+  reason: text("reason").notNull(),
+  proofUrl: text("proof_url"),
+  status: text("status").notNull().default(CancellationStatus.PENDING),
+  reviewerId: varchar("reviewer_id"),
+  reviewNotes: text("review_notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCancellationRequestSchema = createInsertSchema(cancellationRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertCancellationRequest = z.infer<typeof insertCancellationRequestSchema>;
+export type CancellationRequest = typeof cancellationRequests.$inferSelect;
