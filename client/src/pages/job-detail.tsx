@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
@@ -16,6 +17,9 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 
 interface EnrichedJob {
   id: string;
@@ -54,8 +58,18 @@ export default function JobDetailPage() {
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
-  const [cancelReason, setCancelReason] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
+
+  const cancellationFormSchema = z.object({
+    reason: z.string().min(10, "Reason must be at least 10 characters"),
+  });
+
+  const cancellationForm = useForm<z.infer<typeof cancellationFormSchema>>({
+    resolver: zodResolver(cancellationFormSchema),
+    defaultValues: {
+      reason: "",
+    },
+  });
 
   const jobId = params?.id;
 
@@ -110,7 +124,7 @@ export default function JobDetailPage() {
   });
 
   const cancelJobMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (data: z.infer<typeof cancellationFormSchema>) => {
       let proofUrl = null;
 
       if (proofFile) {
@@ -129,13 +143,14 @@ export default function JobDetailPage() {
 
       return apiRequest("POST", "/api/cancellation-requests", {
         jobId: jobId!,
-        reason: cancelReason,
+        requesterId: user!.id,
+        reason: data.reason,
         proofUrl,
       });
     },
     onSuccess: () => {
       setIsCancelDialogOpen(false);
-      setCancelReason("");
+      cancellationForm.reset();
       setProofFile(null);
       toast({
         title: "Cancellation request submitted",
@@ -486,66 +501,77 @@ export default function JobDetailPage() {
                         Submit a cancellation request with a reason and proof. An admin will review your request.
                       </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="reason">Reason for Cancellation *</Label>
-                        <Textarea
-                          id="reason"
-                          placeholder="Explain why you need to cancel this job..."
-                          value={cancelReason}
-                          onChange={(e) => setCancelReason(e.target.value)}
-                          data-testid="textarea-cancel-reason"
-                          className="min-h-24"
+                    <Form {...cancellationForm}>
+                      <form onSubmit={cancellationForm.handleSubmit((data) => cancelJobMutation.mutate(data))} className="space-y-4">
+                        <FormField
+                          control={cancellationForm.control}
+                          name="reason"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Reason for Cancellation *</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="Explain why you need to cancel this job..."
+                                  className="min-h-24"
+                                  data-testid="textarea-cancel-reason"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
                         />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="proof">Proof (Optional)</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            id="proof"
-                            type="file"
-                            accept="image/*,.pdf"
-                            onChange={(e) => setProofFile(e.target.files?.[0] || null)}
-                            data-testid="input-proof-file"
-                          />
+                        <div className="space-y-2">
+                          <Label htmlFor="proof">Proof (Optional)</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="proof"
+                              type="file"
+                              accept="image/*,.pdf"
+                              onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+                              data-testid="input-proof-file"
+                            />
+                            {proofFile && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setProofFile(null)}
+                                data-testid="button-remove-proof"
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
                           {proofFile && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setProofFile(null)}
-                              data-testid="button-remove-proof"
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </Button>
+                            <p className="text-sm text-muted-foreground">
+                              Selected: {proofFile.name}
+                            </p>
                           )}
                         </div>
-                        {proofFile && (
-                          <p className="text-sm text-muted-foreground">
-                            Selected: {proofFile.name}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setIsCancelDialogOpen(false);
-                          setCancelReason("");
-                          setProofFile(null);
-                        }}
-                        data-testid="button-cancel-dialog"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => cancelJobMutation.mutate()}
-                        disabled={!cancelReason.trim() || cancelJobMutation.isPending}
-                        data-testid="button-submit-cancellation"
-                      >
-                        {cancelJobMutation.isPending ? "Submitting..." : "Submit Request"}
-                      </Button>
-                    </DialogFooter>
+                        <DialogFooter>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setIsCancelDialogOpen(false);
+                              cancellationForm.reset();
+                              setProofFile(null);
+                            }}
+                            data-testid="button-cancel-dialog"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={cancelJobMutation.isPending}
+                            data-testid="button-submit-cancellation"
+                          >
+                            {cancelJobMutation.isPending ? "Submitting..." : "Submit Request"}
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </Form>
                   </DialogContent>
                 </Dialog>
               )}
