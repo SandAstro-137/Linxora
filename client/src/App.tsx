@@ -9,6 +9,10 @@ import { ThemeProvider } from "@/lib/theme-provider";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserNav } from "@/components/user-nav";
+import { OnboardingModal } from "@/components/OnboardingModal";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useState, useEffect } from "react";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
@@ -125,7 +129,33 @@ function Router() {
 }
 
 function AppContent() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
+  const { toast } = useToast();
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    if (user && !user.onboardingCompleted) {
+      setShowOnboarding(true);
+    }
+  }, [user]);
+
+  const handleCompleteOnboarding = async () => {
+    try {
+      await apiRequest("POST", "/api/auth/complete-onboarding", {});
+      setShowOnboarding(false);
+      refetchUser();
+      toast({
+        title: "Welcome to Pixelcut!",
+        description: "You're all set to get started.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to complete onboarding. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const style = {
     "--sidebar-width": "16rem",
@@ -137,35 +167,42 @@ function AppContent() {
   }
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex flex-wrap items-center justify-between gap-4 p-4 border-b bg-background">
-            <div className="flex flex-wrap items-center gap-4">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <div className="flex flex-wrap items-center gap-2">
-                <img 
-                  src="/favicon.png" 
-                  alt="Pixelcut Logo" 
-                  className="h-10 max-h-12"
-                  style={{ objectFit: "contain" }}
-                  data-testid="img-logo"
-                />
-                <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
+    <>
+      <SidebarProvider style={style as React.CSSProperties}>
+        <div className="flex h-screen w-full">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <header className="flex flex-wrap items-center justify-between gap-4 p-4 border-b bg-background">
+              <div className="flex flex-wrap items-center gap-4">
+                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <img 
+                    src="/favicon.png" 
+                    alt="Pixelcut Logo" 
+                    className="h-10 max-h-12"
+                    style={{ objectFit: "contain" }}
+                    data-testid="img-logo"
+                  />
+                  <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <ThemeToggle />
-              <UserNav />
-            </div>
-          </header>
-          <main className="flex-1 overflow-y-auto p-6">
-            <Router />
-          </main>
+              <div className="flex flex-wrap items-center gap-2">
+                <ThemeToggle />
+                <UserNav />
+              </div>
+            </header>
+            <main className="flex-1 overflow-y-auto p-6">
+              <Router />
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+      <OnboardingModal
+        user={user}
+        open={showOnboarding}
+        onComplete={handleCompleteOnboarding}
+      />
+    </>
   );
 }
 

@@ -189,6 +189,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Mark onboarding as completed
+  app.post("/api/auth/complete-onboarding", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.updateUser(req.session.userId!, {
+        onboardingCompleted: true,
+      });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Dashboard stats
   app.get("/api/dashboard/stats", requireAuth, async (req, res) => {
     try {

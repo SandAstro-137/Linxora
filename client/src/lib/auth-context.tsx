@@ -6,6 +6,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (discordId?: string) => void;
   logout: () => void;
+  refetchUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -72,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refetchUser: checkAuth }}>
       {children}
     </AuthContext.Provider>
   );
