@@ -23,7 +23,10 @@ Pixelcut connects freelancers with customers through a moderated job board syste
   - Profits automatically split equally among all team members (2 people = 50/50, 4 people = 25/25/25/25, etc.)
   - Visual display of each team member's share and percentage
 - **Job Creation**: Customers can create job posts (requires moderator approval)
-- **Moderation Queue**: Staff and moderators approve/reject pending jobs
+- **Moderation Queue**: Staff and moderators can approve, reject, or request changes to pending jobs
+  - **Request Changes**: Moderators can provide specific feedback for customers to address
+  - Customers receive notifications and can edit/resubmit jobs directly from My Jobs page
+  - Jobs with requested changes are clearly marked with moderator feedback displayed
 
 ### Crypto Wallet
 - Track balances in USDT, SOL, BTC, and LTC
@@ -120,7 +123,9 @@ The Replit Discord connector is currently used for app-level Discord integration
 ### Jobs
 - `GET /api/jobs` - List active jobs
 - `GET /api/jobs/:id` - Get job details with enriched data (customer info, collaborators, profit splits)
+- `GET /api/my-jobs` - Get all jobs created by current user (all statuses)
 - `POST /api/jobs` - Create new job (requires customer role)
+- `PUT /api/jobs/:id` - Edit existing job (resets status to pending)
 - `POST /api/jobs/:id/claim` - Claim a job (changes status from active to claimed)
 - `POST /api/jobs/:jobId/invite` - Invite freelancer to join team
 
@@ -138,6 +143,7 @@ The Replit Discord connector is currently used for app-level Discord integration
 - `GET /api/moderation/pending` - Get pending jobs
 - `POST /api/moderation/:id/approve` - Approve job
 - `POST /api/moderation/:id/reject` - Reject job
+- `POST /api/moderation/:id/request-changes` - Request changes with feedback
 
 ### PTO
 - `GET /api/pto` - Get PTO requests
@@ -150,6 +156,12 @@ The application runs on port 5000 and serves both the API and frontend. Hot relo
 ## Recent Changes (November 2025)
 
 ### New Features Implemented
+- **Request Changes Workflow**: Complete moderation feedback system
+  - Moderators can request specific changes with detailed feedback
+  - Customers receive notifications and see feedback in My Jobs page
+  - Edit & Resubmit flow allows customers to update jobs and resubmit for review
+  - Jobs automatically reset to "pending" status when resubmitted
+  - Frontend query param detection enables seamless edit mode transitions
 - **Job Detail Page** (`/jobs/:id`): 
   - Full job description and requirements display
   - Customer Discord username visible to freelancers
@@ -167,6 +179,8 @@ The application runs on port 5000 and serves both the API and frontend. Hot relo
 - **Enhanced API Endpoints**:
   - Enriched `/api/jobs/:id` endpoint returns customer info, collaborator details, and calculated profit splits
   - User search endpoint for finding team members to invite
+  - `GET /api/my-jobs` for customer job management
+  - `PUT /api/jobs/:id` for job editing and resubmission
 
 ### Technical Improvements
 - Fixed TypeScript type errors in storage layer
