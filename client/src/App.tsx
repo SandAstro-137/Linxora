@@ -148,8 +148,8 @@ function AppContent() {
                 <img 
                   src="/favicon.png" 
                   alt="Pixelcut Logo" 
-                  className="h-10 max-h-12 -mr-2"
-                  style={{ objectFit: "contain", transform: "translateX(-4px)" }}
+                  className="h-10 max-h-12"
+                  style={{ objectFit: "contain" }}
                   data-testid="img-logo"
                 />
                 <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
