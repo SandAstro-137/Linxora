@@ -81,6 +81,9 @@ export const users = pgTable("users", {
   workingHours: jsonb("working_hours").default(sql`'{}'::jsonb`),
   completedJobs: integer("completed_jobs").default(0),
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0"),
+  onboardingCompleted: boolean("onboarding_completed").default(false),
+  totalRatings: integer("total_ratings").default(0),
+  completionPercentage: decimal("completion_percentage", { precision: 5, scale: 2 }).default("0"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -324,3 +327,78 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Notification = typeof notifications.$inferSelect;
+
+// Team Notes table
+export const teamNotes = pgTable("team_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  authorId: varchar("author_id").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTeamNoteSchema = createInsertSchema(teamNotes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertTeamNote = z.infer<typeof insertTeamNoteSchema>;
+export type TeamNote = typeof teamNotes.$inferSelect;
+
+// Team Tasks table
+export const TaskStatus = {
+  TODO: "todo",
+  IN_PROGRESS: "in_progress",
+  DONE: "done"
+} as const;
+
+export type TaskStatusType = typeof TaskStatus[keyof typeof TaskStatus];
+
+export const teamTasks = pgTable("team_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  assigneeId: varchar("assignee_id"),
+  status: text("status").notNull().default(TaskStatus.TODO),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTeamTaskSchema = createInsertSchema(teamTasks)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    status: z.enum([TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.DONE]).optional(),
+  });
+
+export type InsertTeamTask = z.infer<typeof insertTeamTaskSchema>;
+export type TeamTask = typeof teamTasks.$inferSelect;
+
+// Ratings table
+export const ratings = pgTable("ratings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull().unique(),
+  customerId: varchar("customer_id").notNull(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  score: integer("score").notNull(),
+  review: text("review"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRatingSchema = createInsertSchema(ratings)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    score: z.number().min(1).max(5),
+  });
+
+export type InsertRating = z.infer<typeof insertRatingSchema>;
+export type Rating = typeof ratings.$inferSelect;

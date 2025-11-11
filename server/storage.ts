@@ -17,6 +17,12 @@ import {
   type InsertChatMessage,
   type Notification,
   type InsertNotification,
+  type TeamNote,
+  type InsertTeamNote,
+  type TeamTask,
+  type InsertTeamTask,
+  type Rating,
+  type InsertRating,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -75,6 +81,23 @@ export interface IStorage {
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationAsRead(id: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
+
+  // Team Note operations
+  getTeamNotes(jobId: string): Promise<TeamNote[]>;
+  createTeamNote(note: InsertTeamNote): Promise<TeamNote>;
+  updateTeamNote(id: string, note: Partial<TeamNote>): Promise<TeamNote | undefined>;
+  deleteTeamNote(id: string): Promise<void>;
+
+  // Team Task operations
+  getTeamTasks(jobId: string): Promise<TeamTask[]>;
+  createTeamTask(task: InsertTeamTask): Promise<TeamTask>;
+  updateTeamTask(id: string, task: Partial<TeamTask>): Promise<TeamTask | undefined>;
+  deleteTeamTask(id: string): Promise<void>;
+
+  // Rating operations
+  getRating(jobId: string): Promise<Rating | undefined>;
+  getRatingsByFreelancer(freelancerId: string): Promise<Rating[]>;
+  createRating(rating: InsertRating): Promise<Rating>;
 }
 
 export class MemStorage implements IStorage {
@@ -87,6 +110,9 @@ export class MemStorage implements IStorage {
   private cancellationRequests: Map<string, CancellationRequest>;
   private chatMessages: Map<string, ChatMessage>;
   private notifications: Map<string, Notification>;
+  private teamNotes: Map<string, TeamNote>;
+  private teamTasks: Map<string, TeamTask>;
+  private ratings: Map<string, Rating>;
 
   constructor() {
     this.users = new Map();
@@ -98,6 +124,9 @@ export class MemStorage implements IStorage {
     this.cancellationRequests = new Map();
     this.chatMessages = new Map();
     this.notifications = new Map();
+    this.teamNotes = new Map();
+    this.teamTasks = new Map();
+    this.ratings = new Map();
   }
 
   // User operations
@@ -129,6 +158,9 @@ export class MemStorage implements IStorage {
       level: insertUser.level ?? 1,
       completedJobs: insertUser.completedJobs ?? 0,
       rating: insertUser.rating ?? "0",
+      onboardingCompleted: insertUser.onboardingCompleted ?? false,
+      totalRatings: insertUser.totalRatings ?? 0,
+      completionPercentage: insertUser.completionPercentage ?? "0",
       workingHours: insertUser.workingHours ?? {},
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -185,6 +217,7 @@ export class MemStorage implements IStorage {
       requirements: insertJob.requirements ?? null,
       deadline: insertJob.deadline ?? null,
       collaborators: insertJob.collaborators ?? [],
+      moderatorFeedback: insertJob.moderatorFeedback ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -436,6 +469,98 @@ export class MemStorage implements IStorage {
         this.notifications.set(id, { ...notification, read: true });
       }
     }
+  }
+
+  // Team Note operations
+  async getTeamNotes(jobId: string): Promise<TeamNote[]> {
+    return Array.from(this.teamNotes.values())
+      .filter((note) => note.jobId === jobId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createTeamNote(insertNote: InsertTeamNote): Promise<TeamNote> {
+    const id = randomUUID();
+    const note: TeamNote = {
+      ...insertNote,
+      id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.teamNotes.set(id, note);
+    return note;
+  }
+
+  async updateTeamNote(id: string, updates: Partial<TeamNote>): Promise<TeamNote | undefined> {
+    const note = this.teamNotes.get(id);
+    if (!note) return undefined;
+    const updated = { ...note, ...updates, updatedAt: new Date() };
+    this.teamNotes.set(id, updated);
+    return updated;
+  }
+
+  async deleteTeamNote(id: string): Promise<void> {
+    this.teamNotes.delete(id);
+  }
+
+  // Team Task operations
+  async getTeamTasks(jobId: string): Promise<TeamTask[]> {
+    return Array.from(this.teamTasks.values())
+      .filter((task) => task.jobId === jobId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createTeamTask(insertTask: InsertTeamTask): Promise<TeamTask> {
+    const id = randomUUID();
+    const task: TeamTask = {
+      ...insertTask,
+      id,
+      description: insertTask.description ?? null,
+      assigneeId: insertTask.assigneeId ?? null,
+      status: insertTask.status ?? "todo",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.teamTasks.set(id, task);
+    return task;
+  }
+
+  async updateTeamTask(id: string, updates: Partial<TeamTask>): Promise<TeamTask | undefined> {
+    const task = this.teamTasks.get(id);
+    if (!task) return undefined;
+    const updated = { ...task, ...updates, updatedAt: new Date() };
+    this.teamTasks.set(id, updated);
+    return updated;
+  }
+
+  async deleteTeamTask(id: string): Promise<void> {
+    this.teamTasks.delete(id);
+  }
+
+  // Rating operations
+  async getRating(jobId: string): Promise<Rating | undefined> {
+    return Array.from(this.ratings.values()).find((rating) => rating.jobId === jobId);
+  }
+
+  async getRatingsByFreelancer(freelancerId: string): Promise<Rating[]> {
+    return Array.from(this.ratings.values())
+      .filter((rating) => rating.freelancerId === freelancerId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createRating(insertRating: InsertRating): Promise<Rating> {
+    const existing = await this.getRating(insertRating.jobId);
+    if (existing) {
+      throw new Error(`Rating already exists for job ${insertRating.jobId}`);
+    }
+    const id = randomUUID();
+    const rating: Rating = {
+      ...insertRating,
+      id,
+      review: insertRating.review ?? null,
+      createdAt: new Date(),
+    };
+    this.ratings.set(id, rating);
+    return rating;
   }
 }
 
