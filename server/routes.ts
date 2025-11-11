@@ -503,7 +503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No pending freelancer request for this job" });
       }
 
-      // Transfer funds from customer wallet to company Exodus account
+      // Check if customer has enough available balance (total - pending)
       const customerWallet = await storage.getWallet(req.session.userId!);
       if (!customerWallet) {
         return res.status(404).json({ error: "Customer wallet not found" });
@@ -511,26 +511,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const jobBudget = parseFloat(job.budget);
       const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
+      const customerPending = parseFloat(customerWallet.pendingUsdtBalance || "0");
+      const availableBalance = customerUSDT - customerPending;
 
-      if (customerUSDT < jobBudget) {
-        return res.status(400).json({ error: "Insufficient USDT balance to approve this job" });
+      if (availableBalance < jobBudget) {
+        return res.status(400).json({ error: "Insufficient available USDT balance to approve this job" });
       }
 
-      // Deduct from customer wallet
-      await storage.updateWallet(req.session.userId!, {
-        usdtBalance: (customerUSDT - jobBudget).toFixed(8),
-      });
-
-      // Record transaction
-      await storage.createTransaction({
-        walletId: customerWallet.id,
-        type: "withdrawal",
-        currency: "USDT",
-        amount: jobBudget.toFixed(8),
-        usdAmount: jobBudget.toFixed(2),
-        status: "completed",
-        transactionHash: `exodus-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-      });
+      // Add to customer's pending balance (funds are now locked for this job)
+      await storage.adjustPendingBalance(req.session.userId!, jobBudget);
 
       // Update job status to claimed
       const updatedJob = await storage.updateJob(req.params.id, {
@@ -597,6 +586,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updatedJob);
     } catch (error) {
       console.error("Error rejecting freelancer:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Job completion route
+  app.post("/api/jobs/:id/complete", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only customer or admin can mark job as complete
+      const user = await storage.getUser(req.session.userId!);
+      if (job.customerId !== req.session.userId! && user?.role !== "staff" && user?.role !== "moderator") {
+        return res.status(403).json({ error: "Only the customer or admin can complete this job" });
+      }
+
+      if (job.status !== "claimed" && job.status !== "in_progress") {
+        return res.status(400).json({ error: "Job must be claimed or in progress to complete" });
+      }
+
+      if (!job.freelancerId) {
+        return res.status(400).json({ error: "No freelancer assigned to this job" });
+      }
+
+      // Release pending funds from customer
+      const jobBudget = parseFloat(job.budget);
+      await storage.adjustPendingBalance(job.customerId, -jobBudget);
+
+      // Get customer wallet to deduct funds
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (customerUSDT - jobBudget).toFixed(8),
+        });
+
+        // Create customer transaction
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "withdrawal",
+          currency: "USDT",
+          amount: jobBudget.toFixed(8),
+          usdAmount: jobBudget.toFixed(2),
+          status: "completed",
+          transactionHash: `job-payment-${job.id}`,
+        });
+      }
+
+      // Transfer funds to freelancer
+      const freelancerWallet = await storage.getWallet(job.freelancerId);
+      if (freelancerWallet) {
+        const freelancerUSDT = parseFloat(freelancerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.freelancerId, {
+          usdtBalance: (freelancerUSDT + jobBudget).toFixed(8),
+        });
+
+        // Create freelancer transaction
+        await storage.createTransaction({
+          walletId: freelancerWallet.id,
+          type: "deposit",
+          currency: "USDT",
+          amount: jobBudget.toFixed(8),
+          usdAmount: jobBudget.toFixed(2),
+          status: "completed",
+          transactionHash: `job-payment-${job.id}`,
+        });
+      }
+
+      // Mark job as completed
+      const updatedJob = await storage.updateJob(req.params.id, { status: "completed" });
+
+      // Notify freelancer
+      await storage.createNotification({
+        userId: job.freelancerId,
+        type: "job_completed",
+        title: "Job completed!",
+        message: `The job "${job.title}" has been completed and payment of $${jobBudget} USDT has been transferred to your wallet.`,
+        relatedId: job.id,
+      });
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error completing job:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -846,18 +920,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Cancellation request not found" });
       }
 
+      const job = await storage.getJob(request.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
       const updatedRequest = await storage.updateCancellationRequest(req.params.id, {
         status: "approved",
         reviewerId: req.session.userId!,
         reviewNotes: req.body.reviewNotes || null,
       });
 
-      const job = await storage.updateJob(request.jobId, { 
+      // Release pending funds back to customer (make them available again)
+      const jobBudget = parseFloat(job.budget);
+      await storage.adjustPendingBalance(job.customerId, -jobBudget);
+
+      const updatedJob = await storage.updateJob(request.jobId, { 
         status: "active",
         freelancerId: null,
       });
 
-      res.json({ request: updatedRequest, job });
+      res.json({ request: updatedRequest, job: updatedJob });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -909,7 +992,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           walletAddress: `0x${Math.random().toString(36).substring(2, 15)}`,
         });
       }
-      res.json(wallet);
+      
+      // Calculate available balance
+      const totalBalance = parseFloat(wallet.usdtBalance || "0");
+      const pendingBalance = parseFloat(wallet.pendingUsdtBalance || "0");
+      const availableBalance = totalBalance - pendingBalance;
+      
+      // Return wallet with calculated available balance
+      res.json({
+        ...wallet,
+        availableUsdtBalance: availableBalance.toFixed(8),
+      });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -951,7 +1044,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentBalance = parseFloat(wallet[currencyKey] as string);
       const withdrawAmount = parseFloat(amount);
 
-      if (currentBalance < withdrawAmount) {
+      // For USDT, check available balance (total - pending)
+      if (currency.toUpperCase() === "USDT") {
+        const pendingBalance = parseFloat(wallet.pendingUsdtBalance || "0");
+        const availableBalance = currentBalance - pendingBalance;
+        
+        if (availableBalance < withdrawAmount) {
+          return res.status(400).json({ 
+            error: "Insufficient available balance",
+            details: `You have ${availableBalance.toFixed(2)} USDT available (${pendingBalance.toFixed(2)} USDT locked in active jobs)`
+          });
+        }
+      } else if (currentBalance < withdrawAmount) {
         return res.status(400).json({ error: "Insufficient balance" });
       }
 

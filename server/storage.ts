@@ -47,6 +47,7 @@ export interface IStorage {
   getWallet(userId: string): Promise<Wallet | undefined>;
   createWallet(wallet: InsertWallet): Promise<Wallet>;
   updateWallet(userId: string, wallet: Partial<Wallet>): Promise<Wallet | undefined>;
+  adjustPendingBalance(userId: string, amount: number): Promise<Wallet | undefined>;
 
   // Transaction operations
   getTransactions(walletId: string): Promise<Transaction[]>;
@@ -251,6 +252,7 @@ export class MemStorage implements IStorage {
       id,
       walletAddress: insertWallet.walletAddress ?? null,
       usdtBalance: insertWallet.usdtBalance ?? "0",
+      pendingUsdtBalance: insertWallet.pendingUsdtBalance ?? "0",
       solBalance: insertWallet.solBalance ?? "0",
       btcBalance: insertWallet.btcBalance ?? "0",
       ltcBalance: insertWallet.ltcBalance ?? "0",
@@ -267,6 +269,14 @@ export class MemStorage implements IStorage {
     const updated = { ...wallet, ...updates, updatedAt: new Date() };
     this.wallets.set(wallet.id, updated);
     return updated;
+  }
+
+  async adjustPendingBalance(userId: string, amount: number): Promise<Wallet | undefined> {
+    const wallet = await this.getWallet(userId);
+    if (!wallet) return undefined;
+    const currentPending = parseFloat(wallet.pendingUsdtBalance ?? "0");
+    const newPending = Math.max(0, currentPending + amount); // Never go below 0
+    return this.updateWallet(userId, { pendingUsdtBalance: newPending.toString() });
   }
 
   // Transaction operations

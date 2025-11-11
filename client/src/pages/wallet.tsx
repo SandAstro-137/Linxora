@@ -6,12 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Wallet as WalletIcon, TrendingUp, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { Wallet as WalletIcon, TrendingUp, ArrowDownCircle, ArrowUpCircle, Lock, CheckCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { formatDistanceToNow } from "date-fns";
 
 interface CryptoPrice {
@@ -23,6 +23,8 @@ interface WalletData {
   id: string;
   userId: string;
   usdtBalance: string;
+  pendingUsdtBalance: string;
+  availableUsdtBalance: string;
   solBalance: string;
   btcBalance: string;
   ltcBalance: string;
@@ -35,6 +37,11 @@ export default function WalletPage() {
   const [withdrawalCurrency, setWithdrawalCurrency] = useState("USDT");
   const [withdrawalAmount, setWithdrawalAmount] = useState("");
   const [withdrawalAddress, setWithdrawalAddress] = useState("");
+  
+  // Transaction filters
+  const [filterType, setFilterType] = useState<string>("all");
+  const [filterCurrency, setFilterCurrency] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
 
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
@@ -48,6 +55,16 @@ export default function WalletPage() {
   const { data: transactions = [] } = useQuery<any[]>({
     queryKey: ["/api/wallet/transactions"],
   });
+
+  // Filter transactions
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((tx: any) => {
+      const matchesType = filterType === "all" || tx.type === filterType;
+      const matchesCurrency = filterCurrency === "all" || tx.currency === filterCurrency;
+      const matchesStatus = filterStatus === "all" || tx.status === filterStatus;
+      return matchesType && matchesCurrency && matchesStatus;
+    });
+  }, [transactions, filterType, filterCurrency, filterStatus]);
 
   const withdrawMutation = useMutation({
     mutationFn: (data: { currency: string; amount: string; address: string }) =>
@@ -216,20 +233,60 @@ export default function WalletPage() {
         </Dialog>
       </div>
 
-      <Card className="bg-gradient-to-br from-primary/10 via-background to-accent/5">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <WalletIcon className="w-5 h-5" />
-            Total Balance
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-5xl font-bold mb-2" data-testid="text-total-balance">
-            ${calculateTotalUSD().toFixed(2)}
-          </div>
-          <p className="text-sm text-muted-foreground">USD Equivalent</p>
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="bg-gradient-to-br from-primary/10 via-background to-accent/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <WalletIcon className="w-5 h-5" />
+              Total Balance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-5xl font-bold mb-2" data-testid="text-total-balance">
+              ${calculateTotalUSD().toFixed(2)}
+            </div>
+            <p className="text-sm text-muted-foreground">USD Equivalent</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              USDT Balance Breakdown
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-500" />
+                  <span className="text-sm">Available</span>
+                </div>
+                <span className="font-mono font-semibold" data-testid="text-available-balance">
+                  {wallet && parseFloat(wallet.availableUsdtBalance || "0").toFixed(2)} USDT
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-orange-500" />
+                  <span className="text-sm">Pending (Locked)</span>
+                </div>
+                <span className="font-mono text-muted-foreground" data-testid="text-pending-balance">
+                  {wallet && parseFloat(wallet.pendingUsdtBalance || "0").toFixed(2)} USDT
+                </span>
+              </div>
+              <div className="pt-2 border-t">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Total USDT</span>
+                  <span className="font-mono font-bold">
+                    {wallet && parseFloat(wallet.usdtBalance || "0").toFixed(2)} USDT
+                  </span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {wallet && renderCurrencyCard("Tether", wallet.usdtBalance, "USDT", "💵")}
@@ -240,8 +297,46 @@ export default function WalletPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Transaction History</CardTitle>
-          <CardDescription>Recent deposits and withdrawals</CardDescription>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <CardTitle>Transaction History</CardTitle>
+              <CardDescription>Recent deposits and withdrawals</CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Select value={filterType} onValueChange={setFilterType}>
+                <SelectTrigger className="w-32" data-testid="select-filter-type">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="deposit">Deposits</SelectItem>
+                  <SelectItem value="withdrawal">Withdrawals</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterCurrency} onValueChange={setFilterCurrency}>
+                <SelectTrigger className="w-32" data-testid="select-filter-currency">
+                  <SelectValue placeholder="Currency" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Currencies</SelectItem>
+                  <SelectItem value="USDT">USDT</SelectItem>
+                  <SelectItem value="SOL">SOL</SelectItem>
+                  <SelectItem value="BTC">BTC</SelectItem>
+                  <SelectItem value="LTC">LTC</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-32" data-testid="select-filter-status">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -256,8 +351,8 @@ export default function WalletPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {transactions && transactions.length > 0 ? (
-                transactions.map((tx: any) => (
+              {filteredTransactions && filteredTransactions.length > 0 ? (
+                filteredTransactions.map((tx: any) => (
                   <TableRow key={tx.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">

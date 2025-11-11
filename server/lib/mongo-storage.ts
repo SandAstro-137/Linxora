@@ -18,6 +18,12 @@ import {
   type InsertChatMessage,
   type Notification,
   type InsertNotification,
+  type TeamNote,
+  type InsertTeamNote,
+  type TeamTask,
+  type InsertTeamTask,
+  type Rating,
+  type InsertRating,
 } from "@shared/schema";
 import type { IStorage } from "../storage";
 
@@ -33,6 +39,9 @@ export class MongoStorage implements IStorage {
   private cancellationRequests: Collection;
   private chatMessages: Collection;
   private notifications: Collection;
+  private teamNotes: Collection;
+  private teamTasks: Collection;
+  private ratings: Collection;
 
   constructor(mongoUri: string) {
     // Add connection options if not already in URI
@@ -55,6 +64,9 @@ export class MongoStorage implements IStorage {
     this.cancellationRequests = this.db.collection('cancellationRequests');
     this.chatMessages = this.db.collection('chatMessages');
     this.notifications = this.db.collection('notifications');
+    this.teamNotes = this.db.collection('teamNotes');
+    this.teamTasks = this.db.collection('teamTasks');
+    this.ratings = this.db.collection('ratings');
   }
 
   async connect(): Promise<void> {
@@ -89,6 +101,14 @@ export class MongoStorage implements IStorage {
     await this.chatMessages.createIndex({ receiverId: 1 });
     await this.notifications.createIndex({ userId: 1 });
     await this.notifications.createIndex({ read: 1 });
+    await this.teamNotes.createIndex({ jobId: 1 });
+    await this.teamNotes.createIndex({ authorId: 1 });
+    await this.teamTasks.createIndex({ jobId: 1 });
+    await this.teamTasks.createIndex({ assigneeId: 1 });
+    await this.teamTasks.createIndex({ status: 1 });
+    await this.ratings.createIndex({ jobId: 1 }, { unique: true });
+    await this.ratings.createIndex({ freelancerId: 1 });
+    await this.ratings.createIndex({ customerId: 1 });
   }
 
   private toUser(doc: any): User {
@@ -104,6 +124,9 @@ export class MongoStorage implements IStorage {
       workingHours: doc.workingHours ?? null,
       completedJobs: doc.completedJobs ?? null,
       rating: doc.rating ?? null,
+      onboardingCompleted: doc.onboardingCompleted ?? false,
+      totalRatings: doc.totalRatings ?? 0,
+      completionPercentage: doc.completionPercentage ?? "0",
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };
@@ -121,7 +144,8 @@ export class MongoStorage implements IStorage {
       deadline: doc.deadline ?? null,
       status: doc.status,
       freelancerId: doc.freelancerId ?? null,
-      collaborators: doc.collaborators ?? null,
+      collaborators: doc.collaborators ?? [],
+      moderatorFeedback: doc.moderatorFeedback ?? null,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };
@@ -132,6 +156,7 @@ export class MongoStorage implements IStorage {
       id: doc._id.toString(),
       userId: doc.userId,
       usdtBalance: doc.usdtBalance ?? null,
+      pendingUsdtBalance: doc.pendingUsdtBalance ?? "0",
       solBalance: doc.solBalance ?? null,
       btcBalance: doc.btcBalance ?? null,
       ltcBalance: doc.ltcBalance ?? null,
@@ -219,6 +244,42 @@ export class MongoStorage implements IStorage {
     };
   }
 
+  private toTeamNote(doc: any): TeamNote {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      authorId: doc.authorId,
+      content: doc.content,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
+  }
+
+  private toTeamTask(doc: any): TeamTask {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      title: doc.title,
+      description: doc.description ?? null,
+      assigneeId: doc.assigneeId ?? null,
+      status: doc.status,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
+  }
+
+  private toRating(doc: any): Rating {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      customerId: doc.customerId,
+      freelancerId: doc.freelancerId,
+      score: doc.score,
+      review: doc.review ?? null,
+      createdAt: doc.createdAt,
+    };
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     const doc = await this.users.findOne({ _id: new ObjectId(id) });
     return doc ? this.toUser(doc) : undefined;
@@ -232,6 +293,11 @@ export class MongoStorage implements IStorage {
   async getUserByUsername(username: string): Promise<User | undefined> {
     const doc = await this.users.findOne({ username });
     return doc ? this.toUser(doc) : undefined;
+  }
+
+  async getUsers(): Promise<User[]> {
+    const docs = await this.users.find({}).sort({ createdAt: 1 }).toArray();
+    return docs.map(doc => this.toUser(doc));
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -350,6 +416,18 @@ export class MongoStorage implements IStorage {
     const result = await this.wallets.findOneAndUpdate(
       { userId },
       { $set: { ...updateDoc, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    return result ? this.toWallet(result) : undefined;
+  }
+
+  async adjustPendingBalance(userId: string, amount: number): Promise<Wallet | undefined> {
+    const result = await this.wallets.findOneAndUpdate(
+      { userId },
+      { 
+        $inc: { pendingUsdtBalance: amount },
+        $set: { updatedAt: new Date() }
+      },
       { returnDocument: 'after' }
     );
     return result ? this.toWallet(result) : undefined;
@@ -561,5 +639,103 @@ export class MongoStorage implements IStorage {
       { userId, read: false },
       { $set: { read: true } }
     );
+  }
+
+  async getTeamNotes(jobId: string): Promise<TeamNote[]> {
+    const docs = await this.teamNotes
+      .find({ jobId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toTeamNote(doc));
+  }
+
+  async createTeamNote(insertNote: InsertTeamNote): Promise<TeamNote> {
+    const now = new Date();
+    const doc = {
+      jobId: insertNote.jobId,
+      authorId: insertNote.authorId,
+      content: insertNote.content,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await this.teamNotes.insertOne(doc);
+    return this.toTeamNote({ ...doc, _id: result.insertedId });
+  }
+
+  async updateTeamNote(id: string, updates: Partial<TeamNote>): Promise<TeamNote | undefined> {
+    const { id: _, ...updateDoc } = updates as any;
+    const result = await this.teamNotes.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { ...updateDoc, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    return result ? this.toTeamNote(result) : undefined;
+  }
+
+  async deleteTeamNote(id: string): Promise<void> {
+    await this.teamNotes.deleteOne({ _id: new ObjectId(id) });
+  }
+
+  async getTeamTasks(jobId: string): Promise<TeamTask[]> {
+    const docs = await this.teamTasks
+      .find({ jobId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toTeamTask(doc));
+  }
+
+  async createTeamTask(insertTask: InsertTeamTask): Promise<TeamTask> {
+    const now = new Date();
+    const doc = {
+      jobId: insertTask.jobId,
+      title: insertTask.title,
+      description: insertTask.description ?? null,
+      assigneeId: insertTask.assigneeId ?? null,
+      status: insertTask.status ?? "todo",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await this.teamTasks.insertOne(doc);
+    return this.toTeamTask({ ...doc, _id: result.insertedId });
+  }
+
+  async updateTeamTask(id: string, updates: Partial<TeamTask>): Promise<TeamTask | undefined> {
+    const { id: _, ...updateDoc } = updates as any;
+    const result = await this.teamTasks.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { ...updateDoc, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    return result ? this.toTeamTask(result) : undefined;
+  }
+
+  async deleteTeamTask(id: string): Promise<void> {
+    await this.teamTasks.deleteOne({ _id: new ObjectId(id) });
+  }
+
+  async getRating(jobId: string): Promise<Rating | undefined> {
+    const doc = await this.ratings.findOne({ jobId });
+    return doc ? this.toRating(doc) : undefined;
+  }
+
+  async getRatingsByFreelancer(freelancerId: string): Promise<Rating[]> {
+    const docs = await this.ratings
+      .find({ freelancerId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(doc => this.toRating(doc));
+  }
+
+  async createRating(insertRating: InsertRating): Promise<Rating> {
+    const doc = {
+      jobId: insertRating.jobId,
+      customerId: insertRating.customerId,
+      freelancerId: insertRating.freelancerId,
+      score: insertRating.score,
+      review: insertRating.review ?? null,
+      createdAt: new Date(),
+    };
+    const result = await this.ratings.insertOne(doc);
+    return this.toRating({ ...doc, _id: result.insertedId });
   }
 }

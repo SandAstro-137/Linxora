@@ -155,6 +155,7 @@ export const wallets = pgTable("wallets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().unique(),
   usdtBalance: decimal("usdt_balance", { precision: 20, scale: 8 }).default("0"),
+  pendingUsdtBalance: decimal("pending_usdt_balance", { precision: 20, scale: 8 }).default("0"),
   solBalance: decimal("sol_balance", { precision: 20, scale: 8 }).default("0"),
   btcBalance: decimal("btc_balance", { precision: 20, scale: 8 }).default("0"),
   ltcBalance: decimal("ltc_balance", { precision: 20, scale: 8 }).default("0"),
