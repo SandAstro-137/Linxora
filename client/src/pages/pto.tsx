@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertPTORequestSchema, PTORequest } from "@shared/schema";
+import { PTORequest } from "@shared/schema";
 import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { formatDistanceToNow } from "date-fns";
 
-const formSchema = insertPTORequestSchema.extend({
+const formSchema = z.object({
+  freelancerId: z.string(),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().min(1, "End date is required"),
+  reason: z.string().min(10, "Reason must be at least 10 characters"),
+  status: z.string().optional(),
 });
 
 export default function PTOPage() {
