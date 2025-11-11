@@ -2,9 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
+
+const uploadedFiles = new Map<string, string>();
 
 declare module "express-session" {
   interface SessionData {
@@ -275,7 +277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       // Calculate profit splits
-      const profitSplits = allMemberIds.length > 0 ? calculateProfitSplits(job, allMemberIds) : [];
+      const profitSplits = allMemberIds.length > 0 ? await calculateProfitSplits(job, allMemberIds) : [];
 
       const enrichedJob = {
         ...job,
@@ -291,22 +293,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  function calculateProfitSplits(job: any, memberIds: string[]) {
+  async function calculateProfitSplits(job: any, memberIds: string[]) {
     const budget = parseFloat(job.budget);
     const totalMembers = memberIds.length;
-    const percentage = 100 / totalMembers;
-    const shareAmount = budget / totalMembers;
+    const basePercentage = 100 / totalMembers;
+    const baseShareAmount = budget / totalMembers;
 
-    return memberIds.map((userId) => ({
-      userId,
-      percentage: parseFloat(percentage.toFixed(2)),
-      amount: shareAmount.toFixed(2),
-    }));
+    const splits = await Promise.all(
+      memberIds.map(async (userId) => {
+        const user = await storage.getUser(userId);
+        const level = user?.level || 1;
+        const levelPayout = getLevelPayout(level);
+        const actualAmount = baseShareAmount * levelPayout;
+
+        return {
+          userId,
+          level,
+          percentage: parseFloat(basePercentage.toFixed(2)),
+          baseAmount: baseShareAmount.toFixed(2),
+          levelPayout: (levelPayout * 100).toFixed(0) + "%",
+          amount: actualAmount.toFixed(2),
+        };
+      })
+    );
+
+    return splits;
   }
 
   app.post("/api/jobs", requireAuth, async (req, res) => {
     try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.role !== "customer") {
+        return res.status(403).json({ error: "Only customers can post jobs" });
+      }
+
       const validated = insertJobSchema.parse(req.body);
+      
+      const wallet = await storage.getWallet(req.session.userId!);
+      if (!wallet) {
+        return res.status(400).json({ error: "Wallet not found" });
+      }
+
+      const budget = parseFloat(validated.budget);
+      const walletBalance = parseFloat(wallet.usdtBalance || "0");
+
+      if (budget > walletBalance) {
+        return res.status(400).json({ error: "Budget cannot exceed your wallet balance" });
+      }
+
       const job = await storage.createJob({
         ...validated,
         customerId: req.session.userId!,
@@ -320,6 +358,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/jobs/:id/claim", requireAuth, async (req, res) => {
     try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can claim jobs" });
+      }
+
+      const activeJobs = await storage.getJobs({ 
+        freelancerId: req.session.userId!, 
+        status: "in_progress" 
+      });
+      const claimedJobs = await storage.getJobs({ 
+        freelancerId: req.session.userId!, 
+        status: "claimed" 
+      });
+
+      if (activeJobs.length > 0 || claimedJobs.length > 0) {
+        return res.status(400).json({ error: "You can only take one job at a time. Complete or cancel your current job first." });
+      }
+
       const job = await storage.claimJob(req.params.id, req.session.userId!);
       if (!job) {
         return res.status(400).json({ error: "Cannot claim this job" });
@@ -365,6 +425,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
       res.json(job);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // File upload endpoint (stub for proof uploads)
+  app.post("/api/uploads", requireAuth, async (req, res) => {
+    try {
+      const { fileName, fileData } = req.body;
+      
+      if (!fileName || !fileData) {
+        return res.status(400).json({ error: "File name and data required" });
+      }
+
+      const fileId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+      const fileUrl = `/uploads/${fileId}-${fileName}`;
+      
+      uploadedFiles.set(fileUrl, fileData);
+      
+      res.json({ url: fileUrl });
+    } catch (error) {
+      res.status(500).json({ error: "File upload failed" });
+    }
+  });
+
+  // Cancellation request routes
+  app.post("/api/cancellation-requests", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can submit cancellation requests" });
+      }
+
+      const validated = insertCancellationRequestSchema.parse(req.body);
+      
+      const job = await storage.getJob(validated.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.freelancerId !== req.session.userId) {
+        return res.status(403).json({ error: "You can only cancel jobs assigned to you" });
+      }
+
+      const request = await storage.createCancellationRequest({
+        ...validated,
+        requesterId: req.session.userId!,
+      });
+
+      res.json(request);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid cancellation request" });
+    }
+  });
+
+  app.get("/api/cancellation-requests", requireRole("staff", "moderator"), async (req, res) => {
+    try {
+      const requests = await storage.getAllCancellationRequests();
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/cancellation-requests/my", requireAuth, async (req, res) => {
+    try {
+      const requests = await storage.getCancellationRequests({ requesterId: req.session.userId! });
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/cancellation-requests/job/:jobId", requireAuth, async (req, res) => {
+    try {
+      const requests = await storage.getCancellationRequests({ jobId: req.params.jobId });
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/cancellation-requests/:id/approve", requireRole("staff", "moderator"), async (req, res) => {
+    try {
+      const request = await storage.getCancellationRequest(req.params.id);
+      if (!request) {
+        return res.status(404).json({ error: "Cancellation request not found" });
+      }
+
+      const updatedRequest = await storage.updateCancellationRequest(req.params.id, {
+        status: "approved",
+        reviewerId: req.session.userId!,
+        reviewNotes: req.body.reviewNotes || null,
+      });
+
+      const job = await storage.updateJob(request.jobId, { 
+        status: "active",
+        freelancerId: null,
+      });
+
+      res.json({ request: updatedRequest, job });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/cancellation-requests/:id/decline", requireRole("staff", "moderator"), async (req, res) => {
+    try {
+      const request = await storage.updateCancellationRequest(req.params.id, {
+        status: "declined",
+        reviewerId: req.session.userId!,
+        reviewNotes: req.body.reviewNotes || null,
+      });
+
+      if (!request) {
+        return res.status(404).json({ error: "Cancellation request not found" });
+      }
+
+      res.json(request);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/cancellation-requests/:id/request-evidence", requireRole("staff", "moderator"), async (req, res) => {
+    try {
+      const request = await storage.updateCancellationRequest(req.params.id, {
+        status: "needs_more_evidence",
+        reviewerId: req.session.userId!,
+        reviewNotes: req.body.reviewNotes || "Additional evidence required",
+      });
+
+      if (!request) {
+        return res.status(404).json({ error: "Cancellation request not found" });
+      }
+
+      res.json(request);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
