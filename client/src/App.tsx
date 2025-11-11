@@ -145,13 +145,19 @@ function AppContent() {
             <div className="flex flex-wrap items-center gap-4">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <div className="flex flex-wrap items-center gap-2">
-                <img 
-                  src="/favicon.png" 
-                  alt="Pixelcut Logo" 
-                  className="h-10 max-h-12"
-                  style={{ objectFit: "contain", mixBlendMode: "screen" }}
-                  data-testid="img-logo"
-                />
+                <div className="h-10 max-h-12 flex items-center" style={{ 
+                  background: "white",
+                  WebkitMaskImage: "url(/favicon.png)",
+                  WebkitMaskSize: "contain",
+                  WebkitMaskRepeat: "no-repeat",
+                  WebkitMaskPosition: "center",
+                  maskImage: "url(/favicon.png)",
+                  maskSize: "contain",
+                  maskRepeat: "no-repeat",
+                  maskPosition: "center",
+                  width: "40px",
+                  height: "40px"
+                }} data-testid="img-logo" />
                 <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
               </div>
             </div>
