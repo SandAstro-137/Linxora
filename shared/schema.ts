@@ -21,7 +21,8 @@ export const JobStatus = {
   CLAIMED: "claimed",
   IN_PROGRESS: "in_progress",
   COMPLETED: "completed",
-  REJECTED: "rejected"
+  REJECTED: "rejected",
+  CHANGES_REQUESTED: "changes_requested"
 } as const;
 
 export type JobStatusType = typeof JobStatus[keyof typeof JobStatus];
@@ -119,6 +120,7 @@ export const jobs = pgTable("jobs", {
   status: text("status").notNull().default(JobStatus.PENDING),
   freelancerId: varchar("freelancer_id"),
   collaborators: text("collaborators").array().default(sql`ARRAY[]::text[]`),
+  moderatorFeedback: text("moderator_feedback"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

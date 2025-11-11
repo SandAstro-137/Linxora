@@ -21,13 +21,10 @@ export default function MyJobsPage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [cancelReason, setCancelReason] = useState("");
 
-  // Get all jobs
-  const { data: allJobs = [] } = useQuery<Job[]>({
-    queryKey: ["/api/jobs"],
+  // Get customer's jobs (all statuses)
+  const { data: myJobs = [] } = useQuery<Job[]>({
+    queryKey: ["/api/my-jobs"],
   });
-
-  // Filter jobs posted by this customer
-  const myJobs = allJobs.filter((job) => job.customerId === user?.id);
 
   const cancelJobMutation = useMutation({
     mutationFn: ({ jobId, reason }: { jobId: string; reason: string }) =>
@@ -85,12 +82,16 @@ export default function MyJobsPage() {
         return "secondary";
       case "active":
         return "default";
+      case "freelancer_requested":
+        return "secondary";
       case "claimed":
       case "in_progress":
         return "default";
       case "completed":
         return "default";
       case "rejected":
+        return "destructive";
+      case "changes_requested":
         return "destructive";
       default:
         return "secondary";
@@ -137,26 +138,32 @@ export default function MyJobsPage() {
         {myJobs.map((job) => {
           const isPending = job.status === "pending";
           const isRejected = job.status === "rejected";
+          const needsChanges = job.status === "changes_requested";
 
           return (
             <Card
               key={job.id}
-              className={isPending || isRejected ? "opacity-60" : ""}
+              className={isPending || isRejected || needsChanges ? "opacity-60" : ""}
               data-testid={`card-job-${job.id}`}
             >
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <CardTitle data-testid={`text-job-title-${job.id}`}>
                         {job.title}
                       </CardTitle>
                       <Badge variant={getStatusColor(job.status)} data-testid={`badge-status-${job.id}`}>
-                        {job.status}
+                        {job.status.replace("_", " ")}
                       </Badge>
                       {isPending && (
                         <Badge variant="secondary" data-testid={`badge-pending-${job.id}`}>
                           Awaiting Approval
+                        </Badge>
+                      )}
+                      {needsChanges && (
+                        <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" data-testid={`badge-needs-changes-${job.id}`}>
+                          Action Required
                         </Badge>
                       )}
                     </div>
@@ -176,6 +183,14 @@ export default function MyJobsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {(needsChanges || isRejected) && job.moderatorFeedback && (
+                  <div className="bg-destructive/10 border border-destructive/20 rounded-md p-4">
+                    <h4 className="font-semibold text-destructive mb-2">Moderator Feedback</h4>
+                    <p className="text-sm whitespace-pre-wrap" data-testid={`text-moderator-feedback-${job.id}`}>
+                      {job.moderatorFeedback}
+                    </p>
+                  </div>
+                )}
                 <p className="text-muted-foreground line-clamp-2" data-testid={`text-description-${job.id}`}>
                   {job.description}
                 </p>
@@ -224,12 +239,19 @@ export default function MyJobsPage() {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Link href={`/jobs/${job.id}`}>
                     <Button variant="outline" size="sm" data-testid={`button-view-details-${job.id}`}>
                       View Details
                     </Button>
                   </Link>
+                  {(needsChanges || isRejected || isPending) && (
+                    <Link href={`/jobs/create?edit=${job.id}`}>
+                      <Button size="sm" data-testid={`button-edit-resubmit-${job.id}`}>
+                        Edit & Resubmit
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               </CardContent>
             </Card>

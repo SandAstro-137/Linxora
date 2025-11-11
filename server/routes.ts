@@ -249,6 +249,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/my-jobs", requireRole("customer"), async (req, res) => {
+    try {
+      const jobs = await storage.getJobs({ customerId: req.session.userId! });
+      res.json(jobs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/jobs/:id", requireAuth, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);
@@ -352,6 +361,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "pending",
       });
       res.json(job);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid job data" });
+    }
+  });
+
+  app.put("/api/jobs/:id", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only the job owner can edit
+      if (job.customerId !== req.session.userId!) {
+        return res.status(403).json({ error: "You can only edit your own jobs" });
+      }
+
+      // Only allow editing if job is pending, changes_requested, or rejected
+      if (!["pending", "changes_requested", "rejected"].includes(job.status)) {
+        return res.status(400).json({ error: "Cannot edit jobs that are active or in progress" });
+      }
+
+      const validated = insertJobSchema.parse(req.body);
+      
+      // Check wallet balance
+      const wallet = await storage.getWallet(req.session.userId!);
+      if (!wallet) {
+        return res.status(400).json({ error: "Wallet not found" });
+      }
+
+      const budget = parseFloat(validated.budget);
+      const walletBalance = parseFloat(wallet.usdtBalance || "0");
+
+      if (budget > walletBalance) {
+        return res.status(400).json({ error: "Budget cannot exceed your wallet balance" });
+      }
+
+      // Update job, reset status to pending, and clear moderator feedback
+      const updatedJob = await storage.updateJob(req.params.id, {
+        ...validated,
+        status: "pending",
+        moderatorFeedback: null,
+      });
+
+      res.json(updatedJob);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid job data" });
     }
@@ -568,6 +622,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(job);
     } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderation/:id/request-changes", requireRole("staff", "moderator"), async (req, res) => {
+    try {
+      const { feedback } = req.body;
+      
+      if (!feedback || !feedback.trim()) {
+        return res.status(400).json({ error: "Feedback is required" });
+      }
+
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Update job status to changes_requested and store feedback
+      const updatedJob = await storage.updateJob(req.params.id, { 
+        status: "changes_requested",
+        moderatorFeedback: feedback 
+      });
+
+      // Notify the customer with the feedback
+      if (job.customerId) {
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "job_changes_requested",
+          title: "Changes requested for your job",
+          message: `Your job "${job.title}" requires the following changes:\n\n${feedback}`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error requesting changes:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

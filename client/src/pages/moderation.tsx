@@ -9,6 +9,17 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNow } from "date-fns";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useState } from "react";
 
 interface EnrichedCancellationRequest extends CancellationRequest {
   jobTitle?: string;
@@ -17,6 +28,9 @@ interface EnrichedCancellationRequest extends CancellationRequest {
 
 export default function ModerationPage() {
   const { toast } = useToast();
+  const [requestChangesDialogOpen, setRequestChangesDialogOpen] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [changesFeedback, setChangesFeedback] = useState("");
 
   const { data: pendingJobs, isLoading: jobsLoading } = useQuery<Job[]>({
     queryKey: ["/api/moderation/pending"],
@@ -58,6 +72,28 @@ export default function ModerationPage() {
     onError: () => {
       toast({
         title: "Failed to reject job",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const requestChangesMutation = useMutation({
+    mutationFn: ({ jobId, feedback }: { jobId: string; feedback: string }) =>
+      apiRequest("POST", `/api/moderation/${jobId}/request-changes`, { feedback }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
+      setRequestChangesDialogOpen(false);
+      setChangesFeedback("");
+      setSelectedJob(null);
+      toast({
+        title: "Changes requested",
+        description: "The customer has been notified of the required changes.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to request changes",
         description: "Please try again later.",
         variant: "destructive",
       });
@@ -225,6 +261,10 @@ export default function ModerationPage() {
                       <Button
                         variant="outline"
                         className="gap-2"
+                        onClick={() => {
+                          setSelectedJob(job);
+                          setRequestChangesDialogOpen(true);
+                        }}
                         data-testid={`button-request-changes-${job.id}`}
                       >
                         <AlertCircle className="w-4 h-4" />
@@ -377,6 +417,57 @@ export default function ModerationPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={requestChangesDialogOpen} onOpenChange={setRequestChangesDialogOpen}>
+        <DialogContent data-testid="dialog-request-changes">
+          <DialogHeader>
+            <DialogTitle>Request Changes</DialogTitle>
+            <DialogDescription>
+              Provide feedback on what changes are needed for this job posting.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="feedback">Feedback</Label>
+              <Textarea
+                id="feedback"
+                placeholder="Explain what changes are required..."
+                value={changesFeedback}
+                onChange={(e) => setChangesFeedback(e.target.value)}
+                rows={5}
+                data-testid="textarea-feedback"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRequestChangesDialogOpen(false);
+                setChangesFeedback("");
+                setSelectedJob(null);
+              }}
+              data-testid="button-cancel-changes"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedJob && changesFeedback.trim()) {
+                  requestChangesMutation.mutate({
+                    jobId: selectedJob.id,
+                    feedback: changesFeedback,
+                  });
+                }
+              }}
+              disabled={!changesFeedback.trim() || requestChangesMutation.isPending}
+              data-testid="button-submit-changes"
+            >
+              Submit Feedback
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
