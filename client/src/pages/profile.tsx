@@ -117,7 +117,53 @@ export default function ProfilePage() {
     .toUpperCase()
     .slice(0, 2);
 
-  const levelProgress = ((user.completedJobs || 0) % 10) * 10;
+  // Calculate level progress based on actual level system
+  // Level 1: 0-4, Level 2: 5-14, Level 3: 15-29, Level 4: 30-49, Level 5: 50+
+  const calculateLevelProgress = () => {
+    const completed = user.completedJobs || 0;
+    const level = user.level || 1;
+    
+    let progress = 0;
+    
+    if (level === 1) {
+      // 0-4 jobs, need 5 for next level
+      progress = (completed / 5) * 100;
+    } else if (level === 2) {
+      // 5-14 jobs, need 15 for next level
+      progress = ((completed - 5) / 10) * 100;
+    } else if (level === 3) {
+      // 15-29 jobs, need 30 for next level
+      progress = ((completed - 15) / 15) * 100;
+    } else if (level === 4) {
+      // 30-49 jobs, need 50 for next level
+      progress = ((completed - 30) / 20) * 100;
+    } else {
+      // Level 5 (50+), max level reached
+      progress = 100;
+    }
+    
+    // Clamp progress between 0 and 100 to handle race conditions
+    return Math.min(100, Math.max(0, progress));
+  };
+  
+  const getJobsUntilNextLevel = () => {
+    const completed = user.completedJobs || 0;
+    const level = user.level || 1;
+    
+    let remaining = 0;
+    
+    if (level === 1) remaining = 5 - completed;
+    else if (level === 2) remaining = 15 - completed;
+    else if (level === 3) remaining = 30 - completed;
+    else if (level === 4) remaining = 50 - completed;
+    else remaining = 0; // Max level
+    
+    // Ensure remaining is never negative
+    return Math.max(0, remaining);
+  };
+  
+  const levelProgress = calculateLevelProgress();
+  const jobsUntilNext = getJobsUntilNextLevel();
 
   return (
     <div className="space-y-6">
@@ -175,14 +221,16 @@ export default function ProfilePage() {
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Level {user.level}</span>
-                <span className="text-sm text-muted-foreground">
+                <span className="text-sm font-medium" data-testid="text-level">Level {user.level}</span>
+                <span className="text-sm text-muted-foreground" data-testid="text-completed-jobs">
                   {user.completedJobs || 0} jobs
                 </span>
               </div>
-              <Progress value={levelProgress} className="h-2" />
+              <Progress value={levelProgress} className="h-2" data-testid="progress-level" />
               <p className="text-xs text-muted-foreground mt-1">
-                {10 - ((user.completedJobs || 0) % 10)} jobs until next level
+                {(user.level || 1) === 5 
+                  ? "Max level reached!" 
+                  : `${jobsUntilNext} job${jobsUntilNext !== 1 ? 's' : ''} until next level`}
               </p>
             </div>
 
@@ -192,14 +240,21 @@ export default function ProfilePage() {
               <div className="flex items-center gap-2">
                 <Star className="w-4 h-4 text-yellow-500" />
                 <span className="text-sm font-medium">Rating</span>
-                <span className="ml-auto text-sm font-bold">
-                  {user.rating || "N/A"}
+                <span className="ml-auto text-sm font-bold" data-testid="text-rating-value">
+                  {user.rating ? `${user.rating}/5` : "N/A"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-green-500" />
+                <span className="text-sm font-medium">Completion Rate</span>
+                <span className="ml-auto text-sm font-bold" data-testid="text-completion-percentage">
+                  {user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <Briefcase className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium">Completed Jobs</span>
-                <span className="ml-auto text-sm font-bold">
+                <span className="ml-auto text-sm font-bold" data-testid="text-completed-count">
                   {user.completedJobs || 0}
                 </span>
               </div>
@@ -208,7 +263,7 @@ export default function ProfilePage() {
         </Card>
 
         <div className="md:col-span-2 space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <StatsCard
               title="Completed Jobs"
               value={user.completedJobs || 0}
@@ -216,9 +271,15 @@ export default function ProfilePage() {
               description="All time"
             />
             <StatsCard
+              title="Completion Rate"
+              value={user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
+              icon={TrendingUp}
+              description="Job success rate"
+            />
+            <StatsCard
               title="Current Level"
               value={`Level ${user.level || 1}`}
-              icon={TrendingUp}
+              icon={Star}
               description="Professional growth"
             />
           </div>
