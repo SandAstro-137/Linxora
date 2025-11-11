@@ -31,6 +31,7 @@ export default function MyJobsPage() {
       apiRequest("POST", "/api/cancellation-requests", { jobId, reason }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       setCancelDialogOpen(false);
       setCancelReason("");
       setSelectedJob(null);
