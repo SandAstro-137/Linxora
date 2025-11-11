@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { z } from "zod";
@@ -742,7 +742,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Try to find the note by checking all jobs (not ideal, but works with current API)
       // In production, we'd add a getTeamNoteById method to IStorage
-      const allJobs = await storage.getAllJobs();
+      const allJobs = await storage.getJobs();
       for (const job of allJobs) {
         const notes = await storage.getTeamNotes(job.id);
         const found = notes.find(n => n.id === req.params.id);
@@ -787,7 +787,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Fetch the note first to get its real jobId
       let existingNote: any = null;
-      const allJobs = await storage.getAllJobs();
+      const allJobs = await storage.getJobs();
       for (const job of allJobs) {
         const notes = await storage.getTeamNotes(job.id);
         const found = notes.find(n => n.id === req.params.id);
@@ -889,7 +889,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Fetch the existing task to get its real jobId
       let existingTask: any = null;
-      const allJobs = await storage.getAllJobs();
+      const allJobs = await storage.getJobs();
       for (const job of allJobs) {
         const tasks = await storage.getTeamTasks(job.id);
         const found = tasks.find(t => t.id === req.params.id);
@@ -930,7 +930,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Fetch the task first to get its real jobId
       let existingTask: any = null;
-      const allJobs = await storage.getAllJobs();
+      const allJobs = await storage.getJobs();
       for (const job of allJobs) {
         const tasks = await storage.getTeamTasks(job.id);
         const found = tasks.find(t => t.id === req.params.id);
@@ -963,6 +963,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting team task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Team Messages routes
+  app.get("/api/jobs/:id/team-messages", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team (customer, freelancer, or collaborator)
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const messages = await storage.getTeamMessages(req.params.id);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching team messages:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/jobs/:id/team-messages", requireAuth, async (req, res) => {
+    try {
+      // Validate with extended schema that includes max length
+      const validatedMessage = insertTeamMessageSchema
+        .omit({ senderId: true })
+        .extend({
+          content: z.string().min(1, "Content is required").max(1000, "Content must be 1000 characters or less"),
+        })
+        .parse({ ...req.body, jobId: req.params.id });
+      
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const message = await storage.createTeamMessage({
+        jobId: validatedMessage.jobId,
+        senderId: req.session.userId!,
+        content: validatedMessage.content,
+      });
+
+      res.status(201).json(message);
+    } catch (error) {
+      console.error("Error creating team message:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0].message });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/team-messages/:id", requireAuth, async (req, res) => {
+    try {
+      // Fetch the message first to get its details
+      let existingMessage: any = null;
+      const allJobs = await storage.getJobs();
+      for (const job of allJobs) {
+        const messages = await storage.getTeamMessages(job.id);
+        const found = messages.find(m => m.id === req.params.id);
+        if (found) {
+          existingMessage = found;
+          break;
+        }
+      }
+      
+      if (!existingMessage) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      // Get current user
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      // Verify user is the author or a moderator
+      const isAuthor = existingMessage.senderId === req.session.userId;
+      const isModerator = user.role === "moderator" || user.role === "staff";
+
+      if (!isAuthor && !isModerator) {
+        return res.status(403).json({ error: "You can only delete your own messages or must be a moderator" });
+      }
+
+      await storage.deleteTeamMessage(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting team message:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

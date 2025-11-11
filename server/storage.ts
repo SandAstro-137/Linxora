@@ -21,6 +21,8 @@ import {
   type InsertTeamNote,
   type TeamTask,
   type InsertTeamTask,
+  type TeamMessage,
+  type InsertTeamMessage,
   type Rating,
   type InsertRating,
 } from "@shared/schema";
@@ -95,6 +97,11 @@ export interface IStorage {
   updateTeamTask(id: string, task: Partial<TeamTask>): Promise<TeamTask | undefined>;
   deleteTeamTask(id: string): Promise<void>;
 
+  // Team Message operations
+  getTeamMessages(jobId: string): Promise<TeamMessage[]>;
+  createTeamMessage(message: InsertTeamMessage): Promise<TeamMessage>;
+  deleteTeamMessage(id: string): Promise<void>;
+
   // Rating operations
   getRating(jobId: string): Promise<Rating | undefined>;
   getRatingsByFreelancer(freelancerId: string): Promise<Rating[]>;
@@ -113,6 +120,7 @@ export class MemStorage implements IStorage {
   private notifications: Map<string, Notification>;
   private teamNotes: Map<string, TeamNote>;
   private teamTasks: Map<string, TeamTask>;
+  private teamMessages: Map<string, TeamMessage>;
   private ratings: Map<string, Rating>;
 
   constructor() {
@@ -127,6 +135,7 @@ export class MemStorage implements IStorage {
     this.notifications = new Map();
     this.teamNotes = new Map();
     this.teamTasks = new Map();
+    this.teamMessages = new Map();
     this.ratings = new Map();
   }
 
@@ -544,6 +553,28 @@ export class MemStorage implements IStorage {
 
   async deleteTeamTask(id: string): Promise<void> {
     this.teamTasks.delete(id);
+  }
+
+  // Team Message operations
+  async getTeamMessages(jobId: string): Promise<TeamMessage[]> {
+    return Array.from(this.teamMessages.values())
+      .filter((msg) => msg.jobId === jobId)
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async createTeamMessage(insertMessage: InsertTeamMessage): Promise<TeamMessage> {
+    const id = randomUUID();
+    const message: TeamMessage = {
+      ...insertMessage,
+      id,
+      createdAt: new Date(),
+    };
+    this.teamMessages.set(id, message);
+    return message;
+  }
+
+  async deleteTeamMessage(id: string): Promise<void> {
+    this.teamMessages.delete(id);
   }
 
   // Rating operations

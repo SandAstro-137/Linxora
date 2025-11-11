@@ -22,6 +22,8 @@ import {
   type InsertTeamNote,
   type TeamTask,
   type InsertTeamTask,
+  type TeamMessage,
+  type InsertTeamMessage,
   type Rating,
   type InsertRating,
 } from "@shared/schema";
@@ -41,6 +43,7 @@ export class MongoStorage implements IStorage {
   private notifications: Collection;
   private teamNotes: Collection;
   private teamTasks: Collection;
+  private teamMessages: Collection;
   private ratings: Collection;
 
   constructor(mongoUri: string) {
@@ -66,6 +69,7 @@ export class MongoStorage implements IStorage {
     this.notifications = this.db.collection('notifications');
     this.teamNotes = this.db.collection('teamNotes');
     this.teamTasks = this.db.collection('teamTasks');
+    this.teamMessages = this.db.collection('teamMessages');
     this.ratings = this.db.collection('ratings');
   }
 
@@ -106,6 +110,8 @@ export class MongoStorage implements IStorage {
     await this.teamTasks.createIndex({ jobId: 1 });
     await this.teamTasks.createIndex({ assigneeId: 1 });
     await this.teamTasks.createIndex({ status: 1 });
+    await this.teamMessages.createIndex({ jobId: 1 });
+    await this.teamMessages.createIndex({ senderId: 1 });
     await this.ratings.createIndex({ jobId: 1 }, { unique: true });
     await this.ratings.createIndex({ freelancerId: 1 });
     await this.ratings.createIndex({ customerId: 1 });
@@ -265,6 +271,16 @@ export class MongoStorage implements IStorage {
       status: doc.status,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
+    };
+  }
+
+  private toTeamMessage(doc: any): TeamMessage {
+    return {
+      id: doc._id.toString(),
+      jobId: doc.jobId,
+      senderId: doc.senderId,
+      content: doc.content,
+      createdAt: doc.createdAt,
     };
   }
 
@@ -711,6 +727,51 @@ export class MongoStorage implements IStorage {
 
   async deleteTeamTask(id: string): Promise<void> {
     await this.teamTasks.deleteOne({ _id: new ObjectId(id) });
+  }
+
+  async getTeamMessages(jobId: string): Promise<TeamMessage[]> {
+    const docs = await this.teamMessages
+      .find({ jobId })
+      .sort({ createdAt: 1 })
+      .toArray();
+    
+    const messages = docs.map(doc => this.toTeamMessage(doc));
+    
+    const enrichedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        const sender = await this.getUser(msg.senderId);
+        return {
+          ...msg,
+          senderUsername: sender?.username ?? null,
+          senderAvatar: sender?.avatar ?? null,
+        };
+      })
+    );
+    
+    return enrichedMessages;
+  }
+
+  async createTeamMessage(insertMessage: InsertTeamMessage): Promise<TeamMessage> {
+    const now = new Date();
+    const doc = {
+      jobId: insertMessage.jobId,
+      senderId: insertMessage.senderId,
+      content: insertMessage.content,
+      createdAt: now,
+    };
+    const result = await this.teamMessages.insertOne(doc);
+    const message = this.toTeamMessage({ ...doc, _id: result.insertedId });
+    
+    const sender = await this.getUser(message.senderId);
+    return {
+      ...message,
+      senderUsername: sender?.username ?? null,
+      senderAvatar: sender?.avatar ?? null,
+    } as TeamMessage;
+  }
+
+  async deleteTeamMessage(id: string): Promise<void> {
+    await this.teamMessages.deleteOne({ _id: new ObjectId(id) });
   }
 
   async getRating(jobId: string): Promise<Rating | undefined> {

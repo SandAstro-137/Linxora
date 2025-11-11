@@ -381,6 +381,23 @@ export const insertTeamTaskSchema = createInsertSchema(teamTasks)
 export type InsertTeamTask = z.infer<typeof insertTeamTaskSchema>;
 export type TeamTask = typeof teamTasks.$inferSelect;
 
+// Team Messages table
+export const teamMessages = pgTable("team_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTeamMessageSchema = createInsertSchema(teamMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertTeamMessage = z.infer<typeof insertTeamMessageSchema>;
+export type TeamMessage = typeof teamMessages.$inferSelect;
+
 // Ratings table
 export const ratings = pgTable("ratings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

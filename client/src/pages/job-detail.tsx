@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -24,6 +24,7 @@ import { z } from "zod";
 
 interface EnrichedJob {
   id: string;
+  customerId: string;
   title: string;
   description: string;
   category: string;
@@ -48,6 +49,467 @@ interface EnrichedJob {
   }>;
   createdAt: Date;
   updatedAt: Date;
+}
+
+interface TeamNote {
+  id: string;
+  jobId: string;
+  authorId: string;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  authorUsername?: string;
+}
+
+interface TeamTask {
+  id: string;
+  jobId: string;
+  title: string;
+  description: string | null;
+  status: "todo" | "in_progress" | "done";
+  assignedTo: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface TeamMessage {
+  id: string;
+  jobId: string;
+  userId: string;
+  message: string;
+  createdAt: Date;
+  username?: string;
+  avatar?: string;
+}
+
+function TeamCollaboration({ jobId }: { jobId: string }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [newNote, setNewNote] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteContent, setEditingNoteContent] = useState("");
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDesc, setNewTaskDesc] = useState("");
+  const [newMessage, setNewMessage] = useState("");
+
+  const { data: notes = [], isLoading: notesLoading } = useQuery<TeamNote[]>({
+    queryKey: ["/api/team-notes", jobId],
+  });
+
+  const { data: tasks = [], isLoading: tasksLoading } = useQuery<TeamTask[]>({
+    queryKey: ["/api/team-tasks", jobId],
+  });
+
+  const { data: messages = [], isLoading: messagesLoading } = useQuery<TeamMessage[]>({
+    queryKey: ["/api/jobs", jobId, "team-messages"],
+    refetchInterval: 5000,
+  });
+
+  const createNoteMutation = useMutation({
+    mutationFn: (content: string) =>
+      apiRequest("POST", "/api/team-notes", { jobId, content }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-notes", jobId] });
+      setNewNote("");
+      toast({ title: "Note added successfully" });
+    },
+  });
+
+  const updateNoteMutation = useMutation({
+    mutationFn: ({ id, content }: { id: string; content: string }) =>
+      apiRequest("PUT", `/api/team-notes/${id}`, { content }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-notes", jobId] });
+      setEditingNoteId(null);
+      toast({ title: "Note updated successfully" });
+    },
+  });
+
+  const deleteNoteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/team-notes/${id}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-notes", jobId] });
+      toast({ title: "Note deleted successfully" });
+    },
+  });
+
+  const createTaskMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", "/api/team-tasks", {
+        jobId,
+        title: newTaskTitle,
+        description: newTaskDesc || null,
+        status: "todo",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-tasks", jobId] });
+      setNewTaskTitle("");
+      setNewTaskDesc("");
+      toast({ title: "Task created successfully" });
+    },
+  });
+
+  const updateTaskMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: Partial<TeamTask> }) =>
+      apiRequest("PUT", `/api/team-tasks/${id}`, updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-tasks", jobId] });
+    },
+  });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/team-tasks/${id}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-tasks", jobId] });
+      toast({ title: "Task deleted successfully" });
+    },
+  });
+
+  const createMessageMutation = useMutation({
+    mutationFn: (content: string) =>
+      apiRequest("POST", `/api/jobs/${jobId}/team-messages`, { content }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "team-messages"] });
+      setNewMessage("");
+    },
+  });
+
+  const deleteMessageMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/team-messages/${id}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "team-messages"] });
+      toast({ title: "Message deleted successfully" });
+    },
+  });
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Team Notes
+            </CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Textarea
+              placeholder="Add a note for the team..."
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              data-testid="textarea-new-note"
+            />
+            <Button
+              onClick={() => createNoteMutation.mutate(newNote)}
+              disabled={!newNote.trim() || createNoteMutation.isPending}
+              size="sm"
+              data-testid="button-create-note"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add Note
+            </Button>
+          </div>
+
+          {notesLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
+          ) : notes.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No notes yet. Add the first one!
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {notes.map((note) => (
+                <div
+                  key={note.id}
+                  className="p-3 rounded-md bg-muted/50 space-y-2"
+                  data-testid={`note-${note.id}`}
+                >
+                  {editingNoteId === note.id ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={editingNoteContent}
+                        onChange={(e) => setEditingNoteContent(e.target.value)}
+                        data-testid="textarea-edit-note"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            updateNoteMutation.mutate({
+                              id: note.id,
+                              content: editingNoteContent,
+                            });
+                          }}
+                          disabled={updateNoteMutation.isPending}
+                          data-testid="button-save-note"
+                        >
+                          <Check className="w-4 h-4 mr-1" />
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditingNoteId(null)}
+                          data-testid="button-cancel-edit-note"
+                        >
+                          <X className="w-4 h-4 mr-1" />
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>
+                          {note.authorUsername} •{" "}
+                          {formatDistanceToNow(new Date(note.createdAt), {
+                            addSuffix: true,
+                          })}
+                        </span>
+                        {note.authorId === user?.id && (
+                          <div className="flex gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              onClick={() => {
+                                setEditingNoteId(note.id);
+                                setEditingNoteContent(note.content);
+                              }}
+                              data-testid={`button-edit-note-${note.id}`}
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              onClick={() => deleteNoteMutation.mutate(note.id)}
+                              data-testid={`button-delete-note-${note.id}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CheckSquare className="w-5 h-5" />
+            Team Tasks
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Input
+              placeholder="Task title..."
+              value={newTaskTitle}
+              onChange={(e) => setNewTaskTitle(e.target.value)}
+              data-testid="input-new-task-title"
+            />
+            <Textarea
+              placeholder="Task description (optional)..."
+              value={newTaskDesc}
+              onChange={(e) => setNewTaskDesc(e.target.value)}
+              className="min-h-20"
+              data-testid="textarea-new-task-desc"
+            />
+            <Button
+              onClick={() => createTaskMutation.mutate()}
+              disabled={!newTaskTitle.trim() || createTaskMutation.isPending}
+              size="sm"
+              data-testid="button-create-task"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add Task
+            </Button>
+          </div>
+
+          {tasksLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : tasks.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No tasks yet. Create the first one!
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {tasks.map((task) => (
+                <div
+                  key={task.id}
+                  className="flex items-start gap-3 p-3 rounded-md bg-muted/50"
+                  data-testid={`task-${task.id}`}
+                >
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-5 w-5 mt-0.5"
+                    onClick={() => {
+                      const newStatus =
+                        task.status === "done"
+                          ? "todo"
+                          : task.status === "in_progress"
+                          ? "done"
+                          : "in_progress";
+                      updateTaskMutation.mutate({
+                        id: task.id,
+                        updates: { status: newStatus },
+                      });
+                    }}
+                    data-testid={`button-toggle-task-${task.id}`}
+                  >
+                    {task.status === "done" ? (
+                      <CheckSquare className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <div className="w-4 h-4 border-2 rounded" />
+                    )}
+                  </Button>
+                  <div className="flex-1">
+                    <p
+                      className={`font-medium ${
+                        task.status === "done" ? "line-through text-muted-foreground" : ""
+                      }`}
+                    >
+                      {task.title}
+                    </p>
+                    {task.description && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {task.description}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-2">
+                      <Badge
+                        variant="secondary"
+                        className={
+                          task.status === "done"
+                            ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                            : task.status === "in_progress"
+                            ? "bg-blue-500/10 text-blue-700 dark:text-blue-400"
+                            : "bg-gray-500/10 text-gray-700 dark:text-gray-400"
+                        }
+                      >
+                        {task.status === "todo"
+                          ? "To Do"
+                          : task.status === "in_progress"
+                          ? "In Progress"
+                          : "Done"}
+                      </Badge>
+                    </div>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={() => deleteTaskMutation.mutate(task.id)}
+                    data-testid={`button-delete-task-${task.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="w-5 h-5" />
+            Team Chat
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="h-64 overflow-y-auto space-y-3 border rounded-md p-3">
+            {messagesLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : messages.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-16">
+                No messages yet. Start the conversation!
+              </p>
+            ) : (
+              messages.map((message) => (
+                <div
+                  key={message.id}
+                  className="flex items-start gap-2"
+                  data-testid={`message-${message.id}`}
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={message.avatar || undefined} />
+                    <AvatarFallback>
+                      {message.username?.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{message.username}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(message.createdAt), {
+                          addSuffix: true,
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-sm">{message.message}</p>
+                  </div>
+                  {message.userId === user?.id && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      onClick={() => deleteMessageMutation.mutate(message.id)}
+                      data-testid={`button-delete-message-${message.id}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              placeholder="Type a message..."
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newMessage.trim() && !createMessageMutation.isPending) {
+                  createMessageMutation.mutate(newMessage);
+                }
+              }}
+              data-testid="input-team-message"
+            />
+            <Button
+              onClick={() => createMessageMutation.mutate(newMessage)}
+              disabled={!newMessage.trim() || createMessageMutation.isPending}
+              data-testid="button-send-message"
+            >
+              <MessageSquare className="w-4 h-4" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 export default function JobDetailPage() {
@@ -200,6 +662,11 @@ export default function JobDetailPage() {
   const isEligibleToClaim = job.status === "active" && user?.role === "freelancer";
   const isJobOwner = job.freelancerId === user?.id;
   const canOfferTeam = isJobTaken && !isJobOwner;
+  const isTeamMember = 
+    user?.id === job.customerId || 
+    user?.id === job.freelancerId || 
+    job.collaborators?.includes(user?.id || "") ||
+    false;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -243,75 +710,96 @@ export default function JobDetailPage() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">
-        <div className="md:col-span-2 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Job Description</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground whitespace-pre-wrap" data-testid="text-job-description">
-                {job.description}
-              </p>
-              {job.requirements && (
-                <>
-                  <Separator />
-                  <div>
-                    <h3 className="font-semibold mb-2">Requirements</h3>
-                    <p className="text-muted-foreground whitespace-pre-wrap">
-                      {job.requirements}
-                    </p>
-                  </div>
-                </>
+        <div className="md:col-span-2">
+          <Tabs defaultValue="overview" className="w-full">
+            <TabsList className={`grid w-full ${isTeamMember ? 'grid-cols-2' : 'grid-cols-1'}`} data-testid="tabs-job-detail">
+              <TabsTrigger value="overview" data-testid="tab-overview">
+                <FileText className="w-4 h-4 mr-2" />
+                Overview
+              </TabsTrigger>
+              {isTeamMember && (
+                <TabsTrigger value="team" data-testid="tab-team">
+                  <Users className="w-4 h-4 mr-2" />
+                  Team
+                </TabsTrigger>
               )}
-            </CardContent>
-          </Card>
+            </TabsList>
 
-          {job.profitSplits && job.profitSplits.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Team & Profit Sharing</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {job.collaboratorData?.map((collaborator, index) => {
-                    const split = job.profitSplits?.find(
-                      (s) => s.userId === collaborator.id
-                    );
-                    return (
-                      <div
-                        key={collaborator.id}
-                        className="flex items-center justify-between p-3 rounded-md bg-muted/50"
-                        data-testid={`team-member-${index}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage src={collaborator.avatar || undefined} />
-                            <AvatarFallback>
-                              {collaborator.username.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="font-medium">{collaborator.username}</p>
-                            {collaborator.specialization && (
-                              <p className="text-sm text-muted-foreground">
-                                {collaborator.specialization}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold">${split?.amount}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {split?.percentage}%
-                          </p>
-                        </div>
+            <TabsContent value="overview" className="space-y-6 mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Job Description</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-muted-foreground whitespace-pre-wrap" data-testid="text-job-description">
+                    {job.description}
+                  </p>
+                  {job.requirements && (
+                    <>
+                      <Separator />
+                      <div>
+                        <h3 className="font-semibold mb-2">Requirements</h3>
+                        <p className="text-muted-foreground whitespace-pre-wrap">
+                          {job.requirements}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {job.profitSplits && job.profitSplits.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Team & Profit Sharing</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {job.collaboratorData?.map((collaborator, index) => {
+                        const split = job.profitSplits?.find(
+                          (s) => s.userId === collaborator.id
+                        );
+                        return (
+                          <div
+                            key={collaborator.id}
+                            className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                            data-testid={`team-member-${index}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-10 w-10">
+                                <AvatarImage src={collaborator.avatar || undefined} />
+                                <AvatarFallback>
+                                  {collaborator.username.charAt(0).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="font-medium">{collaborator.username}</p>
+                                {collaborator.specialization && (
+                                  <p className="text-sm text-muted-foreground">
+                                    {collaborator.specialization}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-semibold">${split?.amount}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {split?.percentage}%
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+
+            <TabsContent value="team" className="space-y-6 mt-6">
+              <TeamCollaboration jobId={jobId!} />
+            </TabsContent>
+          </Tabs>
         </div>
 
         <div className="space-y-6">
