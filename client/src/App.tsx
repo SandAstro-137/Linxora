@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserNav } from "@/components/user-nav";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
@@ -187,6 +188,7 @@ function AppContent() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <NotificationCenter />
                 <ThemeToggle />
                 <UserNav />
               </div>
