@@ -618,6 +618,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
+      // Notify customer that their job was approved
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_approved",
+        title: "Job approved!",
+        message: `Your job "${job.title}" has been approved and is now live on the marketplace.`,
+        relatedId: job.id,
+      });
+
       // Post to Discord webhook
       await postToDiscordWebhook(
         `🎉 New job approved: **${job.title}**\nBudget: $${job.budget}\nCategory: ${job.category}\n${job.description.slice(0, 100)}...`
@@ -635,6 +644,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
+
+      // Notify customer that their job was rejected
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_rejected",
+        title: "Job rejected",
+        message: `Your job "${job.title}" was not approved. Please review our guidelines and try again.`,
+        relatedId: job.id,
+      });
+
       res.json(job);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1039,6 +1058,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "pending",
       });
 
+      // Send in-app notification to invited user
+      const sender = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId,
+        type: "invitation",
+        title: "Team invitation",
+        message: `${sender?.username} has invited you to collaborate on "${job.title}". Check your invitations to respond.`,
+        relatedId: invitation.id,
+      });
+
       // Send Discord notification
       const invitedUser = await storage.getUser(userId);
       if (invitedUser) {
@@ -1082,6 +1111,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Notify sender that invitation was accepted
+      const accepter = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: invitation.fromUserId,
+        type: "invitation",
+        title: "Invitation accepted",
+        message: `${accepter?.username} accepted your invitation to collaborate on "${job?.title}".`,
+        relatedId: invitation.jobId,
+      });
+
       res.json(invitation);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1097,6 +1136,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!invitation) {
         return res.status(404).json({ error: "Invitation not found" });
       }
+
+      // Notify sender that invitation was rejected
+      const job = await storage.getJob(invitation.jobId);
+      const rejecter = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: invitation.fromUserId,
+        type: "invitation",
+        title: "Invitation declined",
+        message: `${rejecter?.username} declined your invitation to collaborate on "${job?.title}".`,
+        relatedId: invitation.jobId,
+      });
 
       res.json(invitation);
     } catch (error) {
