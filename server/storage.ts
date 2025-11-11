@@ -11,6 +11,8 @@ import {
   type InsertPTORequest,
   type Invitation,
   type InsertInvitation,
+  type CancellationRequest,
+  type InsertCancellationRequest,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -49,6 +51,13 @@ export interface IStorage {
   getInvitations(userId: string): Promise<Invitation[]>;
   createInvitation(invitation: InsertInvitation): Promise<Invitation>;
   updateInvitation(id: string, invitation: Partial<Invitation>): Promise<Invitation | undefined>;
+
+  // Cancellation Request operations
+  getCancellationRequest(id: string): Promise<CancellationRequest | undefined>;
+  getCancellationRequests(filters?: { jobId?: string; requesterId?: string; status?: string }): Promise<CancellationRequest[]>;
+  getAllCancellationRequests(): Promise<CancellationRequest[]>;
+  createCancellationRequest(request: InsertCancellationRequest): Promise<CancellationRequest>;
+  updateCancellationRequest(id: string, request: Partial<CancellationRequest>): Promise<CancellationRequest | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -58,6 +67,7 @@ export class MemStorage implements IStorage {
   private transactions: Map<string, Transaction>;
   private ptoRequests: Map<string, PTORequest>;
   private invitations: Map<string, Invitation>;
+  private cancellationRequests: Map<string, CancellationRequest>;
 
   constructor() {
     this.users = new Map();
@@ -66,6 +76,7 @@ export class MemStorage implements IStorage {
     this.transactions = new Map();
     this.ptoRequests = new Map();
     this.invitations = new Map();
+    this.cancellationRequests = new Map();
   }
 
   // User operations
@@ -278,6 +289,56 @@ export class MemStorage implements IStorage {
     if (!invitation) return undefined;
     const updated = { ...invitation, ...updates };
     this.invitations.set(id, updated);
+    return updated;
+  }
+
+  // Cancellation Request operations
+  async getCancellationRequest(id: string): Promise<CancellationRequest | undefined> {
+    return this.cancellationRequests.get(id);
+  }
+
+  async getCancellationRequests(filters?: { jobId?: string; requesterId?: string; status?: string }): Promise<CancellationRequest[]> {
+    let requests = Array.from(this.cancellationRequests.values());
+    
+    if (filters?.jobId) {
+      requests = requests.filter((req) => req.jobId === filters.jobId);
+    }
+    if (filters?.requesterId) {
+      requests = requests.filter((req) => req.requesterId === filters.requesterId);
+    }
+    if (filters?.status) {
+      requests = requests.filter((req) => req.status === filters.status);
+    }
+    
+    return requests.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getAllCancellationRequests(): Promise<CancellationRequest[]> {
+    return Array.from(this.cancellationRequests.values())
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createCancellationRequest(insertRequest: InsertCancellationRequest): Promise<CancellationRequest> {
+    const id = randomUUID();
+    const request: CancellationRequest = {
+      ...insertRequest,
+      id,
+      proofUrl: insertRequest.proofUrl ?? null,
+      status: insertRequest.status ?? "pending",
+      reviewerId: insertRequest.reviewerId ?? null,
+      reviewNotes: insertRequest.reviewNotes ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.cancellationRequests.set(id, request);
+    return request;
+  }
+
+  async updateCancellationRequest(id: string, updates: Partial<CancellationRequest>): Promise<CancellationRequest | undefined> {
+    const request = this.cancellationRequests.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.cancellationRequests.set(id, updated);
     return updated;
   }
 }
