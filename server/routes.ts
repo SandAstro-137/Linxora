@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { z } from "zod";
@@ -671,6 +671,298 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updatedJob);
     } catch (error) {
       console.error("Error completing job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Team collaboration routes - Team Notes
+  app.get("/api/team-notes/:jobId", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team (freelancer, collaborator, or customer)
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const notes = await storage.getTeamNotes(req.params.jobId);
+      res.json(notes);
+    } catch (error) {
+      console.error("Error fetching team notes:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/team-notes", requireAuth, async (req, res) => {
+    try {
+      // Validate without authorId (will be set from session)
+      const { jobId, content } = insertTeamNoteSchema.omit({ authorId: true }).parse(req.body);
+      
+      const job = await storage.getJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const note = await storage.createTeamNote({
+        jobId,
+        content,
+        authorId: req.session.userId!,
+      });
+
+      res.status(201).json(note);
+    } catch (error) {
+      console.error("Error creating team note:", error);
+      res.status(400).json({ error: "Invalid note data" });
+    }
+  });
+
+  app.put("/api/team-notes/:id", requireAuth, async (req, res) => {
+    try {
+      // Fetch ALL team notes to find this specific note
+      // This is inefficient but necessary with current storage interface
+      let existingNote: any = null;
+      
+      // Try to find the note by checking all jobs (not ideal, but works with current API)
+      // In production, we'd add a getTeamNoteById method to IStorage
+      const allJobs = await storage.getAllJobs();
+      for (const job of allJobs) {
+        const notes = await storage.getTeamNotes(job.id);
+        const found = notes.find(n => n.id === req.params.id);
+        if (found) {
+          existingNote = found;
+          break;
+        }
+      }
+      
+      if (!existingNote) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+
+      // Now verify user is part of the team using the REAL jobId from the note
+      const job = await storage.getJob(existingNote.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      // Only allow updating content
+      const note = await storage.updateTeamNote(req.params.id, { 
+        content: req.body.content 
+      });
+      
+      res.json(note);
+    } catch (error) {
+      console.error("Error updating team note:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/team-notes/:id", requireAuth, async (req, res) => {
+    try {
+      // Fetch the note first to get its real jobId
+      let existingNote: any = null;
+      const allJobs = await storage.getAllJobs();
+      for (const job of allJobs) {
+        const notes = await storage.getTeamNotes(job.id);
+        const found = notes.find(n => n.id === req.params.id);
+        if (found) {
+          existingNote = found;
+          break;
+        }
+      }
+      
+      if (!existingNote) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+
+      // Verify user is part of the team using the REAL jobId
+      const job = await storage.getJob(existingNote.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      await storage.deleteTeamNote(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting team note:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Team collaboration routes - Team Tasks
+  app.get("/api/team-tasks/:jobId", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const tasks = await storage.getTeamTasks(req.params.jobId);
+      res.json(tasks);
+    } catch (error) {
+      console.error("Error fetching team tasks:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/team-tasks", requireAuth, async (req, res) => {
+    try {
+      const validatedTask = insertTeamTaskSchema.parse(req.body);
+      
+      const job = await storage.getJob(validatedTask.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is part of the team
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const task = await storage.createTeamTask(validatedTask);
+      res.status(201).json(task);
+    } catch (error) {
+      console.error("Error creating team task:", error);
+      res.status(400).json({ error: "Invalid task data" });
+    }
+  });
+
+  app.put("/api/team-tasks/:id", requireAuth, async (req, res) => {
+    try {
+      // Validate update payload  
+      const updates = z.object({
+        title: z.string().optional(),
+        description: z.string().optional(),
+        assigneeId: z.string().optional(),
+        status: z.enum(["todo", "in_progress", "done"]).optional(),
+      }).parse(req.body);
+
+      // Fetch the existing task to get its real jobId
+      let existingTask: any = null;
+      const allJobs = await storage.getAllJobs();
+      for (const job of allJobs) {
+        const tasks = await storage.getTeamTasks(job.id);
+        const found = tasks.find(t => t.id === req.params.id);
+        if (found) {
+          existingTask = found;
+          break;
+        }
+      }
+      
+      if (!existingTask) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      // Verify user is part of the team using the REAL jobId
+      const job = await storage.getJob(existingTask.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      const task = await storage.updateTeamTask(req.params.id, updates);
+      res.json(task);
+    } catch (error) {
+      console.error("Error updating team task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/team-tasks/:id", requireAuth, async (req, res) => {
+    try {
+      // Fetch the task first to get its real jobId
+      let existingTask: any = null;
+      const allJobs = await storage.getAllJobs();
+      for (const job of allJobs) {
+        const tasks = await storage.getTeamTasks(job.id);
+        const found = tasks.find(t => t.id === req.params.id);
+        if (found) {
+          existingTask = found;
+          break;
+        }
+      }
+      
+      if (!existingTask) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      // Verify user is part of the team using the REAL jobId
+      const job = await storage.getJob(existingTask.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isPartOfTeam = 
+        job.customerId === req.session.userId ||
+        job.freelancerId === req.session.userId ||
+        job.collaborators?.includes(req.session.userId!);
+
+      if (!isPartOfTeam) {
+        return res.status(403).json({ error: "You are not part of this job's team" });
+      }
+
+      await storage.deleteTeamTask(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting team task:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
