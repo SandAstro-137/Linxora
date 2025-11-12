@@ -22,7 +22,7 @@ export default function LoginPage() {
             Pixelcut
           </h1>
           <p className="text-xl text-muted-foreground">
-            Professional Freelancer Marketplace with Crypto Payments
+            Professional Freelancer Marketplace
           </p>
         </div>
 

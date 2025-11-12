@@ -97,8 +97,8 @@ const freelancerSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Browse available jobs in the Marketplace</li>
           <li>Request to take jobs that match your skills</li>
-          <li>Work solo or collaborate with team members</li>
-          <li>Receive crypto payments to your wallet</li>
+          <li>Work solo or collaborate on teams</li>
+          <li>Receive crypto payments to your wallet for completed work</li>
         </ul>
       </div>
     ),
@@ -110,10 +110,11 @@ const freelancerSteps: OnboardingStep[] = [
       <div className="space-y-4">
         <p>In the Marketplace:</p>
         <ul className="list-disc pl-6 space-y-2">
-          <li>Use search and filters to find jobs</li>
+          <li>Use search and filter to find jobs</li>
           <li>Click on jobs to see full details and budget</li>
           <li>Click "Request to Take Job" if eligible</li>
           <li><strong>One job at a time:</strong> Finish your current job before claiming another</li>
+          <li>Cancel jobs anytime but you'll need a good reson</li>
         </ul>
       </div>
     ),
