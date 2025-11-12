@@ -114,7 +114,7 @@ const freelancerSteps: OnboardingStep[] = [
           <li>Click on jobs to see full details and budget</li>
           <li>Click "Request to Take Job" if eligible</li>
           <li><strong>One job at a time:</strong> Finish your current job before claiming another</li>
-          <li>Cancel jobs anytime but you'll need a good reson</li>
+          <li>Cancel jobs anytime but you'll need a good reason</li>
         </ul>
       </div>
     ),
