@@ -126,9 +126,9 @@ const freelancerSteps: OnboardingStep[] = [
       <div className="space-y-4">
         <p>If a job is already taken:</p>
         <ul className="list-disc pl-6 space-y-2">
-          <li>Click "Offer Team" to request joining</li>
+          <li>Click "Offer Team" to request to join</li>
           <li>Or invite teammates to jobs you're working on</li>
-          <li>Profits split equally among all team members</li>
+          <li>Profits split equally among all team members regardless or participation</li>
           <li>Collaborate in the Team tab on job details</li>
         </ul>
       </div>
@@ -162,7 +162,7 @@ const customerSteps: OnboardingStep[] = [
           <li>Create job posts with clear requirements</li>
           <li>Jobs are reviewed by moderators before going live</li>
           <li>Review freelancer requests to take your jobs</li>
-          <li>Pay securely with crypto wallets</li>
+          <li>Pay securely with crypto</li>
         </ul>
       </div>
     ),
