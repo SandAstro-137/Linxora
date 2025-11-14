@@ -181,7 +181,7 @@ export default function DashboardPage() {
           Welcome back, {user.username}!
         </h2>
         <p className="text-muted-foreground">
-          Here's an overview of your activity
+          Here's an overview of your Stats
         </p>
       </div>
 

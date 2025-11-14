@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
+import { getCryptoPriceService } from "./lib/crypto-price-ws";
 import { z } from "zod";
 
 const uploadedFiles = new Map<string, string>();
@@ -1569,7 +1571,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/wallet/prices", async (req, res) => {
     try {
-      const prices = await getCryptoPrices();
+      // Get real-time prices from WebSocket service
+      const priceService = getCryptoPriceService();
+      const realtimePrices = priceService.getCurrentPrices();
+      
+      // Convert CoinCap price format to our expected format
+      const prices = {
+        btc: realtimePrices.bitcoin ? parseFloat(realtimePrices.bitcoin) : 0,
+        sol: realtimePrices.solana ? parseFloat(realtimePrices.solana) : 0,
+        ltc: realtimePrices.litecoin ? parseFloat(realtimePrices.litecoin) : 0,
+        usdt: realtimePrices.tether ? parseFloat(realtimePrices.tether) : 1.0,
+      };
+      
       res.json(prices);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch prices" });
@@ -2107,5 +2120,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+  
+  // Set up WebSocket server for real-time price broadcasts
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws/prices" });
+  
+  // Initialize crypto price service
+  const priceService = getCryptoPriceService();
+  
+  wss.on('connection', (ws: WebSocket) => {
+    console.log('[WebSocket] Client connected to price feed');
+    
+    // Send current prices immediately on connection
+    const currentPrices = priceService.getCurrentPrices();
+    ws.send(JSON.stringify({
+      type: 'prices',
+      data: {
+        btc: currentPrices.bitcoin ? parseFloat(currentPrices.bitcoin) : 0,
+        sol: currentPrices.solana ? parseFloat(currentPrices.solana) : 0,
+        ltc: currentPrices.litecoin ? parseFloat(currentPrices.litecoin) : 0,
+        usdt: currentPrices.tether ? parseFloat(currentPrices.tether) : 1.0,
+      }
+    }));
+    
+    ws.on('error', (error) => {
+      console.error('[WebSocket] Client error:', error.message);
+    });
+    
+    ws.on('close', () => {
+      console.log('[WebSocket] Client disconnected from price feed');
+    });
+  });
+  
+  // Broadcast price updates every 2 seconds to all connected clients
+  setInterval(() => {
+    const currentPrices = priceService.getCurrentPrices();
+    const priceData = {
+      type: 'prices',
+      data: {
+        btc: currentPrices.bitcoin ? parseFloat(currentPrices.bitcoin) : 0,
+        sol: currentPrices.solana ? parseFloat(currentPrices.solana) : 0,
+        ltc: currentPrices.litecoin ? parseFloat(currentPrices.litecoin) : 0,
+        usdt: currentPrices.tether ? parseFloat(currentPrices.tether) : 1.0,
+      }
+    };
+    
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(priceData));
+      }
+    });
+  }, 2000); // Broadcast every 2 seconds
+  
   return httpServer;
 }

@@ -165,9 +165,9 @@ export default function WalletPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Crypto Wallet</h2>
+          <h2 className="text-3xl font-bold tracking-tight">Wallet</h2>
           <p className="text-muted-foreground">
-            Manage your cryptocurrency balances
+            Manage your wallet balance
           </p>
         </div>
         <Dialog open={withdrawalOpen} onOpenChange={setWithdrawalOpen}>
