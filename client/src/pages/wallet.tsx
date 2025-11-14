@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
 
 interface CryptoPrice {
@@ -42,19 +42,81 @@ export default function WalletPage() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCurrency, setFilterCurrency] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  
+  // Real-time prices from WebSocket
+  const [realtimePrices, setRealtimePrices] = useState<Record<string, { usd: number; usd_24h_change: number }>>({});
+  const wsRef = useRef<WebSocket | null>(null);
 
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
   });
 
-  const { data: prices, isLoading: pricesLoading } = useQuery<Record<string, CryptoPrice>>({
+  // Fallback REST API for initial prices (WebSocket will override)
+  const { data: initialPrices, isLoading: pricesLoading } = useQuery<Record<string, CryptoPrice>>({
     queryKey: ["/api/wallet/prices"],
     refetchInterval: 30000,
   });
+  
+  // Use real-time prices if available, otherwise fall back to REST API prices
+  const prices = Object.keys(realtimePrices).length > 0 ? realtimePrices : initialPrices;
 
   const { data: transactions = [] } = useQuery<any[]>({
     queryKey: ["/api/wallet/transactions"],
   });
+  
+  // WebSocket connection for real-time price updates
+  useEffect(() => {
+    const connectWebSocket = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/prices`;
+      
+      console.log('[Wallet] Connecting to WebSocket:', wsUrl);
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        console.log('[Wallet] WebSocket connected - receiving real-time crypto prices');
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'prices' && message.data) {
+            // Convert backend price format to frontend format
+            const formattedPrices: Record<string, { usd: number; usd_24h_change: number }> = {};
+            Object.entries(message.data).forEach(([key, value]) => {
+              formattedPrices[key] = {
+                usd: typeof value === 'number' ? value : 0,
+                usd_24h_change: 0, // WebSocket doesn't provide 24h change yet
+              };
+            });
+            setRealtimePrices(formattedPrices);
+          }
+        } catch (error) {
+          console.error('[Wallet] Error parsing WebSocket message:', error);
+        }
+      };
+      
+      ws.onerror = (error) => {
+        console.error('[Wallet] WebSocket error:', error);
+      };
+      
+      ws.onclose = () => {
+        console.log('[Wallet] WebSocket disconnected. Reconnecting in 5 seconds...');
+        setTimeout(connectWebSocket, 5000);
+      };
+      
+      wsRef.current = ws;
+    };
+    
+    connectWebSocket();
+    
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // Filter transactions
   const filteredTransactions = useMemo(() => {
