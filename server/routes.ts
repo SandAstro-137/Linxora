@@ -1571,16 +1571,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/wallet/prices", async (req, res) => {
     try {
-      // Get real-time prices from WebSocket service
+      // Get real-time prices from polling service
       const priceService = getCryptoPriceService();
-      const realtimePrices = priceService.getCurrentPrices();
+      const currentPrices = priceService.getCurrentPrices();
       
-      // Convert CoinCap price format to our expected format
+      // Return in the format expected by frontend
       const prices = {
-        btc: realtimePrices.bitcoin ? parseFloat(realtimePrices.bitcoin) : 0,
-        sol: realtimePrices.solana ? parseFloat(realtimePrices.solana) : 0,
-        ltc: realtimePrices.litecoin ? parseFloat(realtimePrices.litecoin) : 0,
-        usdt: realtimePrices.tether ? parseFloat(realtimePrices.tether) : 1.0,
+        btc: { usd: currentPrices.btc, usd_24h_change: 0 },
+        sol: { usd: currentPrices.sol, usd_24h_change: 0 },
+        ltc: { usd: currentPrices.ltc, usd_24h_change: 0 },
+        usdt: { usd: currentPrices.usdt, usd_24h_change: 0 },
       };
       
       res.json(prices);
@@ -2134,12 +2134,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const currentPrices = priceService.getCurrentPrices();
     ws.send(JSON.stringify({
       type: 'prices',
-      data: {
-        btc: currentPrices.bitcoin ? parseFloat(currentPrices.bitcoin) : 0,
-        sol: currentPrices.solana ? parseFloat(currentPrices.solana) : 0,
-        ltc: currentPrices.litecoin ? parseFloat(currentPrices.litecoin) : 0,
-        usdt: currentPrices.tether ? parseFloat(currentPrices.tether) : 1.0,
-      }
+      data: currentPrices
     }));
     
     ws.on('error', (error) => {
@@ -2151,17 +2146,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
   
-  // Broadcast price updates every 2 seconds to all connected clients
+  // Broadcast price updates every 3 seconds to all connected clients
   setInterval(() => {
     const currentPrices = priceService.getCurrentPrices();
     const priceData = {
       type: 'prices',
-      data: {
-        btc: currentPrices.bitcoin ? parseFloat(currentPrices.bitcoin) : 0,
-        sol: currentPrices.solana ? parseFloat(currentPrices.solana) : 0,
-        ltc: currentPrices.litecoin ? parseFloat(currentPrices.litecoin) : 0,
-        usdt: currentPrices.tether ? parseFloat(currentPrices.tether) : 1.0,
-      }
+      data: currentPrices
     };
     
     wss.clients.forEach((client) => {
@@ -2169,7 +2159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         client.send(JSON.stringify(priceData));
       }
     });
-  }, 2000); // Broadcast every 2 seconds
+  }, 3000); // Broadcast every 3 seconds
   
   return httpServer;
 }

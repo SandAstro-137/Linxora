@@ -1,94 +1,64 @@
-import WebSocket from 'ws';
+import { getCryptoPrices } from './coingecko';
 
 export interface CryptoPrices {
-  bitcoin: string;
-  solana: string;
-  litecoin: string;
-  tether: string; // USDT
+  btc: number;
+  sol: number;
+  ltc: number;
+  usdt: number;
 }
 
 export class CryptoPriceService {
-  private coinCapWs: WebSocket | null = null;
-  private currentPrices: Partial<CryptoPrices> = {};
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private isConnecting = false;
+  private currentPrices: CryptoPrices = { btc: 0, sol: 0, ltc: 0, usdt: 1.0 };
+  private pollInterval: NodeJS.Timeout | null = null;
+  private isPolling = false;
 
   constructor() {
-    this.connect();
+    this.startPolling();
   }
 
-  private connect() {
-    if (this.isConnecting || (this.coinCapWs && this.coinCapWs.readyState === WebSocket.OPEN)) {
-      return;
+  private async startPolling() {
+    if (this.isPolling) return;
+    
+    this.isPolling = true;
+    console.log('[CryptoPriceService] Starting price polling from CoinGecko...');
+    
+    // Fetch prices immediately
+    await this.fetchPrices();
+    
+    // Poll every 10 seconds
+    this.pollInterval = setInterval(() => {
+      this.fetchPrices();
+    }, 10000);
+  }
+
+  private async fetchPrices() {
+    try {
+      const prices = await getCryptoPrices();
+      
+      // Convert to simple format
+      this.currentPrices = {
+        btc: prices.btc?.usd || 0,
+        sol: prices.sol?.usd || 0,
+        ltc: prices.ltc?.usd || 0,
+        usdt: prices.usdt?.usd || 1.0,
+      };
+      
+      console.log('[CryptoPriceService] Prices updated:', this.currentPrices);
+    } catch (error) {
+      console.error('[CryptoPriceService] Error fetching prices:', error);
     }
-
-    this.isConnecting = true;
-    console.log('[CryptoPriceService] Connecting to CoinCap WebSocket...');
-
-    // Connect to CoinCap WebSocket for real-time prices
-    this.coinCapWs = new WebSocket('wss://ws.coincap.io/prices?assets=bitcoin,solana,litecoin,tether');
-
-    this.coinCapWs.on('open', () => {
-      console.log('[CryptoPriceService] Connected to CoinCap WebSocket');
-      this.isConnecting = false;
-      
-      // Clear any reconnect timeout
-      if (this.reconnectTimeout) {
-        clearTimeout(this.reconnectTimeout);
-        this.reconnectTimeout = null;
-      }
-    });
-
-    this.coinCapWs.on('message', (data: WebSocket.Data) => {
-      try {
-        const prices = JSON.parse(data.toString()) as Partial<CryptoPrices>;
-        
-        // Update current prices
-        this.currentPrices = {
-          ...this.currentPrices,
-          ...prices
-        };
-        
-        // Log price updates (optional, can be removed in production)
-        if (Object.keys(prices).length > 0) {
-          console.log('[CryptoPriceService] Price update:', prices);
-        }
-      } catch (error) {
-        console.error('[CryptoPriceService] Error parsing message:', error);
-      }
-    });
-
-    this.coinCapWs.on('error', (error) => {
-      console.error('[CryptoPriceService] WebSocket error:', error.message);
-      this.isConnecting = false;
-    });
-
-    this.coinCapWs.on('close', () => {
-      console.log('[CryptoPriceService] Connection closed. Reconnecting in 5 seconds...');
-      this.isConnecting = false;
-      this.coinCapWs = null;
-      
-      // Reconnect after 5 seconds
-      this.reconnectTimeout = setTimeout(() => {
-        this.connect();
-      }, 5000);
-    });
   }
 
-  public getCurrentPrices(): Partial<CryptoPrices> {
+  public getCurrentPrices(): CryptoPrices {
     return this.currentPrices;
   }
 
   public disconnect() {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
     }
-
-    if (this.coinCapWs) {
-      this.coinCapWs.close();
-      this.coinCapWs = null;
-    }
+    this.isPolling = false;
   }
 }
 

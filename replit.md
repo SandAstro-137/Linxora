@@ -30,10 +30,12 @@ Pixelcut connects freelancers with customers through a moderated job board syste
 
 ### Crypto Wallet
 - Track balances in USDT, SOL, BTC, and LTC
-- Real-time price updates from CoinGecko API
+- **Real-time WebSocket price updates**: Live crypto prices broadcast every 3 seconds via WebSocket
+- Server-side polling of CoinGecko API every 10 seconds with automatic reconnection
 - Simulated deposit and withdrawal system
 - Transaction history with USD conversions
 - Personal dashboard with portfolio breakdown
+- Pending balance tracking for jobs in progress
 
 ### Freelancer Profiles
 - Display completed jobs and statistics
@@ -64,6 +66,7 @@ Pixelcut connects freelancers with customers through a moderated job board syste
 - **Discord Webhooks** for notifications
 - **Express Session** for authentication
 - **CoinGecko API** for crypto prices
+- **WebSocket (ws)** for real-time price broadcasting
 
 ## Project Structure
 
@@ -153,9 +156,20 @@ The Replit Discord connector is currently used for app-level Discord integration
 
 The application runs on port 5000 and serves both the API and frontend. Hot reload is enabled for development.
 
-## Recent Changes (November 11, 2025)
+## Recent Changes
 
-### Phase 3 Completion - Advanced Features (Latest)
+### Real-Time WebSocket Price Updates (November 14, 2025) - Latest
+**WebSocket implementation for live crypto prices:**
+
+- **Backend WebSocket Server**: WebSocket server (`/ws/prices`) broadcasts crypto prices every 3 seconds
+- **Price Polling Service**: Server-side CoinGecko API polling every 10 seconds for fresh price data
+- **Frontend WebSocket Client**: Wallet page connects to WebSocket for real-time updates
+- **Automatic Reconnection**: Frontend includes reconnection logic with proper cleanup to prevent ghost sockets
+- **Hybrid Approach**: Falls back to REST API if WebSocket unavailable, ensuring reliability
+- **Efficient Architecture**: Singleton price service shared across all WebSocket clients
+- **Resource Management**: `shouldReconnect` ref prevents memory leaks on component unmount
+
+### Phase 3 Completion - Advanced Features (November 11, 2025)
 **All 12 tasks completed and architect-reviewed:**
 
 **1-2. Role-Based Onboarding System**

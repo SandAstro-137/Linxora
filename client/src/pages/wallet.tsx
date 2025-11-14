@@ -46,6 +46,7 @@ export default function WalletPage() {
   // Real-time prices from WebSocket
   const [realtimePrices, setRealtimePrices] = useState<Record<string, { usd: number; usd_24h_change: number }>>({});
   const wsRef = useRef<WebSocket | null>(null);
+  const shouldReconnectRef = useRef<boolean>(true);
 
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
@@ -66,7 +67,11 @@ export default function WalletPage() {
   
   // WebSocket connection for real-time price updates
   useEffect(() => {
+    shouldReconnectRef.current = true;
+    
     const connectWebSocket = () => {
+      if (!shouldReconnectRef.current) return;
+      
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws/prices`;
       
@@ -101,8 +106,11 @@ export default function WalletPage() {
       };
       
       ws.onclose = () => {
-        console.log('[Wallet] WebSocket disconnected. Reconnecting in 5 seconds...');
-        setTimeout(connectWebSocket, 5000);
+        // Only reconnect if component is still mounted
+        if (shouldReconnectRef.current) {
+          console.log('[Wallet] WebSocket disconnected. Reconnecting in 5 seconds...');
+          setTimeout(connectWebSocket, 5000);
+        }
       };
       
       wsRef.current = ws;
@@ -110,8 +118,9 @@ export default function WalletPage() {
     
     connectWebSocket();
     
-    // Cleanup on unmount
+    // Cleanup on unmount - prevent ghost sockets
     return () => {
+      shouldReconnectRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
       }
