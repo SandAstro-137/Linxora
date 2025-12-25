@@ -2098,6 +2098,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/profile/specialization", requireRole("freelancer"), async (req, res) => {
+    try {
+      const { specialization } = req.body;
+      
+      if (!specialization || typeof specialization !== "string") {
+        return res.status(400).json({ error: "Invalid specialization" });
+      }
+
+      const trimmed = specialization.trim();
+      if (!trimmed) {
+        return res.status(400).json({ error: "Specialization cannot be empty" });
+      }
+
+      if (trimmed.length > 100) {
+        return res.status(400).json({ error: "Specialization must be 100 characters or less" });
+      }
+
+      const user = await storage.updateUser(req.session.userId!, { specialization: trimmed });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ specialization: user.specialization });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/profile/stats", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.role === "customer") {
+        const allJobs = await storage.getJobs({ customerId: user.id });
+        const completedJobs = allJobs.filter(j => j.status === "completed");
+        const totalSpent = completedJobs.reduce((sum, j) => sum + (Number(j.budget) || 0), 0);
+        
+        res.json({
+          totalJobsPosted: allJobs.length,
+          completedJobs: completedJobs.length,
+          activeJobs: allJobs.filter(j => ["approved", "in_progress"].includes(j.status)).length,
+          pendingJobs: allJobs.filter(j => j.status === "pending_approval").length,
+          totalSpent,
+        });
+      } else if (user.role === "moderator" || user.role === "staff") {
+        const allJobs = await storage.getJobs({});
+        const moderatedByUser = allJobs.filter(j => j.moderatorId === user.id);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        res.json({
+          totalJobsModerated: moderatedByUser.length,
+          pendingQueue: allJobs.filter(j => j.status === "pending_approval").length,
+          approvedToday: moderatedByUser.filter(j => {
+            if (j.status !== "approved" || !j.updatedAt) return false;
+            const updatedDate = new Date(j.updatedAt);
+            updatedDate.setHours(0, 0, 0, 0);
+            return updatedDate.getTime() === today.getTime();
+          }).length,
+        });
+      } else {
+        res.json({
+          completedJobs: user.completedJobs || 0,
+          level: user.level || 1,
+          rating: user.rating,
+          completionPercentage: user.completionPercentage || 0,
+        });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Chat Message routes
   app.get("/api/jobs/:jobId/chat", requireAuth, async (req, res) => {
     try {

@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Camera } from "lucide-react";
+import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Camera, Shield, DollarSign, FileCheck } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { Separator } from "@/components/ui/separator";
 import { JobCard } from "@/components/job-card";
@@ -21,6 +21,8 @@ export default function ProfilePage() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditingHours, setIsEditingHours] = useState(false);
+  const [isEditingSpecialization, setIsEditingSpecialization] = useState(false);
+  const [specializationValue, setSpecializationValue] = useState("");
   const [workingHours, setWorkingHours] = useState({
     monday: { start: "", end: "" },
     tuesday: { start: "", end: "" },
@@ -38,6 +40,10 @@ export default function ProfilePage() {
   const { data: savedWorkingHours } = useQuery({
     queryKey: ["/api/profile/working-hours"],
     enabled: user?.role === "freelancer",
+  });
+
+  const { data: profileStats } = useQuery<any>({
+    queryKey: ["/api/profile/stats"],
   });
 
   const updateWorkingHoursMutation = useMutation({
@@ -73,6 +79,25 @@ export default function ProfilePage() {
       toast({
         title: "Failed to update",
         description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateSpecializationMutation = useMutation({
+    mutationFn: (specialization: string) => apiRequest("PUT", "/api/profile/specialization", { specialization }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      setIsEditingSpecialization(false);
+      toast({
+        title: "Specialization updated",
+        description: "Your specialization has been saved",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to update",
+        description: error?.message || "Please try again",
         variant: "destructive",
       });
     },
@@ -165,10 +190,18 @@ export default function ProfilePage() {
   const levelProgress = calculateLevelProgress();
   const jobsUntilNext = getJobsUntilNextLevel();
 
+  const getRoleTitle = () => {
+    switch (user.role) {
+      case "customer": return "Customer Profile";
+      case "moderator": case "staff": return "Moderator Profile";
+      default: return "Freelancer Profile";
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Freelancer Profile</h2>
+        <h2 className="text-3xl font-bold tracking-tight">{getRoleTitle()}</h2>
         <p className="text-muted-foreground">Manage your professional profile</p>
       </div>
 
@@ -217,80 +250,227 @@ export default function ProfilePage() {
               )}
             </div>
 
-            <Separator />
+            {user.role === "freelancer" && (
+              <>
+                <Separator />
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium" data-testid="text-level">Level {user.level}</span>
-                <span className="text-sm text-muted-foreground" data-testid="text-completed-jobs">
-                  {user.completedJobs || 0} jobs
-                </span>
-              </div>
-              <Progress value={levelProgress} className="h-2" data-testid="progress-level" />
-              <p className="text-xs text-muted-foreground mt-1">
-                {(user.level || 1) === 5 
-                  ? "Max level reached!" 
-                  : `${jobsUntilNext} job${jobsUntilNext !== 1 ? 's' : ''} until next level`}
-              </p>
-            </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium" data-testid="text-level">Level {user.level}</span>
+                    <span className="text-sm text-muted-foreground" data-testid="text-completed-jobs">
+                      {user.completedJobs || 0} jobs
+                    </span>
+                  </div>
+                  <Progress value={levelProgress} className="h-2" data-testid="progress-level" />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {(user.level || 1) === 5 
+                      ? "Max level reached!" 
+                      : `${jobsUntilNext} job${jobsUntilNext !== 1 ? 's' : ''} until next level`}
+                  </p>
+                </div>
 
-            <Separator />
+                <Separator />
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Star className="w-4 h-4 text-yellow-500" />
-                <span className="text-sm font-medium">Rating</span>
-                <span className="ml-auto text-sm font-bold" data-testid="text-rating-value">
-                  {user.rating ? `${user.rating}/5` : "N/A"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-green-500" />
-                <span className="text-sm font-medium">Completion Rate</span>
-                <span className="ml-auto text-sm font-bold" data-testid="text-completion-percentage">
-                  {user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Briefcase className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium">Completed Jobs</span>
-                <span className="ml-auto text-sm font-bold" data-testid="text-completed-count">
-                  {user.completedJobs || 0}
-                </span>
-              </div>
-            </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Star className="w-4 h-4 text-yellow-500" />
+                    <span className="text-sm font-medium">Rating</span>
+                    <span className="ml-auto text-sm font-bold" data-testid="text-rating-value">
+                      {user.rating ? `${user.rating}/5` : "N/A"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium">Completion Rate</span>
+                    <span className="ml-auto text-sm font-bold" data-testid="text-completion-percentage">
+                      {user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">Completed Jobs</span>
+                    <span className="ml-auto text-sm font-bold" data-testid="text-completed-count">
+                      {user.completedJobs || 0}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {user.role === "customer" && profileStats && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">Jobs Posted</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.totalJobsPosted || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <FileCheck className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium">Completed</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.completedJobs || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-yellow-500" />
+                    <span className="text-sm font-medium">Total Spent</span>
+                    <span className="ml-auto text-sm font-bold">
+                      ${(profileStats.totalSpent || 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {(user.role === "moderator" || user.role === "staff") && profileStats && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">Jobs Moderated</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.totalJobsModerated || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-yellow-500" />
+                    <span className="text-sm font-medium">Pending Queue</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.pendingQueue || 0}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <div className="md:col-span-2 space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatsCard
-              title="Completed Jobs"
-              value={user.completedJobs || 0}
-              icon={Briefcase}
-              description="All time"
-            />
-            <StatsCard
-              title="Completion Rate"
-              value={user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
-              icon={TrendingUp}
-              description="Job success rate"
-            />
-            <StatsCard
-              title="Current Level"
-              value={`Level ${user.level || 1}`}
-              icon={Star}
-              description="Professional growth"
-            />
+            {user.role === "freelancer" && (
+              <>
+                <StatsCard
+                  title="Completed Jobs"
+                  value={user.completedJobs || 0}
+                  icon={Briefcase}
+                  description="All time"
+                />
+                <StatsCard
+                  title="Completion Rate"
+                  value={user.completionPercentage ? `${user.completionPercentage}%` : "0%"}
+                  icon={TrendingUp}
+                  description="Job success rate"
+                />
+                <StatsCard
+                  title="Current Level"
+                  value={`Level ${user.level || 1}`}
+                  icon={Star}
+                  description="Professional growth"
+                />
+              </>
+            )}
+            {user.role === "customer" && profileStats && (
+              <>
+                <StatsCard
+                  title="Jobs Posted"
+                  value={profileStats.totalJobsPosted || 0}
+                  icon={Briefcase}
+                  description="Total jobs created"
+                />
+                <StatsCard
+                  title="Completed"
+                  value={profileStats.completedJobs || 0}
+                  icon={FileCheck}
+                  description="Successfully finished"
+                />
+                <StatsCard
+                  title="Total Spent"
+                  value={`$${(profileStats.totalSpent || 0).toLocaleString()}`}
+                  icon={DollarSign}
+                  description="On completed jobs"
+                />
+              </>
+            )}
+            {(user.role === "moderator" || user.role === "staff") && profileStats && (
+              <>
+                <StatsCard
+                  title="Jobs Moderated"
+                  value={profileStats.totalJobsModerated || 0}
+                  icon={Shield}
+                  description="Total reviews"
+                />
+                <StatsCard
+                  title="Pending Queue"
+                  value={profileStats.pendingQueue || 0}
+                  icon={Clock}
+                  description="Awaiting review"
+                />
+                <StatsCard
+                  title="Approved Today"
+                  value={profileStats.approvedToday || 0}
+                  icon={FileCheck}
+                  description="Today's approvals"
+                />
+              </>
+            )}
           </div>
 
-          {user.specialization && (
-            <Card>
+          {user.role === "freelancer" && (
+            <Card data-testid="card-specialization">
               <CardHeader>
-                <CardTitle>Specialization</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle>Specialization</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isEditingSpecialization) {
+                        if (specializationValue.trim()) {
+                          updateSpecializationMutation.mutate(specializationValue);
+                        } else {
+                          setIsEditingSpecialization(false);
+                        }
+                      } else {
+                        setSpecializationValue(user.specialization || "");
+                        setIsEditingSpecialization(true);
+                      }
+                    }}
+                    disabled={updateSpecializationMutation.isPending}
+                    data-testid="button-edit-specialization"
+                  >
+                    {isEditingSpecialization ? (
+                      <>
+                        <Save className="w-4 h-4 mr-1" />
+                        Save
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="w-4 h-4 mr-1" />
+                        {user.specialization ? "Edit" : "Add"}
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <p className="text-muted-foreground">{user.specialization}</p>
+                {isEditingSpecialization ? (
+                  <Input
+                    placeholder="e.g., Web Development, UI/UX Design, Data Analysis"
+                    value={specializationValue}
+                    onChange={(e) => setSpecializationValue(e.target.value)}
+                    maxLength={100}
+                    data-testid="input-specialization"
+                  />
+                ) : (
+                  <p className="text-muted-foreground">
+                    {user.specialization || "No specialization set. Click Edit to add one."}
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
