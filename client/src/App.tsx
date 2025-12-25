@@ -27,6 +27,8 @@ import PTOPage from "@/pages/pto";
 import NotificationsPage from "@/pages/notifications";
 import CurrentJobPage from "@/pages/current-job";
 import MyJobsPage from "@/pages/my-jobs";
+import RoleUpgradePage from "@/pages/role-upgrade";
+import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: string[] }) {
   const { user, isLoading } = useAuth();
@@ -122,6 +124,16 @@ function Router() {
       <Route path="/notifications">
         <ProtectedRoute allowedRoles={["freelancer"]}>
           <NotificationsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/role-upgrade">
+        <ProtectedRoute allowedRoles={["customer", "freelancer"]}>
+          <RoleUpgradePage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/role-upgrade-review">
+        <ProtectedRoute allowedRoles={["moderator"]}>
+          <RoleUpgradeReviewPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />

@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -33,6 +33,7 @@ export function AppSidebar() {
     { title: "My Profile", url: "/profile", icon: User },
     { title: "PTO Requests", url: "/pto", icon: Clock },
     { title: "Notifications", url: "/notifications", icon: Bell },
+    { title: "Role Upgrade", url: "/role-upgrade", icon: ArrowUpCircle },
   ];
 
   const customerItems = [
@@ -42,11 +43,13 @@ export function AppSidebar() {
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Role Upgrade", url: "/role-upgrade", icon: ArrowUpCircle },
   ];
 
   const staffItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
+    { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Profile", url: "/profile", icon: User },
   ];

@@ -420,3 +420,52 @@ export const insertRatingSchema = createInsertSchema(ratings)
 
 export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
+
+// Role Upgrade Request status
+export const RoleUpgradeStatus = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  REJECTED: "rejected"
+} as const;
+
+export type RoleUpgradeStatusType = typeof RoleUpgradeStatus[keyof typeof RoleUpgradeStatus];
+
+// Role Upgrade Request types
+export const RoleUpgradeType = {
+  CUSTOMER_TO_FREELANCER: "customer_to_freelancer",
+  FREELANCER_TO_MODERATOR: "freelancer_to_moderator"
+} as const;
+
+export type RoleUpgradeTypeEnum = typeof RoleUpgradeType[keyof typeof RoleUpgradeType];
+
+// Role Upgrade Requests table
+export const roleUpgradeRequests = pgTable("role_upgrade_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  upgradeType: text("upgrade_type").notNull(),
+  reason: text("reason").notNull(),
+  experience: text("experience"),
+  portfolio: text("portfolio"),
+  status: text("status").notNull().default(RoleUpgradeStatus.PENDING),
+  reviewerId: varchar("reviewer_id"),
+  reviewNotes: text("review_notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertRoleUpgradeRequestSchema = createInsertSchema(roleUpgradeRequests)
+  .omit({
+    id: true,
+    status: true,
+    reviewerId: true,
+    reviewNotes: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    upgradeType: z.enum([RoleUpgradeType.CUSTOMER_TO_FREELANCER, RoleUpgradeType.FREELANCER_TO_MODERATOR]),
+    reason: z.string().min(10, "Please provide a detailed reason (at least 10 characters)"),
+  });
+
+export type InsertRoleUpgradeRequest = z.infer<typeof insertRoleUpgradeRequestSchema>;
+export type RoleUpgradeRequest = typeof roleUpgradeRequests.$inferSelect;

@@ -37,6 +37,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Smart Search System:** Levenshtein distance fuzzy matching, synonym expansion, and budget range filtering.
 - **Rating System:** Customers can rate freelancers post-completion, with automatic recalculation of freelancer averages.
 - **Auto-Leveling & Statistics:** Automatic update of freelancer statistics (completion percentage, level based on completed jobs) displayed on profile pages.
+- **Role Upgrade System:** Customers can apply to become Freelancers, and Freelancers can apply for Moderator status (requires 5+ completed jobs). Moderators review and approve/reject applications. Automatic role updates upon approval with full notification system.
 
 **System Design Choices:**
 - **Client-Side:** React with TypeScript, Wouter for routing, TanStack Query for data fetching.

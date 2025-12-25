@@ -25,6 +25,8 @@ import {
   type InsertTeamMessage,
   type Rating,
   type InsertRating,
+  type RoleUpgradeRequest,
+  type InsertRoleUpgradeRequest,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -106,6 +108,13 @@ export interface IStorage {
   getRating(jobId: string): Promise<Rating | undefined>;
   getRatingsByFreelancer(freelancerId: string): Promise<Rating[]>;
   createRating(rating: InsertRating): Promise<Rating>;
+
+  // Role Upgrade Request operations
+  getRoleUpgradeRequest(id: string): Promise<RoleUpgradeRequest | undefined>;
+  getRoleUpgradeRequests(filters?: { userId?: string; status?: string }): Promise<RoleUpgradeRequest[]>;
+  getPendingRoleUpgradeRequests(): Promise<RoleUpgradeRequest[]>;
+  createRoleUpgradeRequest(request: InsertRoleUpgradeRequest): Promise<RoleUpgradeRequest>;
+  updateRoleUpgradeRequest(id: string, updates: Partial<RoleUpgradeRequest>): Promise<RoleUpgradeRequest | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -122,6 +131,7 @@ export class MemStorage implements IStorage {
   private teamTasks: Map<string, TeamTask>;
   private teamMessages: Map<string, TeamMessage>;
   private ratings: Map<string, Rating>;
+  private roleUpgradeRequests: Map<string, RoleUpgradeRequest>;
 
   constructor() {
     this.users = new Map();
@@ -137,6 +147,7 @@ export class MemStorage implements IStorage {
     this.teamTasks = new Map();
     this.teamMessages = new Map();
     this.ratings = new Map();
+    this.roleUpgradeRequests = new Map();
   }
 
   // User operations
@@ -602,6 +613,51 @@ export class MemStorage implements IStorage {
     };
     this.ratings.set(id, rating);
     return rating;
+  }
+
+  // Role Upgrade Request operations
+  async getRoleUpgradeRequest(id: string): Promise<RoleUpgradeRequest | undefined> {
+    return this.roleUpgradeRequests.get(id);
+  }
+
+  async getRoleUpgradeRequests(filters?: { userId?: string; status?: string }): Promise<RoleUpgradeRequest[]> {
+    let requests = Array.from(this.roleUpgradeRequests.values());
+    if (filters?.userId) {
+      requests = requests.filter((r) => r.userId === filters.userId);
+    }
+    if (filters?.status) {
+      requests = requests.filter((r) => r.status === filters.status);
+    }
+    return requests.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getPendingRoleUpgradeRequests(): Promise<RoleUpgradeRequest[]> {
+    return this.getRoleUpgradeRequests({ status: "pending" });
+  }
+
+  async createRoleUpgradeRequest(insertRequest: InsertRoleUpgradeRequest): Promise<RoleUpgradeRequest> {
+    const id = randomUUID();
+    const request: RoleUpgradeRequest = {
+      ...insertRequest,
+      id,
+      status: "pending",
+      experience: insertRequest.experience ?? null,
+      portfolio: insertRequest.portfolio ?? null,
+      reviewerId: null,
+      reviewNotes: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.roleUpgradeRequests.set(id, request);
+    return request;
+  }
+
+  async updateRoleUpgradeRequest(id: string, updates: Partial<RoleUpgradeRequest>): Promise<RoleUpgradeRequest | undefined> {
+    const request = this.roleUpgradeRequests.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.roleUpgradeRequests.set(id, updated);
+    return updated;
   }
 }
 

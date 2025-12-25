@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -2242,6 +2242,167 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
 
       res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // === ROLE UPGRADE REQUEST ROUTES ===
+
+  // Get current user's role upgrade requests
+  app.get("/api/role-upgrade-requests/my", requireAuth, async (req, res) => {
+    try {
+      const requests = await storage.getRoleUpgradeRequests({ userId: req.session.userId });
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get pending role upgrade requests (moderators only)
+  app.get("/api/role-upgrade-requests/pending", requireRole("moderator"), async (req, res) => {
+    try {
+      const requests = await storage.getPendingRoleUpgradeRequests();
+      
+      // Enrich with user data
+      const enrichedRequests = await Promise.all(
+        requests.map(async (request) => {
+          const user = await storage.getUser(request.userId);
+          return {
+            ...request,
+            user: user ? {
+              id: user.id,
+              username: user.username,
+              avatar: user.avatar,
+              role: user.role,
+              completedJobs: user.completedJobs,
+              level: user.level,
+              rating: user.rating,
+            } : null,
+          };
+        })
+      );
+      
+      res.json(enrichedRequests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Submit a role upgrade request
+  app.post("/api/role-upgrade-requests", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const validatedData = insertRoleUpgradeRequestSchema.parse({
+        ...req.body,
+        userId: user.id,
+      });
+
+      // Validate upgrade type matches current role
+      if (validatedData.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER) {
+        if (user.role !== UserRole.CUSTOMER) {
+          return res.status(400).json({ error: "Only customers can request freelancer upgrade" });
+        }
+      } else if (validatedData.upgradeType === RoleUpgradeType.FREELANCER_TO_MODERATOR) {
+        if (user.role !== UserRole.FREELANCER) {
+          return res.status(400).json({ error: "Only freelancers can request moderator upgrade" });
+        }
+        // Additional requirements for moderator upgrade
+        if ((user.completedJobs || 0) < 5) {
+          return res.status(400).json({ error: "You must complete at least 5 jobs to apply for moderator" });
+        }
+      }
+
+      // Check for existing pending request
+      const existingRequests = await storage.getRoleUpgradeRequests({ 
+        userId: user.id, 
+        status: RoleUpgradeStatus.PENDING 
+      });
+      if (existingRequests.length > 0) {
+        return res.status(400).json({ error: "You already have a pending upgrade request" });
+      }
+
+      const request = await storage.createRoleUpgradeRequest(validatedData);
+
+      // Create notification for moderators
+      const moderators = (await storage.getUsers()).filter(u => u.role === "moderator");
+      for (const mod of moderators) {
+        await storage.createNotification({
+          userId: mod.id,
+          type: "role_upgrade",
+          title: "New Role Upgrade Request",
+          message: `${user.username} has requested to become a ${validatedData.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER ? 'freelancer' : 'moderator'}`,
+          relatedId: request.id,
+        });
+      }
+
+      res.status(201).json(request);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0].message });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Approve or reject a role upgrade request (moderators only)
+  app.patch("/api/role-upgrade-requests/:id", requireRole("moderator"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, reviewNotes } = req.body;
+
+      if (!status || !["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
+      }
+
+      const request = await storage.getRoleUpgradeRequest(id);
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      if (request.status !== RoleUpgradeStatus.PENDING) {
+        return res.status(400).json({ error: "This request has already been processed" });
+      }
+
+      // Update the request
+      const updatedRequest = await storage.updateRoleUpgradeRequest(id, {
+        status,
+        reviewerId: req.session.userId,
+        reviewNotes: reviewNotes || null,
+      });
+
+      // If approved, update the user's role
+      if (status === "approved") {
+        const newRole = request.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER 
+          ? UserRole.FREELANCER 
+          : UserRole.MODERATOR;
+        
+        await storage.updateUser(request.userId, { role: newRole });
+
+        // Notify the user
+        await storage.createNotification({
+          userId: request.userId,
+          type: "role_upgrade",
+          title: "Role Upgrade Approved!",
+          message: `Congratulations! Your request to become a ${newRole} has been approved.`,
+          relatedId: request.id,
+        });
+      } else {
+        // Notify the user of rejection
+        await storage.createNotification({
+          userId: request.userId,
+          type: "role_upgrade",
+          title: "Role Upgrade Request Declined",
+          message: `Your role upgrade request was declined. ${reviewNotes ? `Reason: ${reviewNotes}` : 'Please contact support for more information.'}`,
+          relatedId: request.id,
+        });
+      }
+
+      res.json(updatedRequest);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
