@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Clock, DollarSign, User } from "lucide-react";
 import { Job } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
+import { formatEasternDate } from "@/lib/timezone";
 
 interface JobCardProps {
   job: Job;
@@ -57,7 +58,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
           {job.deadline && (
             <div className="flex items-center gap-1 text-muted-foreground">
               <Clock className="w-4 h-4" />
-              <span>Due {formatDistanceToNow(new Date(job.deadline), { addSuffix: true })}</span>
+              <span>Due {formatEasternDate(job.deadline)} (ET)</span>
             </div>
           )}
           {job.collaborators && job.collaborators.length > 0 && (

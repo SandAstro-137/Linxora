@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -37,6 +37,7 @@ export function AppSidebar() {
 
   const customerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Post New Job", url: "/jobs/create", icon: PlusCircle },
     { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },

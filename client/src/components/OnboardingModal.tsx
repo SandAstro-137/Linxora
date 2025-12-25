@@ -98,7 +98,7 @@ const freelancerSteps: OnboardingStep[] = [
           <li>Browse available jobs in the Marketplace</li>
           <li>Request to take jobs that match your skills</li>
           <li>Work solo or collaborate on teams</li>
-          <li>Receive crypto payments to your wallet for completed work</li>
+          <li>Receive payments to your wallet for completed work</li>
         </ul>
       </div>
     ),
@@ -162,7 +162,7 @@ const customerSteps: OnboardingStep[] = [
           <li>Create job posts with clear requirements</li>
           <li>Jobs are reviewed by moderators before going live</li>
           <li>Review freelancer requests to take your jobs</li>
-          <li>Pay securely with crypto</li>
+          <li>Pay securely</li>
         </ul>
       </div>
     ),

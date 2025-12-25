@@ -146,7 +146,7 @@ function AppContent() {
       setShowOnboarding(false);
       refetchUser();
       toast({
-        title: "Welcome to Pixelcut!",
+        title: "Welcome to Linxora!",
         description: "You're all set to get started.",
       });
     } catch (error) {
@@ -179,12 +179,12 @@ function AppContent() {
                 <div className="flex flex-wrap items-center gap-2">
                   <img 
                     src="/favicon.png" 
-                    alt="Pixelcut Logo" 
+                    alt="Linxora Logo" 
                     className="h-10 max-h-12"
                     style={{ objectFit: "contain" }}
                     data-testid="img-logo"
                   />
-                  <span className="text-lg font-semibold" data-testid="text-app-name">Pixelcut</span>
+                  <span className="text-lg font-semibold" data-testid="text-app-name">Linxora</span>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">

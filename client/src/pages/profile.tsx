@@ -51,10 +51,10 @@ export default function ProfilePage() {
         description: "Your schedule has been saved successfully",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
-        title: "Failed to update",
-        description: "Please try again",
+        title: "Failed to update working hours",
+        description: error?.message || "Please ensure end time is after start time for each day",
         variant: "destructive",
       });
     },
@@ -299,7 +299,7 @@ export default function ProfilePage() {
             <Card data-testid="card-working-hours">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Working Hours</CardTitle>
+                  <CardTitle>Working Hours (Eastern Time)</CardTitle>
                   <Button
                     variant="outline"
                     size="sm"

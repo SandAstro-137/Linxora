@@ -1,0 +1,295 @@
+🌐 LINXORA — WEBSITE‑ONLY MASTER FEATURE LIST
+(Everything relevant to the actual site on Replit)
+🔐 1. Authentication System
+Fix Continue with Discord login
+
+Add Continue with Google
+
+Add Continue with Email (verification code or link)
+
+Optional: Continue with Apple
+
+Clear, specific error messages (no generic “Error”)
+
+Optional: account linking (Google + Discord + Email)
+
+👤 2. User Roles
+Customer
+Can post jobs
+
+Has customer‑specific profile stats
+
+Can apply to become a freelancer (account must be 2 weeks old)
+
+Freelancer
+Can claim jobs
+
+Has freelancer‑specific stats (XP, level, completion rate, etc.)
+
+Can apply to become a moderator (4 months old, level 5+, 65%+ completion rate)
+
+Moderator
+Approves jobs
+
+Sees only jobs they approved
+
+Has moderator‑specific stats
+
+Has a moderator wallet
+
+Cannot see or use freelancer/customer stats
+
+🧾 3. Profile System (Role‑Specific)
+Freelancer Profile
+Level
+
+XP
+
+Completion rate
+
+Completed jobs
+
+Rating
+
+Work hours
+
+PTO requests
+
+Specialization system:
+
+Preset options
+
+Custom option
+
+Inappropriate content filter
+
+Report button
+
+Moderation queue
+
+Profile picture upload (must work)
+
+Customer Profile
+Posted jobs
+
+Reliability score (1–10)
+
+Total $ traded
+
+Average response time
+
+Account age
+
+Verified badge
+
+Job cancellation rate
+
+Profile picture upload (must work)
+
+Moderator Profile
+Moderator rank/tier
+
+Cases reviewed
+
+Accuracy score
+
+Response time
+
+Moderator wallet
+
+Account age
+
+Moderator status
+
+Verified badge
+
+Profile picture upload (must work)
+
+💼 4. Wallet System
+Freelancer Wallet
+USD balance
+
+Crypto balance
+
+PayPal deposits
+
+PayPal withdrawals
+
+Ledger tracking
+
+Clean UI separation
+
+Moderator Wallet
+Paid by the website
+
+Tracks earnings
+
+Shows payout history
+
+Shows pending payouts
+
+Customer Wallet
+Tracks spending
+
+Tracks total $ traded
+
+🧠 5. XP & Leveling System
+XP awarded only when job is completed
+
+XP formula based on job worth
+
+Anti‑abuse rules
+
+Level progression
+
+XP caps (optional)
+
+📊 6. Completion Rate System
+Auto‑updates
+
+Completed ÷ accepted
+
+Missed/cancelled jobs lower rate
+
+Hidden until minimum job count reached
+
+🧾 7. Job System
+Posting Jobs
+“Post New Job” page must exist (fix 404 error)
+
+Clear error messages
+
+Customers can post jobs
+
+Job Approval (Moderators)
+Moderators only see jobs they approved
+
+No cross‑visibility
+
+Moderator‑specific claim errors
+
+Job Claiming
+Freelancer Claim Errors
+Job already claimed
+
+Job expired
+
+Not eligible
+
+System issue
+
+Customer Claim Errors
+Customers cannot claim jobs
+
+Must show a specific message
+
+Moderator Claim Errors
+“You did not approve this job”
+
+“Another moderator is handling this job”
+
+“Job no longer active”
+
+🕒 8. Time System
+Website must always use Eastern Time (ET)
+
+System must constantly track current time
+
+All deadlines, PTO, work hours, and job rules use ET
+
+🕓 9. Work Hours System
+End time must be after start time
+
+Real‑time validation
+
+Clear error messages
+
+Valid hours must save (fix “Failed” bug)
+
+🗓️ 10. PTO System
+PTO duration max: 3 weeks
+
+PTO cannot be scheduled more than 3 years in the future
+
+End time must be after start time
+
+Valid PTO must save (fix “Error” bug)
+
+Grammar checker for PTO reasons
+
+Auto‑correct option
+
+Manual correction option
+
+🎓 11. Tutorial System
+Auto‑launches once on account creation
+
+Uses hasSeenTutorial flag
+
+Replayable via Settings → Help & Support → View Tutorial
+
+Slide‑based walkthrough
+
+🎨 12. Branding & UI
+Logo inversion for light mode
+
+Clean theme switching
+
+Consistent UI across roles
+
+Professional error messages everywhere
+
+🛡️ 13. Safety & Moderation
+Inappropriate content filter for names/specializations
+
+Report function for:
+
+Names
+
+Specializations
+
+Profiles
+
+Jobs
+
+Moderation queue
+
+Moderator eligibility:
+
+4‑month‑old account
+
+Level 5+
+
+65%+ completion rate
+
+🔄 14. Role Upgrade System
+Customer → Freelancer
+Must be 2 weeks old
+
+Application tab on left menu
+
+Freelancer → Moderator
+Must be 4 months old
+
+Level 5+
+
+65%+ completion rate
+
+Application tab
+
+🧩 15. Critical Bug Fixes
+Profile picture upload error
+
+PTO request error
+
+Work hours save error
+
+Post New Job 404 error
+
+Discord login error
+
+Time zone enforcement
+
+Job claim error messages
+
+Moderator job visibility

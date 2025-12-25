@@ -17,6 +17,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -860,11 +861,11 @@ export default function JobDetailPage() {
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Clock className="w-4 h-4" />
                   <div>
-                    <p className="text-sm">Deadline</p>
+                    <p className="text-sm">Deadline (ET)</p>
                     <p className="text-sm text-foreground">
-                      {formatDistanceToNow(new Date(job.deadline), {
+                      {formatEasternDate(job.deadline)} ({formatDistanceToNow(new Date(job.deadline), {
                         addSuffix: true,
-                      })}
+                      })})
                     </p>
                   </div>
                 </div>

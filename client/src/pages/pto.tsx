@@ -15,6 +15,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { formatDistanceToNow } from "date-fns";
+import { TIMEZONE_LABEL, formatEasternDate } from "@/lib/timezone";
+
+const MAX_PTO_DAYS = 21; // 3 weeks
+const MAX_FUTURE_YEARS = 3;
 
 const formSchema = z.object({
   freelancerId: z.string(),
@@ -22,6 +26,31 @@ const formSchema = z.object({
   endDate: z.string().min(1, "End date is required"),
   reason: z.string().min(10, "Reason must be at least 10 characters"),
   status: z.string().optional(),
+}).refine((data) => {
+  if (!data.startDate || !data.endDate) return true;
+  return new Date(data.endDate) >= new Date(data.startDate);
+}, {
+  message: "End date must be on or after start date",
+  path: ["endDate"],
+}).refine((data) => {
+  if (!data.startDate || !data.endDate) return true;
+  const start = new Date(data.startDate);
+  const end = new Date(data.endDate);
+  // Inclusive count: same day = 1 day
+  const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  return diffDays <= MAX_PTO_DAYS;
+}, {
+  message: `PTO duration cannot exceed ${MAX_PTO_DAYS} days (3 weeks)`,
+  path: ["endDate"],
+}).refine((data) => {
+  if (!data.startDate) return true;
+  const start = new Date(data.startDate);
+  const maxDate = new Date();
+  maxDate.setFullYear(maxDate.getFullYear() + MAX_FUTURE_YEARS);
+  return start <= maxDate;
+}, {
+  message: `Start date cannot be more than ${MAX_FUTURE_YEARS} years in the future`,
+  path: ["startDate"],
 });
 
 export default function PTOPage() {
@@ -61,10 +90,10 @@ export default function PTOPage() {
       setShowForm(false);
       form.reset();
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
         title: "Failed to submit request",
-        description: "Please try again later.",
+        description: error?.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -107,7 +136,8 @@ export default function PTOPage() {
           <CardHeader>
             <CardTitle>Submit PTO Request</CardTitle>
             <CardDescription>
-              Request time off for vacation, personal matters, or other reasons
+              Request time off for vacation, personal matters, or other reasons.
+              All times are in {TIMEZONE_LABEL}.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -185,8 +215,8 @@ export default function PTOPage() {
                       <div className="flex items-center gap-2">
                         <Clock className="w-4 h-4 text-muted-foreground" />
                         <span className="font-medium">
-                          {new Date(request.startDate).toLocaleDateString()} -{" "}
-                          {new Date(request.endDate).toLocaleDateString()}
+                          {formatEasternDate(request.startDate)} -{" "}
+                          {formatEasternDate(request.endDate)}
                         </span>
                       </div>
                       <Badge className={getStatusColor(request.status)} variant="secondary">

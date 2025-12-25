@@ -1857,6 +1857,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validated = insertPTORequestSchema.parse(req.body);
       const user = await storage.getUser(req.session.userId!);
       
+      // Validate PTO constraints
+      const startDate = new Date(validated.startDate);
+      const endDate = new Date(validated.endDate);
+      const now = new Date();
+      
+      // End date must be on or after start date (allow same-day PTO)
+      if (endDate < startDate) {
+        return res.status(400).json({ error: "End date must be on or after start date" });
+      }
+      
+      // PTO duration cannot exceed 21 days (3 weeks) - inclusive count
+      const diffDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      if (diffDays > 21) {
+        return res.status(400).json({ error: "PTO duration cannot exceed 3 weeks (21 days)" });
+      }
+      
+      // Start date cannot be more than 3 years in the future
+      const maxDate = new Date();
+      maxDate.setFullYear(maxDate.getFullYear() + 3);
+      if (startDate > maxDate) {
+        return res.status(400).json({ error: "Start date cannot be more than 3 years in the future" });
+      }
+      
       const request = await storage.createPTORequest({
         ...validated,
         freelancerId: req.session.userId!,
@@ -2018,6 +2041,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/profile/working-hours", requireAuth, async (req, res) => {
     try {
       const validatedHours = workingHoursSchema.parse(req.body);
+      
+      // Validate end time is after start time for each day
+      const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      for (const day of days) {
+        const dayHours = validatedHours[day as keyof typeof validatedHours];
+        if (dayHours?.start && dayHours?.end) {
+          const [startHour, startMin] = dayHours.start.split(':').map(Number);
+          const [endHour, endMin] = dayHours.end.split(':').map(Number);
+          const startMinutes = startHour * 60 + startMin;
+          const endMinutes = endHour * 60 + endMin;
+          
+          if (endMinutes <= startMinutes) {
+            return res.status(400).json({ 
+              error: `End time must be after start time for ${day.charAt(0).toUpperCase() + day.slice(1)}` 
+            });
+          }
+        }
+      }
+      
       const user = await storage.updateUser(req.session.userId!, {
         workingHours: validatedHours,
       });
