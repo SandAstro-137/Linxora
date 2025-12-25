@@ -1,10 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Job, CancellationRequest } from "@shared/schema";
+import { Job, CancellationRequest, Report } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,6 +38,10 @@ export default function ModerationPage() {
 
   const { data: cancellationRequests, isLoading: requestsLoading } = useQuery<EnrichedCancellationRequest[]>({
     queryKey: ["/api/cancellation-requests"],
+  });
+
+  const { data: pendingReports, isLoading: reportsLoading } = useQuery<Report[]>({
+    queryKey: ["/api/reports/pending"],
   });
 
   const approveMutation = useMutation({
@@ -158,13 +162,49 @@ export default function ModerationPage() {
   });
 
   const pendingRequestsCount = cancellationRequests?.filter(r => r.status === "pending").length || 0;
+  const pendingReportsCount = pendingReports?.length || 0;
+
+  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [reportReviewNotes, setReportReviewNotes] = useState("");
+  const [reportReviewDialogOpen, setReportReviewDialogOpen] = useState(false);
+
+  const updateReportMutation = useMutation({
+    mutationFn: ({ reportId, status, reviewNotes }: { reportId: string; status: string; reviewNotes?: string }) =>
+      apiRequest("PATCH", `/api/reports/${reportId}`, { status, reviewNotes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/pending"] });
+      setReportReviewDialogOpen(false);
+      setSelectedReport(null);
+      setReportReviewNotes("");
+      toast({
+        title: "Report updated",
+        description: "The report status has been updated.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to update report",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const getReportTypeIcon = (type: string) => {
+    switch (type) {
+      case "job": return <Briefcase className="w-4 h-4" />;
+      case "user": return <User className="w-4 h-4" />;
+      case "message": return <MessageSquare className="w-4 h-4" />;
+      default: return <Flag className="w-4 h-4" />;
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold tracking-tight">Moderation Queue</h2>
         <p className="text-muted-foreground">
-          Review and approve job postings and cancellation requests
+          Review and approve job postings, cancellation requests, and user reports
         </p>
       </div>
 
@@ -183,6 +223,15 @@ export default function ModerationPage() {
             {pendingRequestsCount > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {pendingRequestsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="reports" data-testid="tab-reports">
+            <Flag className="w-4 h-4 mr-1" />
+            Reports
+            {pendingReportsCount > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {pendingReportsCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -329,7 +378,7 @@ export default function ModerationPage() {
                       </div>
                     </div>
                     <CardDescription className="mt-2">
-                      Submitted {formatDistanceToNow(new Date(request.createdAt), { addSuffix: true })}
+                      Submitted {request.createdAt ? formatDistanceToNow(new Date(request.createdAt), { addSuffix: true }) : "Unknown"}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -416,6 +465,117 @@ export default function ModerationPage() {
             </Card>
           )}
         </TabsContent>
+
+        <TabsContent value="reports">
+          {reportsLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : pendingReports && pendingReports.length > 0 ? (
+            <div className="space-y-4">
+              {pendingReports.map((report) => (
+                <Card key={report.id} className="border-2" data-testid={`card-report-${report.id}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          {getReportTypeIcon(report.reportType)}
+                          <CardTitle className="text-lg">
+                            {report.reportType.charAt(0).toUpperCase() + report.reportType.slice(1)} Report
+                          </CardTitle>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          <Badge variant="outline">{report.reportType}</Badge>
+                          <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-700 dark:text-yellow-400">
+                            Pending Review
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                    <CardDescription className="mt-2">
+                      Submitted {report.createdAt ? formatDistanceToNow(new Date(report.createdAt), { addSuffix: true }) : "Unknown"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold mb-2">Reason</h4>
+                      <p className="text-sm text-muted-foreground">{report.reason}</p>
+                    </div>
+
+                    {report.description && (
+                      <div>
+                        <h4 className="font-semibold mb-2">Additional Details</h4>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                          {report.description}
+                        </p>
+                      </div>
+                    )}
+
+                    <div>
+                      <h4 className="font-semibold mb-2">Target ID</h4>
+                      <p className="text-sm text-muted-foreground font-mono">{report.targetId}</p>
+                    </div>
+
+                    <div className="flex gap-2 pt-4 border-t flex-wrap">
+                      <Button
+                        onClick={() => {
+                          setSelectedReport(report);
+                          setReportReviewNotes("");
+                          setReportReviewDialogOpen(true);
+                        }}
+                        className="gap-2"
+                        data-testid={`button-resolve-report-${report.id}`}
+                      >
+                        <Check className="w-4 h-4" />
+                        Resolve
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedReport(report);
+                          setReportReviewNotes("");
+                          setReportReviewDialogOpen(true);
+                        }}
+                        className="gap-2"
+                        data-testid={`button-review-report-${report.id}`}
+                      >
+                        <FileText className="w-4 h-4" />
+                        Mark Reviewed
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedReport(report);
+                          setReportReviewNotes("");
+                          setReportReviewDialogOpen(true);
+                        }}
+                        className="gap-2 text-muted-foreground"
+                        data-testid={`button-dismiss-report-${report.id}`}
+                      >
+                        <X className="w-4 h-4" />
+                        Dismiss
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-12">
+                <div className="text-center">
+                  <Flag className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No pending reports</h3>
+                  <p className="text-muted-foreground">
+                    All reports have been processed
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
       </Tabs>
 
       <Dialog open={requestChangesDialogOpen} onOpenChange={setRequestChangesDialogOpen}>
@@ -464,6 +624,103 @@ export default function ModerationPage() {
               data-testid="button-submit-changes"
             >
               Submit Feedback
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reportReviewDialogOpen} onOpenChange={setReportReviewDialogOpen}>
+        <DialogContent data-testid="dialog-review-report">
+          <DialogHeader>
+            <DialogTitle>Review Report</DialogTitle>
+            <DialogDescription>
+              Select an action and optionally add notes for this report.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedReport && (
+              <div className="p-3 bg-muted/50 rounded-md space-y-2">
+                <p className="text-sm"><strong>Type:</strong> {selectedReport.reportType}</p>
+                <p className="text-sm"><strong>Reason:</strong> {selectedReport.reason}</p>
+                {selectedReport.description && (
+                  <p className="text-sm"><strong>Details:</strong> {selectedReport.description}</p>
+                )}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="reviewNotes">Review Notes (Optional)</Label>
+              <Textarea
+                id="reviewNotes"
+                placeholder="Add any notes about your decision..."
+                value={reportReviewNotes}
+                onChange={(e) => setReportReviewNotes(e.target.value)}
+                rows={3}
+                data-testid="textarea-review-notes"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReportReviewDialogOpen(false);
+                setSelectedReport(null);
+                setReportReviewNotes("");
+              }}
+              data-testid="button-cancel-review"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (selectedReport) {
+                  updateReportMutation.mutate({
+                    reportId: selectedReport.id,
+                    status: "dismissed",
+                    reviewNotes: reportReviewNotes || undefined,
+                  });
+                }
+              }}
+              disabled={updateReportMutation.isPending}
+              className="text-muted-foreground"
+              data-testid="button-confirm-dismiss"
+            >
+              <X className="w-4 h-4 mr-1" />
+              Dismiss
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (selectedReport) {
+                  updateReportMutation.mutate({
+                    reportId: selectedReport.id,
+                    status: "reviewed",
+                    reviewNotes: reportReviewNotes || undefined,
+                  });
+                }
+              }}
+              disabled={updateReportMutation.isPending}
+              data-testid="button-confirm-review"
+            >
+              <FileText className="w-4 h-4 mr-1" />
+              Mark Reviewed
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedReport) {
+                  updateReportMutation.mutate({
+                    reportId: selectedReport.id,
+                    status: "resolved",
+                    reviewNotes: reportReviewNotes || undefined,
+                  });
+                }
+              }}
+              disabled={updateReportMutation.isPending}
+              data-testid="button-confirm-resolve"
+            >
+              <Check className="w-4 h-4 mr-1" />
+              Resolve
             </Button>
           </DialogFooter>
         </DialogContent>

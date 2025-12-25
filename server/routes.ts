@@ -2170,19 +2170,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } else if (user.role === "moderator" || user.role === "staff") {
         const allJobs = await storage.getJobs({});
-        const moderatedByUser = allJobs.filter(j => j.moderatorId === user.id);
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
+        const approvedJobs = allJobs.filter(j => j.status === "approved");
+        const approvedToday = approvedJobs.filter(j => {
+          if (!j.updatedAt) return false;
+          const updatedDate = new Date(j.updatedAt);
+          updatedDate.setHours(0, 0, 0, 0);
+          return updatedDate.getTime() === today.getTime();
+        }).length;
+        
         res.json({
-          totalJobsModerated: moderatedByUser.length,
+          totalJobsModerated: approvedJobs.length,
           pendingQueue: allJobs.filter(j => j.status === "pending_approval").length,
-          approvedToday: moderatedByUser.filter(j => {
-            if (j.status !== "approved" || !j.updatedAt) return false;
-            const updatedDate = new Date(j.updatedAt);
-            updatedDate.setHours(0, 0, 0, 0);
-            return updatedDate.getTime() === today.getTime();
-          }).length,
+          approvedToday,
         });
       } else {
         res.json({

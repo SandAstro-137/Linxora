@@ -38,6 +38,12 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Rating System:** Customers can rate freelancers post-completion, with automatic recalculation of freelancer averages.
 - **Auto-Leveling & Statistics:** Automatic update of freelancer statistics (completion percentage, level based on completed jobs) displayed on profile pages.
 - **Role Upgrade System:** Customers can apply to become Freelancers, and Freelancers can apply for Moderator status (requires 5+ completed jobs). Moderators review and approve/reject applications. Automatic role updates upon approval with full notification system.
+- **Tutorial System:** Slide-based walkthrough with role-specific content (6 slides for freelancers, 5 for customers, 4 for moderators), accessible via help button in header.
+- **Safety & Moderation:**
+    - Content Filter: Server-side library (server/lib/content-filter.ts) with inappropriate/suspicious pattern detection, XSS sanitization via sanitizeText(), and spam detection via isSpamLike().
+    - Report System: Users can report jobs, users, or messages via ReportDialog component. Reports are stored with sanitized content and checked for high-severity inappropriate content.
+    - Moderation Queue: Reports tab in moderation page for moderators to review, resolve, mark reviewed, or dismiss reports with optional review notes.
+    - Content filtering applied to job creation and report submissions to prevent malicious content.
 
 **System Design Choices:**
 - **Client-Side:** React with TypeScript, Wouter for routing, TanStack Query for data fetching.
