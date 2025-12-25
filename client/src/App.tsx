@@ -14,6 +14,10 @@ import { NotificationCenter } from "@/components/NotificationCenter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
+import { TutorialModal } from "@/components/TutorialModal";
+import { HelpCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
@@ -145,6 +149,7 @@ function AppContent() {
   const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => {
     if (user && !user.onboardingCompleted) {
@@ -200,6 +205,21 @@ function AppContent() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowTutorial(true)}
+                      data-testid="button-help"
+                    >
+                      <HelpCircle className="h-5 w-5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>View Tutorial</p>
+                  </TooltipContent>
+                </Tooltip>
                 <NotificationCenter />
                 <ThemeToggle />
                 <UserNav />
@@ -215,6 +235,10 @@ function AppContent() {
         user={user}
         open={showOnboarding}
         onComplete={handleCompleteOnboarding}
+      />
+      <TutorialModal
+        open={showTutorial}
+        onOpenChange={setShowTutorial}
       />
     </>
   );
