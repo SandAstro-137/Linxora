@@ -1,0 +1,138 @@
+Freelancer View (FL)
+Bugs
+Claimed jobs do not appear in the Current Jobs tab.
+
+Job creation returns a 404 error.
+
+Missing Features / Improvements
+No option to create a team when viewing jobs in the Browse Jobs section.
+
+Cancelled or deleted jobs should not count toward freelancer level progression.
+
+If a customer requests a new freelancer, the original freelancer’s success rate should decrease.
+
+Customer View (CS)
+Bugs
+No Profile tab on the left sidebar.
+
+Notification indicator shows a notification, but none appear when opened.
+
+Missing Features / Improvements
+Add a 5‑star review system after job completion.
+
+Add an option to request a new freelancer in My Jobs.
+
+Request should go to moderation.
+
+Removing a freelancer should negatively affect their success rate.
+
+Freelancer should not be forced to give up completed work unless compensated.
+
+Job creation needs to be fixed (404 error mentioned above).
+
+Moderator View (MD)
+Bugs
+No Profile tab on the left sidebar.
+
+Missing Features / Improvements
+Moderators need the ability to remove freelancers from jobs.
+
+Moderators should be able to view job details, including:
+
+Job description
+
+Customer
+
+Assigned freelancer
+
+Option to remove freelancer
+
+In “All Jobs,” each job should show whether it has been claimed.
+
+Moderators should be able to see all jobs, claimed or unclaimed.
+
+General System Issues
+Wallet / Payments
+Crypto prices are not updating with market changes.
+
+Withdrawals succeed even with invalid wallet addresses.
+
+Wallet balance changes before transactions are processed.
+
+Wallet needs a deposit option.
+
+Negative withdrawals increase total funds (critical bug).
+
+System should block:
+
+Withdrawals above available balance
+
+Withdrawals below $0
+
+$0 withdrawals
+
+$0 deposits
+
+If a transaction fails, the system should notify the user and auto‑cancel.
+
+Wallet USD value should update based on crypto price changes.
+
+UI / UX Improvements
+All right‑side tab bars (Dashboard, Profile, etc.) need:
+
+A working Profile page for each role (Customer, Freelancer, Moderator)
+
+An AI assistant for guidance and troubleshooting
+
+Add job progress tracking (progress bar or checklist).
+
+Customers must be able to accept, decline, and view freelancer requests.
+
+Onboarding “X” button should actually skip onboarding.
+
+Maximum active/pending jobs per client should be 3.
+
+Default balance for new users should be $0.
+
+Freelancers should be able to edit their specialization.
+
+AI Integration
+AI should:
+
+Recommend jobs to freelancers
+
+Help customers write better job descriptions
+
+Flag inappropriate content
+
+Approve jobs and requests automatically
+
+Branding / Visual
+Change all instances of “Pixelcut” to Linxora.
+
+Replace the old Pixelcut logo with the new Linxora logo.
+
+The favicon (tab logo) needs smoother, cleaner edges (anti‑aliasing).
+
+Integrate PayPal as a supported payment method.
+
+Run a system‑wide check for notification errors.
+
+Additional System Rules
+Do not record $0 withdrawals or deposits in transaction history.
+
+Do not allow $0 transactions at all.
+
+Minimum withdrawal: $0.01
+
+Minimum deposit: $1.00
+
+Change moderation role from “job overview and approval” to social moderation and rule enforcement.
+
+Ensure demo mode remains available after release (question).
+
+Final Question
+If all these changes cannot be completed at once, please let me know which ones are possible now and which must wait.
+If none can be completed at this time, please simply respond:
+
+“I can’t complete all these actions at the moment.”
