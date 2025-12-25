@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -383,6 +383,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const jobs = await storage.getJobs({ customerId: req.session.userId! });
       res.json(jobs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get freelancer's current/assigned jobs (claimed, in_progress, completed)
+  app.get("/api/freelancer/jobs", requireRole("freelancer"), async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      
+      // Get all jobs where this user is the freelancer or a collaborator
+      const allJobs = await storage.getJobs({});
+      
+      const freelancerJobs = allJobs.filter(job => 
+        job.freelancerId === userId || 
+        (job.collaborators && job.collaborators.includes(userId))
+      );
+      
+      res.json(freelancerJobs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -1611,10 +1630,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Wallet not found" });
       }
 
+      // Validate wallet address
+      if (!address || typeof address !== 'string' || address.trim().length < 10) {
+        return res.status(400).json({ error: "Invalid wallet address" });
+      }
+
+      const withdrawAmount = parseFloat(amount);
+      
+      // CRITICAL: Validate amount - prevent negative and zero withdrawals
+      if (isNaN(withdrawAmount) || withdrawAmount <= 0) {
+        return res.status(400).json({ error: "Withdrawal amount must be greater than $0" });
+      }
+      
+      // Minimum withdrawal is $0.01
+      if (withdrawAmount < 0.01) {
+        return res.status(400).json({ error: "Minimum withdrawal is $0.01" });
+      }
+
       // Simulate withdrawal (in production, this would interact with blockchain)
       const currencyKey = `${currency.toLowerCase()}Balance` as keyof typeof wallet;
       const currentBalance = parseFloat(wallet[currencyKey] as string);
-      const withdrawAmount = parseFloat(amount);
 
       // For USDT, check available balance (total - pending)
       if (currency.toUpperCase() === "USDT") {
@@ -1647,6 +1682,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currency,
         amount: withdrawAmount.toString(),
         usdAmount: (withdrawAmount * price).toString(),
+        status: "completed",
+        transactionHash: `0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`,
+      });
+
+      res.json(transaction);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Deposit endpoint
+  app.post("/api/wallet/deposit", requireAuth, async (req, res) => {
+    try {
+      const { currency, amount } = req.body;
+      
+      const wallet = await storage.getWallet(req.session.userId!);
+      if (!wallet) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+
+      const depositAmount = parseFloat(amount);
+      
+      // Validate amount - prevent negative and zero deposits
+      if (isNaN(depositAmount) || depositAmount <= 0) {
+        return res.status(400).json({ error: "Deposit amount must be greater than $0" });
+      }
+      
+      // Minimum deposit is $1.00
+      if (depositAmount < 1.00) {
+        return res.status(400).json({ error: "Minimum deposit is $1.00" });
+      }
+
+      const currencyKey = `${currency.toLowerCase()}Balance` as keyof typeof wallet;
+      const currentBalance = parseFloat(wallet[currencyKey] as string || "0");
+
+      // Update wallet balance
+      await storage.updateWallet(req.session.userId!, {
+        [currencyKey]: (currentBalance + depositAmount).toString(),
+      });
+
+      // Get current price
+      const prices = await getCryptoPrices();
+      const price = prices[currency.toLowerCase()]?.usd || 1;
+
+      // Create transaction record
+      const transaction = await storage.createTransaction({
+        walletId: wallet.id,
+        type: "deposit",
+        currency,
+        amount: depositAmount.toString(),
+        usdAmount: (depositAmount * price).toString(),
         status: "completed",
         transactionHash: `0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`,
       });

@@ -38,6 +38,11 @@ export default function WalletPage() {
   const [withdrawalAmount, setWithdrawalAmount] = useState("");
   const [withdrawalAddress, setWithdrawalAddress] = useState("");
   
+  // Deposit state
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositCurrency, setDepositCurrency] = useState("USDT");
+  const [depositAmount, setDepositAmount] = useState("");
+  
   // Transaction filters
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCurrency, setFilterCurrency] = useState<string>("all");
@@ -151,10 +156,32 @@ export default function WalletPage() {
       setWithdrawalAmount("");
       setWithdrawalAddress("");
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
         title: "Withdrawal failed",
-        description: "Please try again later.",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const depositMutation = useMutation({
+    mutationFn: (data: { currency: string; amount: string }) =>
+      apiRequest("POST", "/api/wallet/deposit", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      toast({
+        title: "Deposit successful",
+        description: "Your deposit has been processed.",
+      });
+      setDepositOpen(false);
+      setDepositAmount("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Deposit failed",
+        description: error?.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -241,13 +268,68 @@ export default function WalletPage() {
             Manage your wallet balance
           </p>
         </div>
-        <Dialog open={withdrawalOpen} onOpenChange={setWithdrawalOpen}>
-          <DialogTrigger asChild>
-            <Button data-testid="button-withdraw">
-              <ArrowUpCircle className="w-4 h-4 mr-2" />
-              Withdraw
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Dialog open={depositOpen} onOpenChange={setDepositOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" data-testid="button-deposit">
+                <ArrowDownCircle className="w-4 h-4 mr-2" />
+                Deposit
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Deposit Funds</DialogTitle>
+                <DialogDescription>
+                  Add funds to your wallet (minimum $1.00)
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label>Currency</Label>
+                  <Select value={depositCurrency} onValueChange={setDepositCurrency}>
+                    <SelectTrigger data-testid="select-deposit-currency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USDT">USDT</SelectItem>
+                      <SelectItem value="SOL">SOL</SelectItem>
+                      <SelectItem value="BTC">BTC</SelectItem>
+                      <SelectItem value="LTC">LTC</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Amount</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    placeholder="1.00"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    data-testid="input-deposit-amount"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Minimum deposit: $1.00</p>
+                </div>
+                <Button
+                  onClick={() => depositMutation.mutate({ currency: depositCurrency, amount: depositAmount })}
+                  disabled={!depositAmount || parseFloat(depositAmount) < 1 || depositMutation.isPending}
+                  className="w-full"
+                  data-testid="button-confirm-deposit"
+                >
+                  {depositMutation.isPending ? "Processing..." : "Confirm Deposit"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={withdrawalOpen} onOpenChange={setWithdrawalOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="button-withdraw">
+                <ArrowUpCircle className="w-4 h-4 mr-2" />
+                Withdraw
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Withdraw Funds</DialogTitle>
@@ -302,6 +384,7 @@ export default function WalletPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

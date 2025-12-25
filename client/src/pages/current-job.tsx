@@ -36,14 +36,15 @@ export default function CurrentJobPage() {
   const [message, setMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Get freelancer's current job
-  const { data: jobs } = useQuery<Job[]>({
-    queryKey: ["/api/jobs"],
+  // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
+  const { data: freelancerJobs = [] } = useQuery<Job[]>({
+    queryKey: ["/api/freelancer/jobs"],
   });
 
-  const currentJob = jobs?.find(
+  // Find the current active job
+  const currentJob = freelancerJobs.find(
     (job) =>
-      job.freelancerId === user?.id &&
+      (job.freelancerId === user?.id || job.collaborators?.includes(user?.id || "")) &&
       (job.status === "claimed" || job.status === "in_progress")
   );
 

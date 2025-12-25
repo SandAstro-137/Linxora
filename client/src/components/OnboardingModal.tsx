@@ -89,7 +89,7 @@ const moderatorSteps: OnboardingStep[] = [
 
 const freelancerSteps: OnboardingStep[] = [
   {
-    title: "Welcome to Pixelcut!",
+    title: "Welcome to Linxora!",
     description: "Start earning as a freelancer on our platform.",
     content: (
       <div className="space-y-4">

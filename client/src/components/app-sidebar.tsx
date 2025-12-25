@@ -40,12 +40,14 @@ export function AppSidebar() {
     { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
+    { title: "My Profile", url: "/profile", icon: User },
   ];
 
   const staffItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
+    { title: "My Profile", url: "/profile", icon: User },
   ];
 
   const getMenuItems = () => {
@@ -63,7 +65,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-2 px-2 py-4">
-            <span className="text-lg font-bold text-primary">Pixelcut</span>
+            <span className="text-lg font-bold text-primary">Linxora</span>
             {user && (
               <Badge variant="secondary" className="ml-auto text-xs">
                 {user.role}

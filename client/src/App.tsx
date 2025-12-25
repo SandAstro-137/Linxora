@@ -95,7 +95,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/profile">
-        <ProtectedRoute allowedRoles={["freelancer"]}>
+        <ProtectedRoute>
           <ProfilePage />
         </ProtectedRoute>
       </Route>
