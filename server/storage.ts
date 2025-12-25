@@ -27,6 +27,8 @@ import {
   type InsertRating,
   type RoleUpgradeRequest,
   type InsertRoleUpgradeRequest,
+  type Report,
+  type InsertReport,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -115,6 +117,13 @@ export interface IStorage {
   getPendingRoleUpgradeRequests(): Promise<RoleUpgradeRequest[]>;
   createRoleUpgradeRequest(request: InsertRoleUpgradeRequest): Promise<RoleUpgradeRequest>;
   updateRoleUpgradeRequest(id: string, updates: Partial<RoleUpgradeRequest>): Promise<RoleUpgradeRequest | undefined>;
+
+  // Report operations
+  getReport(id: string): Promise<Report | undefined>;
+  getReports(filters?: { reporterId?: string; status?: string; reportType?: string }): Promise<Report[]>;
+  getPendingReports(): Promise<Report[]>;
+  createReport(report: InsertReport): Promise<Report>;
+  updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -132,6 +141,7 @@ export class MemStorage implements IStorage {
   private teamMessages: Map<string, TeamMessage>;
   private ratings: Map<string, Rating>;
   private roleUpgradeRequests: Map<string, RoleUpgradeRequest>;
+  private reports: Map<string, Report>;
 
   constructor() {
     this.users = new Map();
@@ -148,6 +158,7 @@ export class MemStorage implements IStorage {
     this.teamMessages = new Map();
     this.ratings = new Map();
     this.roleUpgradeRequests = new Map();
+    this.reports = new Map();
   }
 
   // User operations
@@ -657,6 +668,52 @@ export class MemStorage implements IStorage {
     if (!request) return undefined;
     const updated = { ...request, ...updates, updatedAt: new Date() };
     this.roleUpgradeRequests.set(id, updated);
+    return updated;
+  }
+
+  async getReport(id: string): Promise<Report | undefined> {
+    return this.reports.get(id);
+  }
+
+  async getReports(filters?: { reporterId?: string; status?: string; reportType?: string }): Promise<Report[]> {
+    let reports = Array.from(this.reports.values());
+    if (filters?.reporterId) {
+      reports = reports.filter((r) => r.reporterId === filters.reporterId);
+    }
+    if (filters?.status) {
+      reports = reports.filter((r) => r.status === filters.status);
+    }
+    if (filters?.reportType) {
+      reports = reports.filter((r) => r.reportType === filters.reportType);
+    }
+    return reports.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getPendingReports(): Promise<Report[]> {
+    return this.getReports({ status: "pending" });
+  }
+
+  async createReport(insertReport: InsertReport): Promise<Report> {
+    const id = randomUUID();
+    const report: Report = {
+      ...insertReport,
+      id,
+      status: "pending",
+      description: insertReport.description ?? null,
+      reviewerId: null,
+      reviewNotes: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.reports.set(id, report);
+    return report;
+  }
+
+  async updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined> {
+    const report = this.reports.get(id);
+    if (!report) return undefined;
+    const updated = { ...report, ...updates, updatedAt: new Date() };
+    this.reports.set(id, updated);
     return updated;
   }
 }

@@ -15,7 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag } from "lucide-react";
+import { ReportDialog } from "@/components/ReportDialog";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
 import { useState } from "react";
@@ -525,6 +526,7 @@ export default function JobDetailPage() {
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false);
   const [ratingScore, setRatingScore] = useState(0);
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [ratingReview, setRatingReview] = useState("");
 
   const cancellationFormSchema = z.object({
@@ -747,7 +749,25 @@ export default function JobDetailPage() {
             <Badge variant="outline">{job.category}</Badge>
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setIsReportDialogOpen(true)}
+          className="text-muted-foreground hover:text-destructive"
+          data-testid="button-report-job"
+        >
+          <Flag className="w-4 h-4 mr-1" />
+          Report
+        </Button>
       </div>
+
+      <ReportDialog
+        open={isReportDialogOpen}
+        onOpenChange={setIsReportDialogOpen}
+        targetId={job.id}
+        reportType="job"
+        targetName={job.title}
+      />
 
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">

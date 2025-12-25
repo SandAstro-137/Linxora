@@ -3,10 +3,11 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
+import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
 import { z } from "zod";
 
 const uploadedFiles = new Map<string, string>();
@@ -491,6 +492,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const validated = insertJobSchema.parse(req.body);
+      
+      // Content filtering for job posts
+      const contentToCheck = `${validated.title} ${validated.description} ${validated.requirements || ""}`;
+      const filterResult = filterContent(contentToCheck);
+      
+      if (!filterResult.isClean && filterResult.severity === "high") {
+        return res.status(400).json({ 
+          error: "Job posting contains inappropriate content",
+          flags: filterResult.flags
+        });
+      }
+      
+      if (isSpamLike(contentToCheck)) {
+        return res.status(400).json({ error: "Job posting appears to contain spam content" });
+      }
+      
+      // Sanitize text fields
+      validated.title = sanitizeText(validated.title);
+      validated.description = sanitizeText(validated.description);
+      if (validated.requirements) {
+        validated.requirements = sanitizeText(validated.requirements);
+      }
       
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {
@@ -2479,6 +2502,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json(updatedRequest);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Report routes
+  app.post("/api/reports", requireAuth, async (req, res) => {
+    try {
+      const validatedData = insertReportSchema.parse({
+        ...req.body,
+        reporterId: req.session.userId,
+      });
+
+      // Check for spam-like content
+      const contentToCheck = `${validatedData.reason} ${validatedData.description || ""}`;
+      if (isSpamLike(contentToCheck)) {
+        return res.status(400).json({ error: "Report appears to contain spam content" });
+      }
+
+      // Check for suspicious/inappropriate content
+      const filterResult = filterContent(contentToCheck);
+      if (filterResult.severity === "high") {
+        return res.status(400).json({ 
+          error: "Report contains inappropriate content and cannot be submitted" 
+        });
+      }
+
+      // Sanitize report content before storage to prevent XSS
+      const sanitizedData = {
+        ...validatedData,
+        reason: sanitizeText(validatedData.reason),
+        description: validatedData.description ? sanitizeText(validatedData.description) : null,
+      };
+
+      const report = await storage.createReport(sanitizedData);
+
+      // Notify moderators about new report
+      const users = await storage.getUsers();
+      const moderators = users.filter(u => u.role === "moderator" || u.role === "staff");
+      for (const mod of moderators) {
+        await storage.createNotification({
+          userId: mod.id,
+          type: "report",
+          title: "New Report Submitted",
+          message: `A new ${validatedData.reportType} report has been submitted and requires review.`,
+          relatedId: report.id,
+        });
+      }
+
+      res.status(201).json(report);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid report data", details: error.errors });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/reports", requireRole("moderator"), async (req, res) => {
+    try {
+      const { status, reportType } = req.query;
+      const filters: any = {};
+      if (status) filters.status = status as string;
+      if (reportType) filters.reportType = reportType as string;
+      
+      const reports = await storage.getReports(filters);
+      res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/reports/pending", requireRole("moderator"), async (req, res) => {
+    try {
+      const reports = await storage.getPendingReports();
+      res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/my-reports", requireAuth, async (req, res) => {
+    try {
+      const reports = await storage.getReports({ reporterId: req.session.userId });
+      res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/reports/:id", requireRole("moderator"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, reviewNotes } = req.body;
+
+      if (!status || !["reviewed", "resolved", "dismissed"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const report = await storage.getReport(id);
+      if (!report) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+
+      // Sanitize review notes before storage
+      const sanitizedNotes = reviewNotes ? sanitizeText(reviewNotes) : null;
+      
+      const updatedReport = await storage.updateReport(id, {
+        status,
+        reviewerId: req.session.userId,
+        reviewNotes: sanitizedNotes,
+      });
+
+      // Notify the reporter
+      await storage.createNotification({
+        userId: report.reporterId,
+        type: "report",
+        title: "Report Updated",
+        message: `Your report has been ${status}. ${sanitizedNotes ? `Notes: ${sanitizedNotes}` : ''}`,
+        relatedId: report.id,
+      });
+
+      res.json(updatedReport);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

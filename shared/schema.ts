@@ -469,3 +469,47 @@ export const insertRoleUpgradeRequestSchema = createInsertSchema(roleUpgradeRequ
 
 export type InsertRoleUpgradeRequest = z.infer<typeof insertRoleUpgradeRequestSchema>;
 export type RoleUpgradeRequest = typeof roleUpgradeRequests.$inferSelect;
+
+export const ReportType = {
+  JOB: "job",
+  USER: "user",
+  MESSAGE: "message",
+} as const;
+
+export const ReportStatus = {
+  PENDING: "pending",
+  REVIEWED: "reviewed",
+  RESOLVED: "resolved",
+  DISMISSED: "dismissed",
+} as const;
+
+export const reports = pgTable("reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reporterId: varchar("reporter_id").notNull(),
+  reportType: text("report_type").notNull(),
+  targetId: varchar("target_id").notNull(),
+  reason: text("reason").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default(ReportStatus.PENDING),
+  reviewerId: varchar("reviewer_id"),
+  reviewNotes: text("review_notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertReportSchema = createInsertSchema(reports)
+  .omit({
+    id: true,
+    status: true,
+    reviewerId: true,
+    reviewNotes: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    reportType: z.enum([ReportType.JOB, ReportType.USER, ReportType.MESSAGE]),
+    reason: z.string().min(5, "Please provide a reason"),
+  });
+
+export type InsertReport = z.infer<typeof insertReportSchema>;
+export type Report = typeof reports.$inferSelect;
