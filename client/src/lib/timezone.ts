@@ -1,39 +1,13 @@
 export const TIMEZONE = 'America/New_York';
 export const TIMEZONE_LABEL = 'Eastern Time (ET)';
 
-export function toEasternTime(date: Date | string): Date {
+export function formatEasternDateTime(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
-  const etFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-  
-  const parts = etFormatter.formatToParts(d);
-  const getPart = (type: string) => parts.find(p => p.type === type)?.value || '0';
-  
-  return new Date(
-    `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}:${getPart('second')}`
-  );
-}
-
-export function getCurrentEasternTime(): Date {
-  return toEasternTime(new Date());
-}
-
-export function formatEasternTime(date: Date | string, options?: Intl.DateTimeFormatOptions): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const defaultOptions: Intl.DateTimeFormatOptions = { 
+  return d.toLocaleString('en-US', { 
     timeZone: TIMEZONE,
     dateStyle: 'medium',
     timeStyle: 'short',
-  };
-  return d.toLocaleString('en-US', options ? { timeZone: TIMEZONE, ...options } : defaultOptions);
+  });
 }
 
 export function formatEasternDate(date: Date | string): string {
@@ -54,4 +28,20 @@ export function formatEasternTimeOnly(date: Date | string): string {
     minute: '2-digit',
     hour12: true,
   });
+}
+
+export function formatRelativeET(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+  const diffMs = d.getTime() - now.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60));
+  
+  if (diffMs < 0) {
+    if (diffHours < 24) return `${diffHours} hours ago`;
+    return `${Math.abs(diffDays)} days ago`;
+  } else {
+    if (diffHours < 24) return `in ${diffHours} hours`;
+    return `in ${diffDays} days`;
+  }
 }

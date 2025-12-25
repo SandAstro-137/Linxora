@@ -14,8 +14,7 @@ import { Calendar, Clock } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
-import { formatDistanceToNow } from "date-fns";
-import { TIMEZONE_LABEL, formatEasternDate } from "@/lib/timezone";
+import { TIMEZONE_LABEL, formatEasternDate, formatEasternDateTime } from "@/lib/timezone";
 
 const MAX_PTO_DAYS = 21; // 3 weeks
 const MAX_FUTURE_YEARS = 3;
@@ -225,7 +224,7 @@ export default function PTOPage() {
                     </div>
                     <p className="text-sm text-muted-foreground mb-2">{request.reason}</p>
                     <p className="text-xs text-muted-foreground">
-                      Submitted {formatDistanceToNow(new Date(request.createdAt!), { addSuffix: true })}
+                      Submitted {formatEasternDateTime(request.createdAt!)} (ET)
                     </p>
                   </CardContent>
                 </Card>
