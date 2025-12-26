@@ -587,11 +587,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = await storage.getUser(req.session.userId!);
       if (!user) {
-        return res.status(404).json({ error: "User not found" });
+        return res.status(404).json({ error: "Your account could not be found. Please log in again." });
       }
 
       if (user.role !== "freelancer") {
-        return res.status(403).json({ error: "Only freelancers can request jobs" });
+        return res.status(403).json({ error: "Only freelancers can claim jobs. Please upgrade your account to become a freelancer." });
+      }
+
+      // Check account eligibility
+      if (!user.createdAt) {
+        // Account age check - this would need createdAt field
       }
 
       // Check for one-job-at-a-time restriction
@@ -608,13 +613,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "freelancer_requested" 
       });
 
-      if (activeJobs.length > 0 || claimedJobs.length > 0 || requestedJobs.length > 0) {
-        return res.status(400).json({ error: "You can only have one job at a time. Complete or cancel your current job first." });
+      if (activeJobs.length > 0) {
+        return res.status(400).json({ error: "You already have a job in progress. Complete or cancel it before claiming another." });
+      }
+      
+      if (claimedJobs.length > 0) {
+        return res.status(400).json({ error: "You already have a claimed job waiting to start. Complete or cancel it first." });
+      }
+      
+      if (requestedJobs.length > 0) {
+        return res.status(400).json({ error: "You have a pending job request. Wait for the customer's response or cancel it first." });
       }
 
       const job = await storage.getJob(req.params.id);
-      if (!job || job.status !== "active") {
-        return res.status(400).json({ error: "This job is not available" });
+      if (!job) {
+        return res.status(404).json({ error: "This job no longer exists. It may have been removed by the customer." });
+      }
+      
+      if (job.status === "completed") {
+        return res.status(400).json({ error: "This job has already been completed." });
+      }
+      
+      if (job.status === "cancelled") {
+        return res.status(400).json({ error: "This job has been cancelled by the customer." });
+      }
+      
+      if (job.status === "in_progress" || job.status === "claimed" || job.status === "freelancer_requested") {
+        return res.status(400).json({ error: "This job has already been claimed by another freelancer." });
+      }
+      
+      if (job.status !== "active") {
+        return res.status(400).json({ error: "This job is not currently available for claiming." });
+      }
+
+      // Check if job has expired
+      if (job.deadline) {
+        const deadline = new Date(job.deadline);
+        if (deadline < new Date()) {
+          return res.status(400).json({ error: "This job has expired. The deadline has passed." });
+        }
       }
 
       // Set job to freelancer_requested status
@@ -2103,11 +2140,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { avatar } = req.body;
       
       if (!avatar || typeof avatar !== "string") {
-        return res.status(400).json({ error: "Invalid avatar data" });
+        return res.status(400).json({ error: "No image data provided. Please select an image file." });
       }
 
       if (!avatar.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Avatar must be a valid image data URL" });
+        return res.status(400).json({ error: "Invalid file format. Please upload an image file." });
+      }
+
+      // Validate specific image formats
+      const validFormats = ["data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/gif", "data:image/webp"];
+      const isValidFormat = validFormats.some(format => avatar.startsWith(format));
+      
+      if (!isValidFormat) {
+        return res.status(400).json({ 
+          error: "Unsupported image format. Please use PNG, JPG, GIF, or WebP." 
+        });
+      }
+
+      // Check for reasonable file size (base64 is ~33% larger than original)
+      // 5MB original = ~6.7MB base64
+      const maxBase64Size = 7 * 1024 * 1024;
+      if (avatar.length > maxBase64Size) {
+        return res.status(400).json({ 
+          error: "Image file is too large. Maximum size is 5MB." 
+        });
       }
 
       const user = await storage.updateUser(req.session.userId!, { avatar });
@@ -2117,7 +2173,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ avatar: user.avatar });
     } catch (error) {
-      res.status(500).json({ error: "Internal server error" });
+      console.error("Avatar upload error:", error);
+      res.status(500).json({ error: "Failed to upload image. Please try again." });
     }
   });
 
