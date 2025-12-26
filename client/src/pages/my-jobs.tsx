@@ -115,7 +115,7 @@ export default function MyJobsPage() {
             <p className="text-muted-foreground mb-4">
               Start by posting your first job to find talented freelancers
             </p>
-            <Link href="/create-job">
+            <Link href="/jobs/create">
               <Button data-testid="button-post-first-job">Post a Job</Button>
             </Link>
           </CardContent>
@@ -130,7 +130,7 @@ export default function MyJobsPage() {
         <h1 className="text-3xl font-bold" data-testid="text-page-title">
           My Jobs
         </h1>
-        <Link href="/create-job">
+        <Link href="/jobs/create">
           <Button data-testid="button-post-new-job">Post New Job</Button>
         </Link>
       </div>

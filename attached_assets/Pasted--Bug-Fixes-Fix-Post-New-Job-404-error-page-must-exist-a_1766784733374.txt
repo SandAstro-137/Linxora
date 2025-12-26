@@ -1,0 +1,91 @@
+🔧 Bug Fixes
+Fix “Post New Job” 404 error — page must exist and route must be correct.
+
+Fix profile picture upload — must accept valid formats (PNG, JPG, etc.) and show specific error messages if upload fails.
+
+Fix “Continue with Discord” login — OAuth flow is broken; must redirect, authorize, and log in properly.
+
+🔐 Authentication Expansion
+Add “Continue with Google” login option — creates account independent of Discord.
+
+Add “Continue with Email” login option — verification code or link.
+
+Optional: Add “Continue with Apple”.
+
+All login methods must show clear error messages (no generic “Error”).
+
+🧾 Job Claiming Error Messages
+Replace generic “Failed to claim job” with specific messages:
+
+Job already claimed
+
+Job expired
+
+Account not eligible
+
+System issue
+
+Apply this logic to customers, freelancers, and moderators with role-specific messages.
+
+🧭 Role Upgrade Tabs
+Customers need a tab to apply to become freelancers (must be 2 weeks old).
+
+Freelancers need a tab to apply to become moderators (must be 4 months old, level 5+, 65%+ completion rate).
+
+👤 Profile Redesigns
+Customer Profiles
+Remove freelancer stats: level, completion rate, completed jobs, rating.
+
+Add:
+
+Posted jobs
+
+Reliability score (1–10)
+
+Total $ traded
+
+Average response time
+
+Account age
+
+Verified badge
+
+Job cancellation rate
+
+Moderator Profiles
+Remove freelancer and customer stats.
+
+Add:
+
+Moderator rank/tier
+
+Cases reviewed
+
+Accuracy score
+
+Response time
+
+Moderator wallet
+
+Account age
+
+Moderator status
+
+Verified badge
+
+🛡️ Moderator System Enhancements
+Moderators should only see jobs they personally approved.
+
+Moderator job claiming must show moderator-specific error messages.
+
+Add moderator wallet — paid by the website, tracks earnings, shows payout history and pending payouts.
+
+🎨 Light Mode Icon
+Added inverted version of clapperboard + scissors icon for light mode.
+
+Make sure it’s used correctly in light-themed UI.
+
+🕒 Time Zone Enforcement
+App must always use Eastern Time (ET) for all time-based logic.
+
+App must constantly track current time to enforce deadlines, PTO, work hours, etc.
