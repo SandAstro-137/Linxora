@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Clapperboard, Scissors } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth-context";
 import { Badge } from "@/components/ui/badge";
+import logoDark from "@assets/image_1766784630523.png";
 
 export function AppSidebar() {
   const [location] = useLocation();
@@ -51,6 +52,7 @@ export function AppSidebar() {
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
+    { title: "Mod Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
   ];
 
@@ -69,6 +71,11 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-2 px-2 py-4">
+            <img 
+              src={logoDark} 
+              alt="Linxora" 
+              className="w-6 h-6 dark:invert"
+            />
             <span className="text-lg font-bold text-primary">Linxora</span>
             {user && (
               <Badge variant="secondary" className="ml-auto text-xs">

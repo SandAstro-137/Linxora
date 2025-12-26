@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { SiDiscord } from "react-icons/si";
 import { useAuth } from "@/lib/auth-context";
 import { Briefcase, Wallet, Shield, Users } from "lucide-react";
+import logoDark from "@assets/image_1766784630523.png";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -18,9 +19,16 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center p-4">
       <div className="w-full max-w-6xl">
         <div className="text-center mb-8">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
-            Linxora
-          </h1>
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <img 
+              src={logoDark} 
+              alt="Linxora" 
+              className="w-12 h-12 dark:invert"
+            />
+            <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
+              Linxora
+            </h1>
+          </div>
           <p className="text-xl text-muted-foreground">
             Professional Freelancer Marketplace
           </p>

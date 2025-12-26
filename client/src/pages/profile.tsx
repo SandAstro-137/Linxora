@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Camera, Shield, DollarSign, FileCheck } from "lucide-react";
+import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Camera, Shield, DollarSign, FileCheck, CalendarDays, CheckCircle, XCircle, Award, Users, Target } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { Separator } from "@/components/ui/separator";
 import { JobCard } from "@/components/job-card";
@@ -75,10 +75,10 @@ export default function ProfilePage() {
         description: "Your new profile picture has been saved",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
-        title: "Failed to update",
-        description: "Please try again",
+        title: "Failed to update profile picture",
+        description: error?.message || "Please try again with a different image",
         variant: "destructive",
       });
     },
@@ -300,6 +300,12 @@ export default function ProfilePage() {
             {user.role === "customer" && profileStats && (
               <>
                 <Separator />
+                {profileStats.isVerified && (
+                  <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded-lg mb-2">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium text-green-700 dark:text-green-400">Verified Customer</span>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Briefcase className="w-4 h-4 text-primary" />
@@ -317,9 +323,30 @@ export default function ProfilePage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <DollarSign className="w-4 h-4 text-yellow-500" />
-                    <span className="text-sm font-medium">Total Spent</span>
+                    <span className="text-sm font-medium">Total Traded</span>
                     <span className="ml-auto text-sm font-bold">
                       ${(profileStats.totalSpent || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Star className="w-4 h-4 text-blue-500" />
+                    <span className="text-sm font-medium">Reliability Score</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.reliabilityScore || 0}/10
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <XCircle className="w-4 h-4 text-red-500" />
+                    <span className="text-sm font-medium">Cancellation Rate</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.cancellationRate || 0}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Account Age</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.accountAgeDays || 0} days
                     </span>
                   </div>
                 </div>
@@ -329,7 +356,20 @@ export default function ProfilePage() {
             {(user.role === "moderator" || user.role === "staff") && profileStats && (
               <>
                 <Separator />
+                {profileStats.isVerified && (
+                  <div className="flex items-center gap-2 p-2 bg-purple-500/10 rounded-lg mb-2">
+                    <Shield className="w-4 h-4 text-purple-500" />
+                    <span className="text-sm font-medium text-purple-700 dark:text-purple-400">Verified Moderator</span>
+                  </div>
+                )}
                 <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-4 h-4 text-yellow-500" />
+                    <span className="text-sm font-medium">Rank</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.moderatorTier || "Bronze"}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4 text-primary" />
                     <span className="text-sm font-medium">Jobs Moderated</span>
@@ -338,10 +378,38 @@ export default function ProfilePage() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium">Cases Reviewed</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.casesReviewed || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4 text-blue-500" />
+                    <span className="text-sm font-medium">Accuracy Score</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.accuracyScore || 0}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-yellow-500" />
                     <span className="text-sm font-medium">Pending Queue</span>
                     <span className="ml-auto text-sm font-bold">
                       {profileStats.pendingQueue || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Account Age</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {profileStats.accountAgeDays || 0} days
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium">Status</span>
+                    <span className="ml-auto text-sm font-bold text-green-600 dark:text-green-400">
+                      {profileStats.moderatorStatus || "Active"}
                     </span>
                   </div>
                 </div>
@@ -383,13 +451,13 @@ export default function ProfilePage() {
                   description="Total jobs created"
                 />
                 <StatsCard
-                  title="Completed"
-                  value={profileStats.completedJobs || 0}
-                  icon={FileCheck}
-                  description="Successfully finished"
+                  title="Reliability Score"
+                  value={`${profileStats.reliabilityScore || 0}/10`}
+                  icon={Star}
+                  description="Customer trustworthiness"
                 />
                 <StatsCard
-                  title="Total Spent"
+                  title="Total Traded"
                   value={`$${(profileStats.totalSpent || 0).toLocaleString()}`}
                   icon={DollarSign}
                   description="On completed jobs"
@@ -399,22 +467,22 @@ export default function ProfilePage() {
             {(user.role === "moderator" || user.role === "staff") && profileStats && (
               <>
                 <StatsCard
-                  title="Jobs Moderated"
-                  value={profileStats.totalJobsModerated || 0}
-                  icon={Shield}
-                  description="Total reviews"
+                  title="Moderator Rank"
+                  value={profileStats.moderatorTier || "Bronze"}
+                  icon={Award}
+                  description="Based on cases reviewed"
                 />
                 <StatsCard
-                  title="Pending Queue"
-                  value={profileStats.pendingQueue || 0}
-                  icon={Clock}
-                  description="Awaiting review"
+                  title="Cases Reviewed"
+                  value={profileStats.casesReviewed || 0}
+                  icon={Users}
+                  description="Reports handled"
                 />
                 <StatsCard
-                  title="Approved Today"
-                  value={profileStats.approvedToday || 0}
-                  icon={FileCheck}
-                  description="Today's approvals"
+                  title="Accuracy Score"
+                  value={`${profileStats.accuracyScore || 0}%`}
+                  icon={Target}
+                  description="Decision accuracy"
                 />
               </>
             )}

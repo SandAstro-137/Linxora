@@ -2216,21 +2216,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (user.role === "customer") {
         const allJobs = await storage.getJobs({ customerId: user.id });
         const completedJobs = allJobs.filter(j => j.status === "completed");
+        const cancelledJobs = allJobs.filter(j => j.status === "cancelled");
         const totalSpent = completedJobs.reduce((sum, j) => sum + (Number(j.budget) || 0), 0);
+        
+        // Calculate cancellation rate
+        const totalFinishedJobs = completedJobs.length + cancelledJobs.length;
+        const cancellationRate = totalFinishedJobs > 0 
+          ? (cancelledJobs.length / totalFinishedJobs * 100).toFixed(1)
+          : "0.0";
+        
+        // Calculate reliability score (based on completion rate and job history)
+        let reliabilityScore = 10;
+        if (totalFinishedJobs > 0) {
+          const completionRatio = completedJobs.length / totalFinishedJobs;
+          reliabilityScore = Math.round(completionRatio * 10);
+        }
+        
+        // Calculate account age in days
+        const accountAge = user.createdAt 
+          ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000))
+          : 0;
         
         res.json({
           totalJobsPosted: allJobs.length,
           completedJobs: completedJobs.length,
-          activeJobs: allJobs.filter(j => ["approved", "in_progress"].includes(j.status)).length,
-          pendingJobs: allJobs.filter(j => j.status === "pending_approval").length,
+          activeJobs: allJobs.filter(j => ["active", "in_progress", "claimed"].includes(j.status)).length,
+          pendingJobs: allJobs.filter(j => j.status === "pending").length,
           totalSpent,
+          cancellationRate: parseFloat(cancellationRate),
+          reliabilityScore,
+          accountAgeDays: accountAge,
+          isVerified: (completedJobs.length >= 3 && reliabilityScore >= 7),
         });
       } else if (user.role === "moderator" || user.role === "staff") {
         const allJobs = await storage.getJobs({});
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
-        const approvedJobs = allJobs.filter(j => j.status === "approved");
+        const approvedJobs = allJobs.filter(j => j.status === "active" || j.status === "completed" || j.status === "in_progress" || j.status === "claimed");
         const approvedToday = approvedJobs.filter(j => {
           if (!j.updatedAt) return false;
           const updatedDate = new Date(j.updatedAt);
@@ -2238,10 +2261,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return updatedDate.getTime() === today.getTime();
         }).length;
         
+        // Get reports reviewed by this moderator
+        const allReports = await storage.getReports({ status: "resolved" });
+        const casesReviewed = allReports.filter(r => r.reviewerId === user.id).length;
+        
+        // Calculate account age in days
+        const accountAge = user.createdAt 
+          ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000))
+          : 0;
+        
+        // Calculate moderator tier based on cases reviewed
+        let moderatorTier = "Bronze";
+        if (casesReviewed >= 100) moderatorTier = "Diamond";
+        else if (casesReviewed >= 50) moderatorTier = "Gold";
+        else if (casesReviewed >= 20) moderatorTier = "Silver";
+        
         res.json({
           totalJobsModerated: approvedJobs.length,
-          pendingQueue: allJobs.filter(j => j.status === "pending_approval").length,
+          pendingQueue: allJobs.filter(j => j.status === "pending").length,
           approvedToday,
+          casesReviewed,
+          moderatorTier,
+          accountAgeDays: accountAge,
+          accuracyScore: 95, // Placeholder - would need appeal tracking
+          isVerified: true,
+          moderatorStatus: "Active",
         });
       } else {
         res.json({
