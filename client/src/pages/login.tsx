@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { SiDiscord } from "react-icons/si";
 import { useAuth } from "@/lib/auth-context";
 import { Briefcase, Wallet, Shield, Users } from "lucide-react";
-import logoLight from "../assets/logo-light.png";
+import logoLight from "@assets/logo-light.png";
+import logoDark from "@assets/logo-dark.png";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -23,7 +24,12 @@ export default function LoginPage() {
             <img 
               src={logoLight} 
               alt="Linxora" 
-              className="w-12 h-12"
+              className="w-12 h-12 dark:hidden"
+            />
+            <img 
+              src={logoDark} 
+              alt="Linxora" 
+              className="w-12 h-12 hidden dark:block"
             />
             <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
               Linxora
