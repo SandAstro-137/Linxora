@@ -33,8 +33,7 @@ import CurrentJobPage from "@/pages/current-job";
 import MyJobsPage from "@/pages/my-jobs";
 import RoleUpgradePage from "@/pages/role-upgrade";
 import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
-import logoLight from "@assets/logo-light.png";
-import logoDark from "@assets/logo-dark.png";
+import logo from "@assets/logo.png";
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: string[] }) {
   const { user, isLoading } = useAuth();
@@ -197,18 +196,11 @@ function AppContent() {
                 <SidebarTrigger data-testid="button-sidebar-toggle" />
                 <div className="flex flex-wrap items-center gap-2">
                   <img 
-                    src={logoLight} 
+                    src={logo} 
                     alt="Linxora Logo" 
-                    className="h-10 max-h-12 dark:hidden"
+                    className="h-10 max-h-12 invert dark:invert-0"
                     style={{ objectFit: "contain" }}
-                    data-testid="img-logo-light"
-                  />
-                  <img 
-                    src={logoDark} 
-                    alt="Linxora Logo" 
-                    className="h-10 max-h-12 hidden dark:block"
-                    style={{ objectFit: "contain" }}
-                    data-testid="img-logo-dark"
+                    data-testid="img-logo"
                   />
                   <span className="text-lg font-semibold" data-testid="text-app-name">Linxora</span>
                 </div>
