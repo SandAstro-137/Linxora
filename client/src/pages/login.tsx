@@ -23,7 +23,7 @@ export default function LoginPage() {
             <img 
               src={logoDark} 
               alt="Linxora" 
-              className="w-12 h-12 invert dark:invert-0"
+              className="w-12 h-12 invert brightness-[0.96] dark:invert-0 dark:brightness-100"
             />
             <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
               Linxora
