@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth-context";
 import { Badge } from "@/components/ui/badge";
-import logoDark from "@assets/image_1766784630523.png";
+import logoLight from "@assets/logo-light.png";
+import logoDark from "@assets/logo-dark.png";
 
 export function AppSidebar() {
   const [location] = useLocation();
@@ -72,9 +73,14 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-2 px-2 py-4">
             <img 
+              src={logoLight} 
+              alt="Linxora" 
+              className="w-6 h-6 dark:hidden"
+            />
+            <img 
               src={logoDark} 
               alt="Linxora" 
-              className="w-6 h-6 invert brightness-[0.96] dark:invert-0 dark:brightness-100"
+              className="w-6 h-6 hidden dark:block"
             />
             <span className="text-lg font-bold text-primary">Linxora</span>
             {user && (
