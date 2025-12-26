@@ -2465,13 +2465,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (user.role !== UserRole.CUSTOMER) {
           return res.status(400).json({ error: "Only customers can request freelancer upgrade" });
         }
+        
+        // Customer to Freelancer: Account must be at least 2 weeks old
+        if (user.createdAt) {
+          const accountAge = Date.now() - new Date(user.createdAt).getTime();
+          const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+          if (accountAge < twoWeeksMs) {
+            const daysRemaining = Math.ceil((twoWeeksMs - accountAge) / (24 * 60 * 60 * 1000));
+            return res.status(400).json({ 
+              error: `Your account must be at least 2 weeks old to become a freelancer. ${daysRemaining} day(s) remaining.` 
+            });
+          }
+        }
       } else if (validatedData.upgradeType === RoleUpgradeType.FREELANCER_TO_MODERATOR) {
         if (user.role !== UserRole.FREELANCER) {
           return res.status(400).json({ error: "Only freelancers can request moderator upgrade" });
         }
-        // Additional requirements for moderator upgrade
-        if ((user.completedJobs || 0) < 5) {
-          return res.status(400).json({ error: "You must complete at least 5 jobs to apply for moderator" });
+        
+        // Freelancer to Moderator requirements:
+        // 1. Account must be at least 4 months old
+        if (user.createdAt) {
+          const accountAge = Date.now() - new Date(user.createdAt).getTime();
+          const fourMonthsMs = 120 * 24 * 60 * 60 * 1000; // ~4 months
+          if (accountAge < fourMonthsMs) {
+            const daysRemaining = Math.ceil((fourMonthsMs - accountAge) / (24 * 60 * 60 * 1000));
+            return res.status(400).json({ 
+              error: `Your account must be at least 4 months old to become a moderator. ${daysRemaining} day(s) remaining.` 
+            });
+          }
+        }
+        
+        // 2. Must be level 5
+        if ((user.level || 1) < 5) {
+          return res.status(400).json({ 
+            error: `You must reach Level 5 to become a moderator. You are currently Level ${user.level || 1}.` 
+          });
+        }
+        
+        // 3. Must have 65%+ completion rate
+        const completionRate = parseFloat(user.completionPercentage?.toString() || "0");
+        if (completionRate < 65) {
+          return res.status(400).json({ 
+            error: `You need a 65% or higher completion rate to become a moderator. Your current rate is ${completionRate.toFixed(1)}%.` 
+          });
         }
       }
 

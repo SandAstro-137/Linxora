@@ -101,9 +101,30 @@ export default function RoleUpgradePage() {
   };
 
   const hasPendingRequest = myRequests.some(r => r.status === "pending");
-  const canRequestFreelancer = user?.role === "customer" && !hasPendingRequest;
-  const canRequestModerator = user?.role === "freelancer" && !hasPendingRequest && (user.completedJobs || 0) >= 5;
-  const needsMoreJobs = user?.role === "freelancer" && (user.completedJobs || 0) < 5;
+  
+  // Calculate account age requirements
+  const accountCreatedAt = user?.createdAt ? new Date(user.createdAt) : new Date();
+  const accountAgeMs = Date.now() - accountCreatedAt.getTime();
+  const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+  const fourMonthsMs = 120 * 24 * 60 * 60 * 1000;
+  
+  const customerAccountOldEnough = accountAgeMs >= twoWeeksMs;
+  const freelancerAccountOldEnough = accountAgeMs >= fourMonthsMs;
+  
+  const daysUntilFreelancerEligible = Math.max(0, Math.ceil((twoWeeksMs - accountAgeMs) / (24 * 60 * 60 * 1000)));
+  const daysUntilModeratorEligible = Math.max(0, Math.ceil((fourMonthsMs - accountAgeMs) / (24 * 60 * 60 * 1000)));
+  
+  // Freelancer to Moderator requirements
+  const userLevel = user?.level || 1;
+  const completionRate = parseFloat(user?.completionPercentage?.toString() || "0");
+  const hasLevelRequirement = userLevel >= 5;
+  const hasCompletionRequirement = completionRate >= 65;
+  
+  const canRequestFreelancer = user?.role === "customer" && !hasPendingRequest && customerAccountOldEnough;
+  const canRequestModerator = user?.role === "freelancer" && !hasPendingRequest && freelancerAccountOldEnough && hasLevelRequirement && hasCompletionRequirement;
+  
+  const customerNeedsTime = user?.role === "customer" && !customerAccountOldEnough;
+  const freelancerMissingRequirements = user?.role === "freelancer" && (!freelancerAccountOldEnough || !hasLevelRequirement || !hasCompletionRequirement);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -127,7 +148,19 @@ export default function RoleUpgradePage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {hasPendingRequest ? (
+            <div className="mb-4 p-4 bg-muted rounded-lg">
+              <h4 className="font-medium mb-2">Requirements</h4>
+              <ul className="space-y-1 text-sm">
+                <li className={`flex items-center gap-2 ${customerAccountOldEnough ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                  {customerAccountOldEnough ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                  Account must be at least 2 weeks old
+                  {!customerAccountOldEnough && <span className="text-xs">({daysUntilFreelancerEligible} days remaining)</span>}
+                </li>
+              </ul>
+            </div>
+            {customerNeedsTime ? (
+              <p className="text-muted-foreground">Your account needs to be at least 2 weeks old before you can apply to become a freelancer.</p>
+            ) : hasPendingRequest ? (
               <p className="text-muted-foreground">You have a pending upgrade request. Please wait for it to be reviewed.</p>
             ) : (
               <Form {...customerForm}>
@@ -203,15 +236,29 @@ export default function RoleUpgradePage() {
             </div>
             <CardDescription>
               Upgrade from Freelancer to Moderator to help manage the platform and review jobs.
-              Requires at least 5 completed jobs.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {needsMoreJobs ? (
-              <div className="text-muted-foreground space-y-2">
-                <p>You need to complete at least 5 jobs to apply for moderator.</p>
-                <p>Current completed jobs: <span className="font-bold">{user.completedJobs || 0}/5</span></p>
-              </div>
+            <div className="mb-4 p-4 bg-muted rounded-lg">
+              <h4 className="font-medium mb-2">Requirements</h4>
+              <ul className="space-y-1 text-sm">
+                <li className={`flex items-center gap-2 ${freelancerAccountOldEnough ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                  {freelancerAccountOldEnough ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                  Account must be at least 4 months old
+                  {!freelancerAccountOldEnough && <span className="text-xs">({daysUntilModeratorEligible} days remaining)</span>}
+                </li>
+                <li className={`flex items-center gap-2 ${hasLevelRequirement ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                  {hasLevelRequirement ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                  Must be Level 5 (Currently Level {userLevel})
+                </li>
+                <li className={`flex items-center gap-2 ${hasCompletionRequirement ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                  {hasCompletionRequirement ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                  65% or higher completion rate (Currently {completionRate.toFixed(1)}%)
+                </li>
+              </ul>
+            </div>
+            {freelancerMissingRequirements ? (
+              <p className="text-muted-foreground">You don't meet all the requirements yet. Keep working to reach your goals!</p>
             ) : hasPendingRequest ? (
               <p className="text-muted-foreground">You have a pending upgrade request. Please wait for it to be reviewed.</p>
             ) : (
