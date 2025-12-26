@@ -16,6 +16,7 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     userRole?: string;
+    oauthState?: string;
   }
 }
 
@@ -54,40 +55,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Auth routes - Discord OAuth
+  // Auth routes - Discord OAuth (Direct implementation)
   app.get("/api/auth/discord", async (req, res) => {
     try {
-      // Get Discord OAuth URL from connector
-      const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-      const xReplitToken = process.env.REPL_IDENTITY 
-        ? 'repl ' + process.env.REPL_IDENTITY 
-        : process.env.WEB_REPL_RENEWAL 
-        ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-        : null;
+      const clientId = process.env.DISCORD_CLIENT_ID;
+      const redirectUri = process.env.DISCORD_REDIRECT_URI;
 
-      if (!xReplitToken || !hostname) {
-        return res.status(500).json({ error: "OAuth configuration missing" });
-      }
-
-      const response = await fetch(
-        'https://' + hostname + '/api/v2/connection?connector_names=discord',
-        {
-          headers: {
-            'Accept': 'application/json',
-            'X_REPLIT_TOKEN': xReplitToken
-          }
-        }
-      );
-
-      const data = await response.json();
-      const connectionSettings = data.items?.[0];
-      
-      if (!connectionSettings?.settings?.oauth) {
+      if (!clientId || !redirectUri) {
+        console.error("Discord OAuth missing config:", { clientId: !!clientId, redirectUri: !!redirectUri });
         return res.status(500).json({ error: "Discord OAuth not configured" });
       }
 
-      // Redirect to Discord OAuth
-      const oauthUrl = connectionSettings.settings.oauth.authorization_url;
+      // Generate state for CSRF protection
+      const state = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      req.session.oauthState = state;
+
+      // Build Discord OAuth URL
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'identify email',
+        state: state,
+      });
+
+      const oauthUrl = `https://discord.com/oauth2/authorize?${params.toString()}`;
       res.redirect(oauthUrl);
     } catch (error) {
       console.error("Discord OAuth error:", error);
@@ -97,50 +89,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/callback", async (req, res) => {
     try {
-      const { code } = req.query;
+      const { code, state, error: oauthError } = req.query;
       
+      // Handle OAuth errors
+      if (oauthError) {
+        console.error("Discord OAuth error:", oauthError);
+        return res.redirect("/?error=oauth_denied");
+      }
+
       if (!code) {
         return res.redirect("/?error=no_code");
       }
 
-      // Exchange code for access token
-      const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-      const xReplitToken = process.env.REPL_IDENTITY 
-        ? 'repl ' + process.env.REPL_IDENTITY 
-        : process.env.WEB_REPL_RENEWAL 
-        ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-        : null;
+      // Verify state for CSRF protection
+      if (!state || state !== req.session.oauthState) {
+        console.error("State mismatch:", { received: state, expected: req.session.oauthState });
+        return res.redirect("/?error=invalid_state");
+      }
 
-      if (!xReplitToken || !hostname) {
+      // Clear the state from session
+      delete req.session.oauthState;
+
+      const clientId = process.env.DISCORD_CLIENT_ID;
+      const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+      const redirectUri = process.env.DISCORD_REDIRECT_URI;
+
+      if (!clientId || !clientSecret || !redirectUri) {
+        console.error("Discord OAuth missing credentials");
         return res.redirect("/?error=config_missing");
       }
 
-      // Get user info from Discord
-      const connectionResponse = await fetch(
-        'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=discord',
-        {
-          headers: {
-            'Accept': 'application/json',
-            'X_REPLIT_TOKEN': xReplitToken
-          }
-        }
-      );
+      // Exchange code for access token
+      const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: redirectUri,
+        }),
+      });
 
-      const connectionData = await connectionResponse.json();
-      const accessToken = connectionData.items?.[0]?.settings?.access_token;
+      const tokenData = await tokenResponse.json();
 
-      if (!accessToken) {
-        return res.redirect("/?error=no_token");
+      if (!tokenData.access_token) {
+        console.error("Failed to get access token:", tokenData);
+        return res.redirect("/?error=token_exchange_failed");
       }
 
       // Get Discord user data
       const userResponse = await fetch('https://discord.com/api/users/@me', {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${tokenData.access_token}`,
         },
       });
 
       const discordUser = await userResponse.json();
+      
+      if (!discordUser.id) {
+        console.error("Failed to get Discord user:", discordUser);
+        return res.redirect("/?error=user_fetch_failed");
+      }
 
       // Find or create user
       let user = await storage.getUserByDiscordId(discordUser.id);
