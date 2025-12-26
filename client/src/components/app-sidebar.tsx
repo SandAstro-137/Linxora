@@ -74,7 +74,7 @@ export function AppSidebar() {
             <img 
               src={logoDark} 
               alt="Linxora" 
-              className="w-6 h-6 dark:invert"
+              className="w-6 h-6 invert dark:invert-0"
             />
             <span className="text-lg font-bold text-primary">Linxora</span>
             {user && (

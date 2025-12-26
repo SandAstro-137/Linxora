@@ -23,7 +23,7 @@ export default function LoginPage() {
             <img 
               src={logoDark} 
               alt="Linxora" 
-              className="w-12 h-12 dark:invert"
+              className="w-12 h-12 invert dark:invert-0"
             />
             <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
               Linxora
@@ -39,7 +39,7 @@ export default function LoginPage() {
             <CardHeader className="text-center">
               <CardTitle className="text-2xl">Welcome Back</CardTitle>
               <CardDescription>
-                Sign in with Discord to access your account
+                Sign in to access your account
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
