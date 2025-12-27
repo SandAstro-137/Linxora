@@ -84,6 +84,92 @@ interface TeamMessage {
   avatar?: string;
 }
 
+function PublicTeamViewer({ job }: { job: EnrichedJob }) {
+  const leadFreelancer = job.collaboratorData?.find(c => c.id === job.freelancerId);
+  const otherCollaborators = job.collaboratorData?.filter(c => c.id !== job.freelancerId) || [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Users className="w-5 h-5" />
+          Team Members
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {(!job.collaboratorData || job.collaboratorData.length === 0) ? (
+          <p className="text-muted-foreground text-center py-4">No team members assigned yet</p>
+        ) : (
+          <div className="space-y-3">
+            {leadFreelancer && (
+              <div
+                className="flex items-center justify-between p-3 rounded-md bg-muted/50 border-l-4 border-primary"
+                data-testid="team-lead-member"
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={leadFreelancer.avatar || undefined} />
+                    <AvatarFallback>
+                      {leadFreelancer.username.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="font-medium">{leadFreelancer.username}</p>
+                    <Badge variant="secondary" className="text-xs">Lead Freelancer</Badge>
+                  </div>
+                </div>
+                {job.profitSplits && (
+                  <div className="text-right">
+                    <p className="font-semibold">
+                      ${job.profitSplits.find(s => s.userId === leadFreelancer.id)?.amount || '0'}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {job.profitSplits.find(s => s.userId === leadFreelancer.id)?.percentage || 0}%
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            {otherCollaborators.map((collaborator, index) => {
+              const split = job.profitSplits?.find(s => s.userId === collaborator.id);
+              return (
+                <div
+                  key={collaborator.id}
+                  className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                  data-testid={`team-collaborator-${index}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      <AvatarImage src={collaborator.avatar || undefined} />
+                      <AvatarFallback>
+                        {collaborator.username.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{collaborator.username}</p>
+                      {collaborator.specialization && (
+                        <p className="text-sm text-muted-foreground">
+                          {collaborator.specialization}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {split && (
+                    <div className="text-right">
+                      <p className="font-semibold">${split.amount}</p>
+                      <p className="text-sm text-muted-foreground">{split.percentage}%</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function TeamCollaboration({ jobId }: { jobId: string }) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -857,7 +943,11 @@ export default function JobDetailPage() {
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6 mt-6">
-              <TeamCollaboration jobId={jobId!} />
+              {user?.id === job.customerId ? (
+                <PublicTeamViewer job={job} />
+              ) : (
+                <TeamCollaboration jobId={jobId!} />
+              )}
             </TabsContent>
           </Tabs>
         </div>
