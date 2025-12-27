@@ -800,11 +800,11 @@ export default function JobDetailPage() {
     (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
     (job.status === "claimed" || job.status === "in_progress");
 
-  const getTabCount = () => {
-    let count = 1;
-    if (isTeamMember) count++;
-    if (isFreelancerOnJob) count++;
-    return count;
+  const getTabGridCols = () => {
+    const count = 1 + (isTeamMember ? 1 : 0) + (isFreelancerOnJob ? 1 : 0);
+    if (count === 3) return 'grid-cols-3';
+    if (count === 2) return 'grid-cols-2';
+    return 'grid-cols-1';
   };
 
   const getStatusColor = (status: string) => {
@@ -869,7 +869,7 @@ export default function JobDetailPage() {
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className={`grid w-full grid-cols-${getTabCount()}`} data-testid="tabs-job-detail">
+            <TabsList className={`grid w-full ${getTabGridCols()}`} data-testid="tabs-job-detail">
               <TabsTrigger value="overview" data-testid="tab-overview">
                 <FileText className="w-4 h-4 mr-2" />
                 Overview
