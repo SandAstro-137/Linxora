@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase } from "lucide-react";
 import { ReportDialog } from "@/components/ReportDialog";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
@@ -796,6 +796,17 @@ export default function JobDetailPage() {
     job.collaborators?.includes(user?.id || "") ||
     false;
 
+  const isFreelancerOnJob = 
+    (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
+    (job.status === "claimed" || job.status === "in_progress");
+
+  const getTabCount = () => {
+    let count = 1;
+    if (isTeamMember) count++;
+    if (isFreelancerOnJob) count++;
+    return count;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
@@ -858,7 +869,7 @@ export default function JobDetailPage() {
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className={`grid w-full ${isTeamMember ? 'grid-cols-2' : 'grid-cols-1'}`} data-testid="tabs-job-detail">
+            <TabsList className={`grid w-full grid-cols-${getTabCount()}`} data-testid="tabs-job-detail">
               <TabsTrigger value="overview" data-testid="tab-overview">
                 <FileText className="w-4 h-4 mr-2" />
                 Overview
@@ -867,6 +878,12 @@ export default function JobDetailPage() {
                 <TabsTrigger value="team" data-testid="tab-team">
                   <Users className="w-4 h-4 mr-2" />
                   Team
+                </TabsTrigger>
+              )}
+              {isFreelancerOnJob && (
+                <TabsTrigger value="workspace" data-testid="tab-workspace">
+                  <Briefcase className="w-4 h-4 mr-2" />
+                  Workspace
                 </TabsTrigger>
               )}
             </TabsList>
@@ -943,12 +960,14 @@ export default function JobDetailPage() {
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6 mt-6">
-              {user?.id === job.customerId ? (
-                <PublicTeamViewer job={job} />
-              ) : (
-                <TeamCollaboration jobId={jobId!} />
-              )}
+              <PublicTeamViewer job={job} />
             </TabsContent>
+
+            {isFreelancerOnJob && (
+              <TabsContent value="workspace" className="space-y-6 mt-6">
+                <TeamCollaboration jobId={jobId!} />
+              </TabsContent>
+            )}
           </Tabs>
         </div>
 
