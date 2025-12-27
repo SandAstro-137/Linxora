@@ -89,52 +89,6 @@ import { setStorage } from "./storage";
   
   // Seed initial data
   await seedData();
-  import fetch from "node-fetch";
-
-  app.get("/api/auth/callback", async (req: Request, res: Response) => {
-    const code = req.query.code as string;
-
-    if (!code) {
-      return res.status(400).send("Missing code");
-    }
-
-    try {
-      const params = new URLSearchParams();
-      params.append("client_id", process.env.DISCORD_CLIENT_ID!);
-      params.append("client_secret", process.env.DISCORD_CLIENT_SECRET!);
-      params.append("grant_type", "authorization_code");
-      params.append("code", code);
-      params.append("redirect_uri", process.env.DISCORD_REDIRECT_URI!);
-
-      const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
-        method: "POST",
-        body: params,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" }
-      });
-
-      const tokenData = await tokenResponse.json();
-
-      if (!tokenData.access_token) {
-        console.error("Token error:", tokenData);
-        return res.status(400).send("Failed to get access token");
-      }
-
-      const userResponse = await fetch("https://discord.com/api/users/@me", {
-        headers: {
-          Authorization: `Bearer ${tokenData.access_token}`
-        }
-      });
-
-      const user = await userResponse.json();
-
-      req.session.user = user;
-
-      res.redirect("/");
-    } catch (err) {
-      console.error(err);
-      res.status(500).send("OAuth error");
-    }
-  });
 
   const server = await registerRoutes(app);
 
