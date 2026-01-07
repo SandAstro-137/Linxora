@@ -30,6 +30,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Transaction history with filtering.
     - Available and pending balance breakdown.
 - **Freelancer Features:** Profiles displaying completed jobs, statistics, a level system, rating/review tracking, and PTO request management.
+- **Moderator Task System:** Head of Moderation and Founder can assign tasks to moderators. Tasks can be personal or team-based, with priority levels (low/medium/high) and status tracking (pending/in_progress/completed). Moderators see their "Assigned Tasks" section on their profile instead of "Completed Projects".
 - **Discord Integration:** Role synchronization, team collaboration notifications, and automatic posting of approved jobs via webhooks.
 - **Notification Center:** Comprehensive notification infrastructure with a bell icon, unread badge, and categorized alerts for messages, approvals, and system events.
 - **Onboarding System:** Multi-step role-specific onboarding wizard for new users.
