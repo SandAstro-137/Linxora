@@ -31,6 +31,12 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Available and pending balance breakdown.
 - **Freelancer Features:** Profiles displaying completed jobs, statistics, a level system, rating/review tracking, and PTO request management.
 - **Moderator Task System:** Head of Moderation and Founder can assign tasks to moderators. Tasks can be personal or team-based, with priority levels (low/medium/high) and status tracking (pending/in_progress/completed). Moderators see their "Assigned Tasks" section on their profile instead of "Completed Projects".
+- **Meeting & Calendar System:** Head of Moderation and Founder can schedule meetings for moderators via the Team Management page (/team-management). Features include:
+    - Schedule individual or team-wide meetings with date, time, and duration
+    - Moderators receive notifications for meeting invitations
+    - Accept/decline RSVP functionality on the My Meetings page (/meetings)
+    - Head of Moderation can view all RSVP responses (accepted, declined, pending)
+    - Meetings displayed in Eastern Time (ET) with upcoming/past categorization
 - **Discord Integration:** Role synchronization, team collaboration notifications, and automatic posting of approved jobs via webhooks.
 - **Notification Center:** Comprehensive notification infrastructure with a bell icon, unread badge, and categorized alerts for messages, approvals, and system events.
 - **Onboarding System:** Multi-step role-specific onboarding wizard for new users.

@@ -34,6 +34,8 @@ import MyJobsPage from "@/pages/my-jobs";
 import RoleUpgradePage from "@/pages/role-upgrade";
 import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
 import AdminPage from "@/pages/admin";
+import TeamManagementPage from "@/pages/team-management";
+import MeetingsPage from "@/pages/meetings";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -146,6 +148,16 @@ function Router() {
       <Route path="/admin">
         <ProtectedRoute allowedRoles={["founder"]}>
           <AdminPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/team-management">
+        <ProtectedRoute allowedRoles={["head_of_moderation", "founder"]}>
+          <TeamManagementPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/meetings">
+        <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
+          <MeetingsPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />
