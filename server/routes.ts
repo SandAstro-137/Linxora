@@ -2475,7 +2475,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get pending role upgrade requests (moderators only)
-  app.get("/api/role-upgrade-requests/pending", requireRole("moderator"), async (req, res) => {
+  app.get("/api/role-upgrade-requests/pending", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const requests = await storage.getPendingRoleUpgradeRequests();
       
@@ -2600,8 +2600,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Approve or reject a role upgrade request (moderators only)
-  app.patch("/api/role-upgrade-requests/:id", requireRole("moderator"), async (req, res) => {
+  // Approve or reject a role upgrade request
+  // Moderators can only approve customer-to-freelancer upgrades
+  // Founder/Head of Moderation can approve all upgrades including freelancer-to-moderator
+  app.patch("/api/role-upgrade-requests/:id", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const { id } = req.params;
       const { status, reviewNotes } = req.body;
@@ -2617,6 +2619,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (request.status !== RoleUpgradeStatus.PENDING) {
         return res.status(400).json({ error: "This request has already been processed" });
+      }
+
+      // Check if this is a freelancer-to-moderator upgrade
+      // Only Founder and Head of Moderation can approve these
+      if (request.upgradeType === RoleUpgradeType.FREELANCER_TO_MODERATOR) {
+        const reviewer = await storage.getUser(req.session.userId!);
+        if (!reviewer || (reviewer.role !== UserRole.FOUNDER && reviewer.role !== UserRole.HEAD_OF_MODERATION)) {
+          return res.status(403).json({ 
+            error: "Only the Founder or Head of Moderation can approve moderator promotions" 
+          });
+        }
       }
 
       // Update the request
@@ -2712,7 +2725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/reports", requireRole("moderator"), async (req, res) => {
+  app.get("/api/reports", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const { status, reportType } = req.query;
       const filters: any = {};
@@ -2726,7 +2739,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/reports/pending", requireRole("moderator"), async (req, res) => {
+  app.get("/api/reports/pending", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const reports = await storage.getPendingReports();
       res.json(reports);
@@ -2744,7 +2757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/reports/:id", requireRole("moderator"), async (req, res) => {
+  app.patch("/api/reports/:id", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const { id } = req.params;
       const { status, reviewNotes } = req.body;

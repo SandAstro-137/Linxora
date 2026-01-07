@@ -7,7 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Users, CheckCircle, XCircle, Star, Briefcase } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { Shield, Users, CheckCircle, XCircle, Star, Briefcase, Lock } from "lucide-react";
 import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import { useState } from "react";
 
@@ -36,11 +37,15 @@ interface EnrichedRoleUpgradeRequest {
 
 export default function RoleUpgradeReviewPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
   const { data: requests = [], isLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/pending"],
   });
+
+  // Only founder and head_of_moderation can approve moderator promotions
+  const canApproveModeratorPromotion = user?.role === "founder" || user?.role === "head_of_moderation";
 
   const reviewMutation = useMutation({
     mutationFn: async ({ id, status, notes }: { id: string; status: string; notes?: string }) => {
@@ -184,35 +189,42 @@ export default function RoleUpgradeReviewPage() {
                   />
                 </div>
 
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    onClick={() => reviewMutation.mutate({ 
-                      id: request.id, 
-                      status: "approved",
-                      notes: reviewNotes[request.id]
-                    })}
-                    disabled={reviewMutation.isPending}
-                    className="flex-1"
-                    data-testid={`button-approve-${request.id}`}
-                  >
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => reviewMutation.mutate({ 
-                      id: request.id, 
-                      status: "rejected",
-                      notes: reviewNotes[request.id]
-                    })}
-                    disabled={reviewMutation.isPending}
-                    className="flex-1"
-                    data-testid={`button-reject-${request.id}`}
-                  >
-                    <XCircle className="w-4 h-4 mr-2" />
-                    Reject
-                  </Button>
-                </div>
+                {request.upgradeType === "freelancer_to_moderator" && !canApproveModeratorPromotion ? (
+                  <div className="flex items-center gap-2 pt-2 p-3 rounded-md bg-muted/50 text-muted-foreground">
+                    <Lock className="w-4 h-4" />
+                    <span className="text-sm">Only Founder or Head of Moderation can approve moderator promotions</span>
+                  </div>
+                ) : (
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      onClick={() => reviewMutation.mutate({ 
+                        id: request.id, 
+                        status: "approved",
+                        notes: reviewNotes[request.id]
+                      })}
+                      disabled={reviewMutation.isPending}
+                      className="flex-1"
+                      data-testid={`button-approve-${request.id}`}
+                    >
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Approve
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => reviewMutation.mutate({ 
+                        id: request.id, 
+                        status: "rejected",
+                        notes: reviewNotes[request.id]
+                      })}
+                      disabled={reviewMutation.isPending}
+                      className="flex-1"
+                      data-testid={`button-reject-${request.id}`}
+                    >
+                      <XCircle className="w-4 h-4 mr-2" />
+                      Reject
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

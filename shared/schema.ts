@@ -8,7 +8,9 @@ export const UserRole = {
   FREELANCER: "freelancer",
   CUSTOMER: "customer",
   STAFF: "staff",
-  MODERATOR: "moderator"
+  MODERATOR: "moderator",
+  HEAD_OF_MODERATION: "head_of_moderation",
+  FOUNDER: "founder"
 } as const;
 
 export type UserRoleType = typeof UserRole[keyof typeof UserRole];
