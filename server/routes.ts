@@ -3321,7 +3321,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Content filtering
       const contentResult = filterContent(result.data.content);
-      if (contentResult.inappropriate || isSpamLike(result.data.content)) {
+      if (!contentResult.isClean || isSpamLike(result.data.content)) {
         return res.status(400).json({ error: "Message contains inappropriate content" });
       }
       
@@ -3416,7 +3416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (message.type === 'chat_message') {
           // Validate and filter content
           const contentResult = filterContent(message.content || '');
-          if (contentResult.inappropriate || isSpamLike(message.content || '')) {
+          if (!contentResult.isClean || isSpamLike(message.content || '')) {
             ws.send(JSON.stringify({ type: 'error', message: 'Message contains inappropriate content' }));
             return;
           }
