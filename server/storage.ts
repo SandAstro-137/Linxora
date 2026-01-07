@@ -35,6 +35,8 @@ import {
   type InsertModeratorMeeting,
   type MeetingRsvp,
   type InsertMeetingRsvp,
+  type TeamRoomMessage,
+  type InsertTeamRoomMessage,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -150,6 +152,10 @@ export interface IStorage {
   getMeetingRsvpByModerator(meetingId: string, moderatorId: string): Promise<MeetingRsvp | undefined>;
   createMeetingRsvp(rsvp: InsertMeetingRsvp): Promise<MeetingRsvp>;
   updateMeetingRsvp(id: string, updates: Partial<MeetingRsvp>): Promise<MeetingRsvp | undefined>;
+
+  // Team Room Message operations
+  getTeamRoomMessages(limit?: number): Promise<TeamRoomMessage[]>;
+  createTeamRoomMessage(message: InsertTeamRoomMessage): Promise<TeamRoomMessage>;
 }
 
 export class MemStorage implements IStorage {
@@ -171,6 +177,7 @@ export class MemStorage implements IStorage {
   private moderatorTasks: Map<string, ModeratorTask>;
   private moderatorMeetings: Map<string, ModeratorMeeting>;
   private meetingRsvps: Map<string, MeetingRsvp>;
+  private teamRoomMessages: Map<string, TeamRoomMessage>;
 
   constructor() {
     this.users = new Map();
@@ -191,6 +198,7 @@ export class MemStorage implements IStorage {
     this.moderatorTasks = new Map();
     this.moderatorMeetings = new Map();
     this.meetingRsvps = new Map();
+    this.teamRoomMessages = new Map();
   }
 
   // User operations
@@ -893,6 +901,25 @@ export class MemStorage implements IStorage {
     const updated = { ...rsvp, ...updates };
     this.meetingRsvps.set(id, updated);
     return updated;
+  }
+
+  // Team Room Message operations
+  async getTeamRoomMessages(limit: number = 100): Promise<TeamRoomMessage[]> {
+    const messages = Array.from(this.teamRoomMessages.values());
+    return messages
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime())
+      .slice(-limit);
+  }
+
+  async createTeamRoomMessage(insertMessage: InsertTeamRoomMessage): Promise<TeamRoomMessage> {
+    const id = randomUUID();
+    const message: TeamRoomMessage = {
+      ...insertMessage,
+      id,
+      createdAt: new Date(),
+    };
+    this.teamRoomMessages.set(id, message);
+    return message;
   }
 }
 

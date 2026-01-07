@@ -632,3 +632,23 @@ export const insertMeetingRsvpSchema = createInsertSchema(meetingRsvps)
 
 export type InsertMeetingRsvp = z.infer<typeof insertMeetingRsvpSchema>;
 export type MeetingRsvp = typeof meetingRsvps.$inferSelect;
+
+// Team Room Messages table - persistent chat for moderator team room
+export const teamRoomMessages = pgTable("team_room_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  senderId: varchar("sender_id").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTeamRoomMessageSchema = createInsertSchema(teamRoomMessages)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    content: z.string().min(1, "Message cannot be empty").max(2000),
+  });
+
+export type InsertTeamRoomMessage = z.infer<typeof insertTeamRoomMessageSchema>;
+export type TeamRoomMessage = typeof teamRoomMessages.$inferSelect;
