@@ -2797,6 +2797,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Moderator Task routes
+  app.get("/api/moderator-tasks", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const tasks = await storage.getModeratorTasks(req.session.userId!);
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/moderator-tasks/assigned-by-me", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const tasks = await storage.getModeratorTasksAssignedBy(req.session.userId!);
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderator-tasks", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { title, description, assigneeId, taskType, teamMembers, priority, dueDate } = req.body;
+      
+      if (!title || !assigneeId) {
+        return res.status(400).json({ error: "Title and assignee are required" });
+      }
+
+      const assignee = await storage.getUser(assigneeId);
+      if (!assignee || (assignee.role !== "moderator" && assignee.role !== "head_of_moderation")) {
+        return res.status(400).json({ error: "Assignee must be a moderator" });
+      }
+
+      const task = await storage.createModeratorTask({
+        title,
+        description,
+        assignedById: req.session.userId!,
+        assigneeId,
+        taskType: taskType || "personal",
+        teamMembers: teamMembers || null,
+        priority: priority || "medium",
+        dueDate: dueDate ? new Date(dueDate) : null,
+      });
+
+      // Notify the assignee
+      await storage.createNotification({
+        userId: assigneeId,
+        type: "system",
+        title: "New Task Assigned",
+        message: `You have been assigned a new ${taskType === "team" ? "team" : "personal"} task: ${title}`,
+        relatedId: task.id,
+      });
+
+      res.status(201).json(task);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/moderator-tasks/:id", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, title, description, priority } = req.body;
+
+      const task = await storage.getModeratorTask(id);
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      // Only assignee or assigner can update
+      const userId = req.session.userId!;
+      const isAssignee = task.assigneeId === userId || (task.teamMembers && task.teamMembers.includes(userId));
+      const isAssigner = task.assignedById === userId;
+      
+      if (!isAssignee && !isAssigner) {
+        return res.status(403).json({ error: "Not authorized to update this task" });
+      }
+
+      const updates: any = {};
+      if (status) {
+        updates.status = status;
+        if (status === "completed") {
+          updates.completedAt = new Date();
+        }
+      }
+      if (title && isAssigner) updates.title = title;
+      if (description !== undefined && isAssigner) updates.description = description;
+      if (priority && isAssigner) updates.priority = priority;
+
+      const updatedTask = await storage.updateModeratorTask(id, updates);
+      res.json(updatedTask);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Founder-only routes for managing Head of Moderation
   app.get("/api/admin/heads-of-moderation", requireRole("founder"), async (req, res) => {
     try {
