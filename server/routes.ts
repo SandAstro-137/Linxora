@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -11,6 +11,17 @@ import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
 import { z } from "zod";
 
 const uploadedFiles = new Map<string, string>();
+
+// Team Room client tracking (moved here for scope visibility in API routes)
+interface TeamRoomClient {
+  ws: any;
+  userId: string;
+  username: string;
+  avatar: string | null;
+  role: string;
+}
+
+const teamRoomClients = new Map<string, TeamRoomClient>();
 
 declare module "express-session" {
   interface SessionData {
@@ -3273,7 +3284,218 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============ TEAM ROOM API ============
+  
+  // Get team room messages (moderators only)
+  app.get("/api/team-room/messages", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const messages = await storage.getTeamRoomMessages(limit);
+      
+      // Attach sender info to each message
+      const messagesWithSenders = await Promise.all(
+        messages.map(async (msg) => {
+          const sender = await storage.getUser(msg.senderId);
+          return {
+            ...msg,
+            sender: sender ? { id: sender.id, username: sender.username, avatar: sender.avatar, role: sender.role } : null
+          };
+        })
+      );
+      
+      res.json(messagesWithSenders);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  
+  // Send team room message
+  app.post("/api/team-room/messages", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const result = insertTeamRoomMessageSchema.safeParse({ ...req.body, senderId: userId });
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error.issues[0]?.message || "Invalid message" });
+      }
+      
+      // Content filtering
+      const contentResult = filterContent(result.data.content);
+      if (contentResult.inappropriate || isSpamLike(result.data.content)) {
+        return res.status(400).json({ error: "Message contains inappropriate content" });
+      }
+      
+      const message = await storage.createTeamRoomMessage({
+        senderId: userId,
+        content: sanitizeText(result.data.content)
+      });
+      
+      const sender = await storage.getUser(userId);
+      res.json({
+        ...message,
+        sender: sender ? { id: sender.id, username: sender.username, avatar: sender.avatar, role: sender.role } : null
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  
+  // Get online moderators in team room
+  app.get("/api/team-room/online", requireRole("moderator", "head_of_moderation", "founder"), async (_req, res) => {
+    try {
+      // Return list of users currently connected to team room WebSocket
+      const onlineUsers = Array.from(teamRoomClients.values()).map(client => ({
+        id: client.userId,
+        username: client.username,
+        avatar: client.avatar,
+        role: client.role
+      }));
+      res.json(onlineUsers);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   const httpServer = createServer(app);
+  
+  // ============ TEAM ROOM WEBSOCKET ============
+  
+  // WebSocket server for team room real-time chat
+  const teamRoomWss = new WebSocketServer({ server: httpServer, path: "/ws/team-room" });
+  
+  teamRoomWss.on('connection', async (ws: WebSocket, req) => {
+    // Parse session from URL query (client sends userId and token)
+    const url = new URL(req.url!, `http://${req.headers.host}`);
+    const userId = url.searchParams.get('userId');
+    
+    if (!userId) {
+      ws.close(4001, 'Authentication required');
+      return;
+    }
+    
+    // Verify user exists and is a moderator
+    const user = await storage.getUser(userId);
+    if (!user || !['moderator', 'head_of_moderation', 'founder'].includes(user.role)) {
+      ws.close(4003, 'Access denied');
+      return;
+    }
+    
+    // Store client connection
+    const client: TeamRoomClient = {
+      ws,
+      userId: user.id,
+      username: user.username,
+      avatar: user.avatar,
+      role: user.role
+    };
+    teamRoomClients.set(userId, client);
+    
+    console.log(`[TeamRoom] ${user.username} joined the team room`);
+    
+    // Broadcast user joined to all clients
+    broadcastTeamRoom({
+      type: 'user_joined',
+      user: { id: user.id, username: user.username, avatar: user.avatar, role: user.role }
+    });
+    
+    // Send current online users to new client
+    ws.send(JSON.stringify({
+      type: 'online_users',
+      users: Array.from(teamRoomClients.values()).map(c => ({
+        id: c.userId,
+        username: c.username,
+        avatar: c.avatar,
+        role: c.role
+      }))
+    }));
+    
+    ws.on('message', async (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        
+        if (message.type === 'chat_message') {
+          // Validate and filter content
+          const contentResult = filterContent(message.content || '');
+          if (contentResult.inappropriate || isSpamLike(message.content || '')) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Message contains inappropriate content' }));
+            return;
+          }
+          
+          // Save to storage
+          const savedMessage = await storage.createTeamRoomMessage({
+            senderId: userId,
+            content: sanitizeText(message.content)
+          });
+          
+          // Broadcast to all clients
+          broadcastTeamRoom({
+            type: 'chat_message',
+            message: {
+              ...savedMessage,
+              sender: { id: user.id, username: user.username, avatar: user.avatar, role: user.role }
+            }
+          });
+        } else if (message.type === 'typing') {
+          // Broadcast typing indicator
+          broadcastTeamRoom({
+            type: 'typing',
+            user: { id: user.id, username: user.username }
+          }, userId);
+        } else if (message.type === 'webrtc_signal') {
+          // Forward WebRTC signaling to target user
+          const targetClient = teamRoomClients.get(message.targetUserId);
+          if (targetClient && targetClient.ws.readyState === WebSocket.OPEN) {
+            targetClient.ws.send(JSON.stringify({
+              type: 'webrtc_signal',
+              fromUserId: userId,
+              fromUsername: user.username,
+              signal: message.signal,
+              signalType: message.signalType
+            }));
+          }
+        } else if (message.type === 'voice_call_start') {
+          // Broadcast voice call invitation to all clients
+          broadcastTeamRoom({
+            type: 'voice_call_start',
+            initiator: { id: user.id, username: user.username, avatar: user.avatar }
+          });
+        } else if (message.type === 'voice_call_end') {
+          // Broadcast voice call ended
+          broadcastTeamRoom({
+            type: 'voice_call_end',
+            user: { id: user.id, username: user.username }
+          });
+        }
+      } catch (error) {
+        console.error('[TeamRoom] Message error:', error);
+      }
+    });
+    
+    ws.on('close', () => {
+      teamRoomClients.delete(userId);
+      console.log(`[TeamRoom] ${user.username} left the team room`);
+      
+      // Broadcast user left
+      broadcastTeamRoom({
+        type: 'user_left',
+        user: { id: user.id, username: user.username }
+      });
+    });
+    
+    ws.on('error', (error) => {
+      console.error('[TeamRoom] WebSocket error:', error.message);
+      teamRoomClients.delete(userId);
+    });
+  });
+  
+  function broadcastTeamRoom(data: object, excludeUserId?: string) {
+    const message = JSON.stringify(data);
+    teamRoomClients.forEach((client, id) => {
+      if (id !== excludeUserId && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(message);
+      }
+    });
+  }
   
   // Set up WebSocket server for real-time price broadcasts
   const wss = new WebSocketServer({ server: httpServer, path: "/ws/prices" });
