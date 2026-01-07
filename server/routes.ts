@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -2920,6 +2920,248 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updatedTask = await storage.updateModeratorTask(id, updates);
       res.json(updatedTask);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator Meeting routes - scheduled by Head of Moderation or Founder
+  app.get("/api/moderator-meetings", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meetings = await storage.getModeratorMeetings(req.session.userId!);
+      res.json(meetings);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/moderator-meetings/scheduled-by-me", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meetings = await storage.getModeratorMeetingsScheduledBy(req.session.userId!);
+      res.json(meetings);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/moderator-meetings/:id", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meeting = await storage.getModeratorMeeting(req.params.id);
+      if (!meeting) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+      res.json(meeting);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/moderator-meetings/:id/rsvps", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meeting = await storage.getModeratorMeeting(req.params.id);
+      if (!meeting) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+      
+      const rsvps = await storage.getMeetingRsvps(req.params.id);
+      
+      // Enrich with user data
+      const enrichedRsvps = await Promise.all(
+        rsvps.map(async (rsvp) => {
+          const user = await storage.getUser(rsvp.moderatorId);
+          return { ...rsvp, moderator: user };
+        })
+      );
+      
+      res.json(enrichedRsvps);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderator-meetings", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { title, description, scheduledDate, duration, isTeamMeeting, invitedModeratorIds } = req.body;
+
+      // Validate required fields
+      if (!title || typeof title !== "string" || title.trim().length === 0) {
+        return res.status(400).json({ error: "Title is required" });
+      }
+      if (title.length > 200) {
+        return res.status(400).json({ error: "Title must be 200 characters or less" });
+      }
+      if (!scheduledDate) {
+        return res.status(400).json({ error: "Scheduled date is required" });
+      }
+
+      const parsedDate = new Date(scheduledDate);
+      if (isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ error: "Invalid scheduled date" });
+      }
+
+      // Validate duration if provided
+      if (duration !== undefined) {
+        const durationNum = Number(duration);
+        if (isNaN(durationNum) || durationNum < 15 || durationNum > 480) {
+          return res.status(400).json({ error: "Duration must be between 15 and 480 minutes" });
+        }
+      }
+
+      // If it's a team meeting, get all moderators
+      let moderatorsToInvite: string[] = [];
+      if (isTeamMeeting) {
+        const users = await storage.getUsers();
+        moderatorsToInvite = users
+          .filter(u => u.role === UserRole.MODERATOR || u.role === UserRole.HEAD_OF_MODERATION)
+          .map(u => u.id);
+      } else if (invitedModeratorIds && Array.isArray(invitedModeratorIds)) {
+        // Validate that all invited users exist and are moderators
+        for (const id of invitedModeratorIds) {
+          const user = await storage.getUser(id);
+          if (!user) {
+            return res.status(400).json({ error: `User with ID ${id} not found` });
+          }
+          if (user.role !== UserRole.MODERATOR && user.role !== UserRole.HEAD_OF_MODERATION) {
+            return res.status(400).json({ error: `User ${user.username} is not a moderator` });
+          }
+        }
+        moderatorsToInvite = invitedModeratorIds;
+      } else {
+        return res.status(400).json({ error: "Must specify invited moderators or mark as team meeting" });
+      }
+
+      const meeting = await storage.createModeratorMeeting({
+        title: title.trim(),
+        description: description?.trim() || null,
+        scheduledById: req.session.userId!,
+        scheduledDate: parsedDate,
+        duration: duration || 60,
+        isTeamMeeting: isTeamMeeting || false,
+        invitedModeratorIds: moderatorsToInvite,
+      });
+
+      // Create RSVPs for all invited moderators
+      for (const moderatorId of moderatorsToInvite) {
+        await storage.createMeetingRsvp({
+          meetingId: meeting.id,
+          moderatorId,
+          status: MeetingRsvpStatus.PENDING,
+        });
+
+        // Notify each moderator
+        await storage.createNotification({
+          userId: moderatorId,
+          type: "system",
+          title: "Meeting Scheduled",
+          message: `You have been invited to a meeting: ${title}`,
+          relatedId: meeting.id,
+        });
+      }
+
+      res.status(201).json(meeting);
+    } catch (error) {
+      console.error("Error creating meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderator-meetings/:id/rsvp", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const userId = req.session.userId!;
+
+      // Validate status
+      const validStatuses = [MeetingRsvpStatus.ACCEPTED, MeetingRsvpStatus.DECLINED];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: "Status must be 'accepted' or 'declined'" });
+      }
+
+      const meeting = await storage.getModeratorMeeting(id);
+      if (!meeting) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+
+      // Check if user is invited
+      const isInvited = meeting.isTeamMeeting || meeting.invitedModeratorIds?.includes(userId);
+      if (!isInvited) {
+        return res.status(403).json({ error: "You are not invited to this meeting" });
+      }
+
+      // Find or create RSVP
+      let rsvp = await storage.getMeetingRsvpByModerator(id, userId);
+      if (!rsvp) {
+        rsvp = await storage.createMeetingRsvp({
+          meetingId: id,
+          moderatorId: userId,
+          status,
+        });
+      } else {
+        rsvp = await storage.updateMeetingRsvp(rsvp.id, {
+          status,
+          respondedAt: new Date(),
+        });
+      }
+
+      // Notify the scheduler of the response
+      const user = await storage.getUser(userId);
+      await storage.createNotification({
+        userId: meeting.scheduledById,
+        type: "system",
+        title: "Meeting RSVP",
+        message: `${user?.username || "A moderator"} has ${status} the meeting: ${meeting.title}`,
+        relatedId: meeting.id,
+      });
+
+      res.json(rsvp);
+    } catch (error) {
+      console.error("Error responding to meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/moderator-meetings/:id", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, description, scheduledDate, duration } = req.body;
+
+      const meeting = await storage.getModeratorMeeting(id);
+      if (!meeting) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+
+      // Only the scheduler can update
+      if (meeting.scheduledById !== req.session.userId) {
+        return res.status(403).json({ error: "Only the meeting scheduler can update it" });
+      }
+
+      const updates: any = {};
+      if (title !== undefined) {
+        if (typeof title !== "string" || title.trim().length === 0 || title.length > 200) {
+          return res.status(400).json({ error: "Title must be a non-empty string (max 200 characters)" });
+        }
+        updates.title = title.trim();
+      }
+      if (description !== undefined) {
+        updates.description = description?.trim() || null;
+      }
+      if (scheduledDate !== undefined) {
+        const parsedDate = new Date(scheduledDate);
+        if (isNaN(parsedDate.getTime())) {
+          return res.status(400).json({ error: "Invalid scheduled date" });
+        }
+        updates.scheduledDate = parsedDate;
+      }
+      if (duration !== undefined) {
+        const durationNum = Number(duration);
+        if (isNaN(durationNum) || durationNum < 15 || durationNum > 480) {
+          return res.status(400).json({ error: "Duration must be between 15 and 480 minutes" });
+        }
+        updates.duration = durationNum;
+      }
+
+      const updatedMeeting = await storage.updateModeratorMeeting(id, updates);
+      res.json(updatedMeeting);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
