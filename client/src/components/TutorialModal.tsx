@@ -46,12 +46,12 @@ const freelancerSlides: TutorialSlide[] = [
   },
   {
     title: "Getting Paid",
-    description: "Receive payments in cryptocurrency for completed work.",
+    description: "Receive payments for completed work.",
     icon: Wallet,
     tips: [
       "Payments are held until job completion",
-      "Supports USDT, SOL, BTC, and LTC",
-      "Track your earnings in real-time"
+      "Track your earnings in real-time",
+      "Withdraw funds when you're ready"
     ]
   },
   {
@@ -112,7 +112,7 @@ const customerSlides: TutorialSlide[] = [
     description: "Fund your wallet and pay for completed work.",
     icon: Wallet,
     tips: [
-      "Deposit crypto to your wallet",
+      "Deposit funds to your wallet",
       "Payments are held securely until completion",
       "Track all transactions in your wallet"
     ]
