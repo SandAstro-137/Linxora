@@ -29,6 +29,8 @@ import {
   type InsertRoleUpgradeRequest,
   type Report,
   type InsertReport,
+  type ModeratorTask,
+  type InsertModeratorTask,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -124,6 +126,13 @@ export interface IStorage {
   getPendingReports(): Promise<Report[]>;
   createReport(report: InsertReport): Promise<Report>;
   updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
+
+  // Moderator Task operations
+  getModeratorTask(id: string): Promise<ModeratorTask | undefined>;
+  getModeratorTasks(assigneeId: string): Promise<ModeratorTask[]>;
+  getModeratorTasksAssignedBy(assignedById: string): Promise<ModeratorTask[]>;
+  createModeratorTask(task: InsertModeratorTask): Promise<ModeratorTask>;
+  updateModeratorTask(id: string, updates: Partial<ModeratorTask>): Promise<ModeratorTask | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -142,6 +151,7 @@ export class MemStorage implements IStorage {
   private ratings: Map<string, Rating>;
   private roleUpgradeRequests: Map<string, RoleUpgradeRequest>;
   private reports: Map<string, Report>;
+  private moderatorTasks: Map<string, ModeratorTask>;
 
   constructor() {
     this.users = new Map();
@@ -159,6 +169,7 @@ export class MemStorage implements IStorage {
     this.ratings = new Map();
     this.roleUpgradeRequests = new Map();
     this.reports = new Map();
+    this.moderatorTasks = new Map();
   }
 
   // User operations
@@ -739,6 +750,52 @@ export class MemStorage implements IStorage {
     if (!report) return undefined;
     const updated = { ...report, ...updates, updatedAt: new Date() };
     this.reports.set(id, updated);
+    return updated;
+  }
+
+  // Moderator Task operations
+  async getModeratorTask(id: string): Promise<ModeratorTask | undefined> {
+    return this.moderatorTasks.get(id);
+  }
+
+  async getModeratorTasks(assigneeId: string): Promise<ModeratorTask[]> {
+    const tasks = Array.from(this.moderatorTasks.values()).filter(
+      (t) => t.assigneeId === assigneeId || (t.teamMembers && t.teamMembers.includes(assigneeId))
+    );
+    return tasks.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getModeratorTasksAssignedBy(assignedById: string): Promise<ModeratorTask[]> {
+    const tasks = Array.from(this.moderatorTasks.values()).filter(
+      (t) => t.assignedById === assignedById
+    );
+    return tasks.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createModeratorTask(insertTask: InsertModeratorTask): Promise<ModeratorTask> {
+    const id = randomUUID();
+    const task: ModeratorTask = {
+      ...insertTask,
+      id,
+      description: insertTask.description ?? null,
+      taskType: insertTask.taskType ?? "personal",
+      teamMembers: insertTask.teamMembers ?? null,
+      status: insertTask.status ?? "pending",
+      priority: insertTask.priority ?? "medium",
+      dueDate: insertTask.dueDate ?? null,
+      completedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.moderatorTasks.set(id, task);
+    return task;
+  }
+
+  async updateModeratorTask(id: string, updates: Partial<ModeratorTask>): Promise<ModeratorTask | undefined> {
+    const task = this.moderatorTasks.get(id);
+    if (!task) return undefined;
+    const updated = { ...task, ...updates, updatedAt: new Date() };
+    this.moderatorTasks.set(id, updated);
     return updated;
   }
 }

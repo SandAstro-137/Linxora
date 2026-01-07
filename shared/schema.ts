@@ -515,3 +515,53 @@ export const insertReportSchema = createInsertSchema(reports)
 
 export type InsertReport = z.infer<typeof insertReportSchema>;
 export type Report = typeof reports.$inferSelect;
+
+// Moderator Task status
+export const ModeratorTaskStatus = {
+  PENDING: "pending",
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed"
+} as const;
+
+export type ModeratorTaskStatusType = typeof ModeratorTaskStatus[keyof typeof ModeratorTaskStatus];
+
+// Moderator Task type (personal vs team-based)
+export const ModeratorTaskType = {
+  PERSONAL: "personal",
+  TEAM: "team"
+} as const;
+
+export type ModeratorTaskTypeEnum = typeof ModeratorTaskType[keyof typeof ModeratorTaskType];
+
+// Moderator Tasks table - tasks assigned by Head of Moderation
+export const moderatorTasks = pgTable("moderator_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  assignedById: varchar("assigned_by_id").notNull(), // Head of Moderation who assigned it
+  assigneeId: varchar("assignee_id").notNull(), // Moderator assigned to the task
+  taskType: text("task_type").notNull().default(ModeratorTaskType.PERSONAL),
+  teamMembers: text("team_members").array(), // For team tasks, list of moderator IDs
+  status: text("status").notNull().default(ModeratorTaskStatus.PENDING),
+  priority: text("priority").default("medium"),
+  dueDate: timestamp("due_date"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertModeratorTaskSchema = createInsertSchema(moderatorTasks)
+  .omit({
+    id: true,
+    completedAt: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    taskType: z.enum([ModeratorTaskType.PERSONAL, ModeratorTaskType.TEAM]).optional(),
+    status: z.enum([ModeratorTaskStatus.PENDING, ModeratorTaskStatus.IN_PROGRESS, ModeratorTaskStatus.COMPLETED]).optional(),
+    priority: z.enum(["low", "medium", "high"]).optional(),
+  });
+
+export type InsertModeratorTask = z.infer<typeof insertModeratorTaskSchema>;
+export type ModeratorTask = typeof moderatorTasks.$inferSelect;
