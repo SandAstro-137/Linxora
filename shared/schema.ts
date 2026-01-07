@@ -571,3 +571,64 @@ export const insertModeratorTaskSchema = createInsertSchema(moderatorTasks)
 
 export type InsertModeratorTask = z.infer<typeof insertModeratorTaskSchema>;
 export type ModeratorTask = typeof moderatorTasks.$inferSelect;
+
+// Moderator Meeting RSVP status
+export const MeetingRsvpStatus = {
+  PENDING: "pending",
+  ACCEPTED: "accepted",
+  DECLINED: "declined"
+} as const;
+
+export type MeetingRsvpStatusType = typeof MeetingRsvpStatus[keyof typeof MeetingRsvpStatus];
+
+// Moderator Meetings table - scheduled by Head of Moderation
+export const moderatorMeetings = pgTable("moderator_meetings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  scheduledById: varchar("scheduled_by_id").notNull(),
+  scheduledDate: timestamp("scheduled_date").notNull(),
+  duration: integer("duration").default(60), // in minutes
+  isTeamMeeting: boolean("is_team_meeting").default(false),
+  invitedModeratorIds: text("invited_moderator_ids").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertModeratorMeetingSchema = createInsertSchema(moderatorMeetings)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    title: z.string().min(1, "Title is required").max(200),
+    description: z.string().max(1000).optional().nullable(),
+    duration: z.number().min(15).max(480).optional(),
+  });
+
+export type InsertModeratorMeeting = z.infer<typeof insertModeratorMeetingSchema>;
+export type ModeratorMeeting = typeof moderatorMeetings.$inferSelect;
+
+// Meeting RSVP responses
+export const meetingRsvps = pgTable("meeting_rsvps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  meetingId: varchar("meeting_id").notNull(),
+  moderatorId: varchar("moderator_id").notNull(),
+  status: text("status").notNull().default(MeetingRsvpStatus.PENDING),
+  respondedAt: timestamp("responded_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMeetingRsvpSchema = createInsertSchema(meetingRsvps)
+  .omit({
+    id: true,
+    respondedAt: true,
+    createdAt: true,
+  })
+  .extend({
+    status: z.enum([MeetingRsvpStatus.PENDING, MeetingRsvpStatus.ACCEPTED, MeetingRsvpStatus.DECLINED]).optional(),
+  });
+
+export type InsertMeetingRsvp = z.infer<typeof insertMeetingRsvpSchema>;
+export type MeetingRsvp = typeof meetingRsvps.$inferSelect;

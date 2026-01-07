@@ -31,6 +31,10 @@ import {
   type InsertReport,
   type ModeratorTask,
   type InsertModeratorTask,
+  type ModeratorMeeting,
+  type InsertModeratorMeeting,
+  type MeetingRsvp,
+  type InsertMeetingRsvp,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -133,6 +137,19 @@ export interface IStorage {
   getModeratorTasksAssignedBy(assignedById: string): Promise<ModeratorTask[]>;
   createModeratorTask(task: InsertModeratorTask): Promise<ModeratorTask>;
   updateModeratorTask(id: string, updates: Partial<ModeratorTask>): Promise<ModeratorTask | undefined>;
+
+  // Moderator Meeting operations
+  getModeratorMeeting(id: string): Promise<ModeratorMeeting | undefined>;
+  getModeratorMeetings(moderatorId: string): Promise<ModeratorMeeting[]>;
+  getModeratorMeetingsScheduledBy(scheduledById: string): Promise<ModeratorMeeting[]>;
+  createModeratorMeeting(meeting: InsertModeratorMeeting): Promise<ModeratorMeeting>;
+  updateModeratorMeeting(id: string, updates: Partial<ModeratorMeeting>): Promise<ModeratorMeeting | undefined>;
+
+  // Meeting RSVP operations
+  getMeetingRsvps(meetingId: string): Promise<MeetingRsvp[]>;
+  getMeetingRsvpByModerator(meetingId: string, moderatorId: string): Promise<MeetingRsvp | undefined>;
+  createMeetingRsvp(rsvp: InsertMeetingRsvp): Promise<MeetingRsvp>;
+  updateMeetingRsvp(id: string, updates: Partial<MeetingRsvp>): Promise<MeetingRsvp | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -152,6 +169,8 @@ export class MemStorage implements IStorage {
   private roleUpgradeRequests: Map<string, RoleUpgradeRequest>;
   private reports: Map<string, Report>;
   private moderatorTasks: Map<string, ModeratorTask>;
+  private moderatorMeetings: Map<string, ModeratorMeeting>;
+  private meetingRsvps: Map<string, MeetingRsvp>;
 
   constructor() {
     this.users = new Map();
@@ -170,6 +189,8 @@ export class MemStorage implements IStorage {
     this.roleUpgradeRequests = new Map();
     this.reports = new Map();
     this.moderatorTasks = new Map();
+    this.moderatorMeetings = new Map();
+    this.meetingRsvps = new Map();
   }
 
   // User operations
@@ -796,6 +817,81 @@ export class MemStorage implements IStorage {
     if (!task) return undefined;
     const updated = { ...task, ...updates, updatedAt: new Date() };
     this.moderatorTasks.set(id, updated);
+    return updated;
+  }
+
+  // Moderator Meeting operations
+  async getModeratorMeeting(id: string): Promise<ModeratorMeeting | undefined> {
+    return this.moderatorMeetings.get(id);
+  }
+
+  async getModeratorMeetings(moderatorId: string): Promise<ModeratorMeeting[]> {
+    const meetings = Array.from(this.moderatorMeetings.values()).filter(
+      (m) => m.invitedModeratorIds?.includes(moderatorId) || m.isTeamMeeting
+    );
+    return meetings.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
+  }
+
+  async getModeratorMeetingsScheduledBy(scheduledById: string): Promise<ModeratorMeeting[]> {
+    const meetings = Array.from(this.moderatorMeetings.values()).filter(
+      (m) => m.scheduledById === scheduledById
+    );
+    return meetings.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
+  }
+
+  async createModeratorMeeting(insertMeeting: InsertModeratorMeeting): Promise<ModeratorMeeting> {
+    const id = randomUUID();
+    const meeting: ModeratorMeeting = {
+      ...insertMeeting,
+      id,
+      description: insertMeeting.description ?? null,
+      duration: insertMeeting.duration ?? 60,
+      isTeamMeeting: insertMeeting.isTeamMeeting ?? false,
+      invitedModeratorIds: insertMeeting.invitedModeratorIds ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.moderatorMeetings.set(id, meeting);
+    return meeting;
+  }
+
+  async updateModeratorMeeting(id: string, updates: Partial<ModeratorMeeting>): Promise<ModeratorMeeting | undefined> {
+    const meeting = this.moderatorMeetings.get(id);
+    if (!meeting) return undefined;
+    const updated = { ...meeting, ...updates, updatedAt: new Date() };
+    this.moderatorMeetings.set(id, updated);
+    return updated;
+  }
+
+  // Meeting RSVP operations
+  async getMeetingRsvps(meetingId: string): Promise<MeetingRsvp[]> {
+    return Array.from(this.meetingRsvps.values()).filter((r) => r.meetingId === meetingId);
+  }
+
+  async getMeetingRsvpByModerator(meetingId: string, moderatorId: string): Promise<MeetingRsvp | undefined> {
+    return Array.from(this.meetingRsvps.values()).find(
+      (r) => r.meetingId === meetingId && r.moderatorId === moderatorId
+    );
+  }
+
+  async createMeetingRsvp(insertRsvp: InsertMeetingRsvp): Promise<MeetingRsvp> {
+    const id = randomUUID();
+    const rsvp: MeetingRsvp = {
+      ...insertRsvp,
+      id,
+      status: insertRsvp.status ?? "pending",
+      respondedAt: null,
+      createdAt: new Date(),
+    };
+    this.meetingRsvps.set(id, rsvp);
+    return rsvp;
+  }
+
+  async updateMeetingRsvp(id: string, updates: Partial<MeetingRsvp>): Promise<MeetingRsvp | undefined> {
+    const rsvp = this.meetingRsvps.get(id);
+    if (!rsvp) return undefined;
+    const updated = { ...rsvp, ...updates };
+    this.meetingRsvps.set(id, updated);
     return updated;
   }
 }
