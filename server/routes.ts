@@ -2641,6 +2641,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // If approved, update the user's role
       if (status === "approved") {
+        // Role upgrade can only result in FREELANCER or MODERATOR
+        // NEVER Founder or Head of Moderation (those are assigned differently)
         const newRole = request.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER 
           ? UserRole.FREELANCER 
           : UserRole.MODERATOR;
@@ -2790,6 +2792,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.json(updatedReport);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Founder-only routes for managing Head of Moderation
+  app.get("/api/admin/heads-of-moderation", requireRole("founder"), async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const headsOfModeration = users.filter(u => u.role === UserRole.HEAD_OF_MODERATION);
+      res.json(headsOfModeration);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/admin/assign-head-of-moderation/:userId", requireRole("founder"), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      
+      // Get current heads of moderation count
+      const users = await storage.getUsers();
+      const headsOfModeration = users.filter(u => u.role === UserRole.HEAD_OF_MODERATION);
+      
+      if (headsOfModeration.length >= 3) {
+        return res.status(400).json({ 
+          error: "Maximum of 3 Heads of Moderation allowed. Remove one before assigning another." 
+        });
+      }
+      
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      if (targetUser.role === UserRole.FOUNDER) {
+        return res.status(400).json({ error: "Cannot change the Founder's role" });
+      }
+      
+      if (targetUser.role === UserRole.HEAD_OF_MODERATION) {
+        return res.status(400).json({ error: "User is already a Head of Moderation" });
+      }
+      
+      // Must be at least a moderator to be promoted
+      if (targetUser.role !== UserRole.MODERATOR) {
+        return res.status(400).json({ error: "Only moderators can be promoted to Head of Moderation" });
+      }
+      
+      await storage.updateUser(userId, { role: UserRole.HEAD_OF_MODERATION });
+      
+      // Notify the user
+      await storage.createNotification({
+        userId,
+        type: "role_upgrade",
+        title: "Promoted to Head of Moderation",
+        message: "Congratulations! You have been promoted to Head of Moderation by the Founder.",
+        relatedId: userId,
+      });
+      
+      const updatedUser = await storage.getUser(userId);
+      res.json(updatedUser);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/admin/remove-head-of-moderation/:userId", requireRole("founder"), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      if (targetUser.role !== UserRole.HEAD_OF_MODERATION) {
+        return res.status(400).json({ error: "User is not a Head of Moderation" });
+      }
+      
+      // Demote back to moderator
+      await storage.updateUser(userId, { role: UserRole.MODERATOR });
+      
+      // Notify the user
+      await storage.createNotification({
+        userId,
+        type: "role_upgrade",
+        title: "Role Changed",
+        message: "Your role has been changed from Head of Moderation to Moderator by the Founder.",
+        relatedId: userId,
+      });
+      
+      const updatedUser = await storage.getUser(userId);
+      res.json(updatedUser);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get all moderators (for Founder to see who can be promoted)
+  app.get("/api/admin/moderators", requireRole("founder"), async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const moderators = users.filter(u => 
+        u.role === UserRole.MODERATOR || u.role === UserRole.HEAD_OF_MODERATION
+      );
+      res.json(moderators);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

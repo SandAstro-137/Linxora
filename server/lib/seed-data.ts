@@ -51,6 +51,14 @@ export async function seedData() {
     role: "moderator",
   });
 
+  const founder = await storage.createUser({
+    discordId: "demo-founder-1",
+    username: "Founder",
+    email: "founder@linxora.com",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Founder",
+    role: "founder",
+  }, true);
+
   // Create demo jobs
   await storage.createJob({
     customerId: customer.id,
@@ -136,4 +144,5 @@ export async function seedData() {
   console.log('- Freelancer: Sarah Johnson (ID:', freelancer2.discordId, ')');
   console.log('- Customer: Tech Startup Inc (ID:', customer.discordId, ')');
   console.log('- Moderator: Admin User (ID:', moderator.discordId, ')');
+  console.log('- Founder:', founder.username, '(ID:', founder.discordId, ')');
 }

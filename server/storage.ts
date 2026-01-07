@@ -38,7 +38,7 @@ export interface IStorage {
   getUsers(): Promise<User[]>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createUser(user: InsertUser, allowFounder?: boolean): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
 
   // Job operations
@@ -178,7 +178,20 @@ export class MemStorage implements IStorage {
     return Array.from(this.users.values()).find((user) => user.username === username);
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser, allowFounder: boolean = false): Promise<User> {
+    // Security: Only allow Founder role creation during initial seed
+    if (insertUser.role === "founder" && !allowFounder) {
+      throw new Error("Cannot create user with Founder role");
+    }
+    
+    // Security: Only one Founder can exist
+    if (insertUser.role === "founder") {
+      const existingFounder = Array.from(this.users.values()).find(u => u.role === "founder");
+      if (existingFounder) {
+        throw new Error("Founder already exists");
+      }
+    }
+    
     const id = randomUUID();
     const user: User = {
       ...insertUser,
@@ -204,6 +217,18 @@ export class MemStorage implements IStorage {
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
     const user = this.users.get(id);
     if (!user) return undefined;
+    
+    // Security: Prevent role escalation to Founder via any update
+    // Founder role can only be set during initial seed
+    if (updates.role === "founder") {
+      throw new Error("Cannot assign Founder role via user update");
+    }
+    
+    // Security: If user is already Founder, prevent role changes
+    if (user.role === "founder" && updates.role && updates.role !== "founder") {
+      throw new Error("Cannot change Founder's role");
+    }
+    
     const updated = { ...user, ...updates, updatedAt: new Date() };
     this.users.set(id, updated);
     return updated;

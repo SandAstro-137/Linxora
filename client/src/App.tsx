@@ -33,6 +33,7 @@ import CurrentJobPage from "@/pages/current-job";
 import MyJobsPage from "@/pages/my-jobs";
 import RoleUpgradePage from "@/pages/role-upgrade";
 import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
+import AdminPage from "@/pages/admin";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -118,7 +119,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/moderation">
-        <ProtectedRoute allowedRoles={["staff", "moderator"]}>
+        <ProtectedRoute allowedRoles={["staff", "moderator", "head_of_moderation", "founder"]}>
           <ModerationPage />
         </ProtectedRoute>
       </Route>
@@ -138,8 +139,13 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/role-upgrade-review">
-        <ProtectedRoute allowedRoles={["moderator"]}>
+        <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
           <RoleUpgradeReviewPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin">
+        <ProtectedRoute allowedRoles={["founder"]}>
+          <AdminPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />

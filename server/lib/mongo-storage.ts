@@ -316,7 +316,20 @@ export class MongoStorage implements IStorage {
     return docs.map(doc => this.toUser(doc));
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser, allowFounder: boolean = false): Promise<User> {
+    // Security: Only allow Founder role creation during initial seed
+    if (insertUser.role === "founder" && !allowFounder) {
+      throw new Error("Cannot create user with Founder role");
+    }
+    
+    // Security: Only one Founder can exist
+    if (insertUser.role === "founder") {
+      const existingFounder = await this.users.findOne({ role: "founder" });
+      if (existingFounder) {
+        throw new Error("Founder already exists");
+      }
+    }
+    
     const now = new Date();
     const doc = {
       discordId: insertUser.discordId,
@@ -337,6 +350,18 @@ export class MongoStorage implements IStorage {
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
+    // Security: Prevent role escalation to Founder via any update
+    // Founder role can only be set during initial seed
+    if (updates.role === "founder") {
+      throw new Error("Cannot assign Founder role via user update");
+    }
+    
+    // Security: If user is already Founder, prevent role changes
+    const existingUser = await this.users.findOne({ _id: new ObjectId(id) });
+    if (existingUser?.role === "founder" && updates.role && updates.role !== "founder") {
+      throw new Error("Cannot change Founder's role");
+    }
+    
     const { id: _, ...updateDoc } = updates as any;
     const result = await this.users.findOneAndUpdate(
       { _id: new ObjectId(id) },

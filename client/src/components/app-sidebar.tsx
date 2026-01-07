@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Clapperboard, Scissors } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -57,7 +57,23 @@ export function AppSidebar() {
     { title: "My Profile", url: "/profile", icon: User },
   ];
 
+  const founderItems = [
+    { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Admin Panel", url: "/admin", icon: Crown },
+    { title: "Moderation Queue", url: "/moderation", icon: Shield },
+    { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
+    { title: "All Jobs", url: "/jobs", icon: Briefcase },
+    { title: "My Wallet", url: "/wallet", icon: Wallet },
+    { title: "My Profile", url: "/profile", icon: User },
+  ];
+
   const getMenuItems = () => {
+    if (user?.role === "founder") {
+      return founderItems;
+    }
+    if (user?.role === "head_of_moderation") {
+      return staffItems;
+    }
     if (user?.role === "moderator" || user?.role === "staff") {
       return staffItems;
     }
