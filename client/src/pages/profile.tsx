@@ -103,7 +103,46 @@ export default function ProfilePage() {
     },
   });
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const resizeImage = (file: File, maxSize: number = 400): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > height) {
+          if (width > maxSize) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
+          }
+        } else {
+          if (height > maxSize) {
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const resizedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(resizedDataUrl);
+        } else {
+          reject(new Error('Could not get canvas context'));
+        }
+      };
+      
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -116,21 +155,41 @@ export default function ProfilePage() {
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
+    const TWO_MB = 2 * 1024 * 1024;
+    const FIVE_MB = 5 * 1024 * 1024;
+
+    if (file.size > FIVE_MB) {
       toast({
         title: "File too large",
-        description: "Please select an image smaller than 5MB",
+        description: "Please select an image smaller than 5MB. Preferred file size for profile image is under 2MB.",
         variant: "destructive",
       });
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      updateAvatarMutation.mutate(base64String);
-    };
-    reader.readAsDataURL(file);
+    try {
+      if (file.size > TWO_MB) {
+        toast({
+          title: "Resizing image",
+          description: "Image is over 2MB, automatically resizing for optimal profile display.",
+        });
+        const resizedImage = await resizeImage(file, 400);
+        updateAvatarMutation.mutate(resizedImage);
+      } else {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = reader.result as string;
+          updateAvatarMutation.mutate(base64String);
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (error) {
+      toast({
+        title: "Failed to process image",
+        description: "Preferred file size for profile image is under 2MB.",
+        variant: "destructive",
+      });
+    }
   };
 
   if (!user) return null;
