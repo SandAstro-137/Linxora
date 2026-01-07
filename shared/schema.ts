@@ -558,10 +558,16 @@ export const insertModeratorTaskSchema = createInsertSchema(moderatorTasks)
     updatedAt: true,
   })
   .extend({
+    title: z.string().min(1, "Title is required").max(200),
+    description: z.string().max(1000).optional().nullable(),
     taskType: z.enum([ModeratorTaskType.PERSONAL, ModeratorTaskType.TEAM]).optional(),
     status: z.enum([ModeratorTaskStatus.PENDING, ModeratorTaskStatus.IN_PROGRESS, ModeratorTaskStatus.COMPLETED]).optional(),
     priority: z.enum(["low", "medium", "high"]).optional(),
-  });
+  })
+  .refine(
+    (data) => data.taskType !== ModeratorTaskType.TEAM || (data.teamMembers && data.teamMembers.length > 0),
+    { message: "Team tasks must have at least one team member", path: ["teamMembers"] }
+  );
 
 export type InsertModeratorTask = z.infer<typeof insertModeratorTaskSchema>;
 export type ModeratorTask = typeof moderatorTasks.$inferSelect;

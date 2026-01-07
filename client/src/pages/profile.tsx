@@ -46,6 +46,12 @@ export default function ProfilePage() {
     queryKey: ["/api/profile/stats"],
   });
 
+  const { data: moderatorTasks, isError: moderatorTasksError } = useQuery<any[]>({
+    queryKey: ["/api/moderator-tasks"],
+    enabled: user?.role === "moderator" || user?.role === "head_of_moderation",
+    retry: false,
+  });
+
   const updateWorkingHoursMutation = useMutation({
     mutationFn: (hours: WorkingHours) => apiRequest("PUT", "/api/profile/working-hours", hours),
     onSuccess: () => {
@@ -697,24 +703,99 @@ export default function ProfilePage() {
             </Card>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Completed Projects</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {Array.isArray(completedJobs) && completedJobs.length > 0 ? (
-                <div className="grid gap-4">
-                  {completedJobs.slice(0, 3).map((job: any) => (
-                    <JobCard key={job.id} job={job} showActions={false} />
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center py-8 text-muted-foreground">
-                  No completed jobs yet
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {(user.role === "moderator" || user.role === "head_of_moderation") ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Assigned Tasks</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {moderatorTasksError ? (
+                  <p className="text-center py-8 text-muted-foreground">
+                    Unable to load tasks
+                  </p>
+                ) : Array.isArray(moderatorTasks) && moderatorTasks.length > 0 ? (
+                  <div className="space-y-3">
+                    {moderatorTasks.slice(0, 5).map((task: any) => (
+                      <div 
+                        key={task.id} 
+                        className="flex items-start gap-3 p-3 rounded-lg border"
+                        data-testid={`task-card-${task.id}`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="font-medium truncate">{task.title}</span>
+                            <Badge 
+                              variant={task.taskType === "team" ? "default" : "secondary"}
+                              className="text-xs"
+                            >
+                              {task.taskType === "team" ? (
+                                <><Users className="w-3 h-3 mr-1" />Team</>
+                              ) : (
+                                "Personal"
+                              )}
+                            </Badge>
+                            <Badge 
+                              variant={
+                                task.status === "completed" ? "default" : 
+                                task.status === "in_progress" ? "secondary" : "outline"
+                              }
+                              className="text-xs"
+                            >
+                              {task.status === "completed" ? (
+                                <><CheckCircle className="w-3 h-3 mr-1" />Completed</>
+                              ) : task.status === "in_progress" ? (
+                                <><Clock className="w-3 h-3 mr-1" />In Progress</>
+                              ) : (
+                                "Pending"
+                              )}
+                            </Badge>
+                          </div>
+                          {task.description && (
+                            <p className="text-sm text-muted-foreground truncate">
+                              {task.description}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                            {task.priority && (
+                              <span className={`capitalize ${
+                                task.priority === "high" ? "text-red-500" : 
+                                task.priority === "medium" ? "text-yellow-500" : ""
+                              }`}>
+                                {task.priority} priority
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center py-8 text-muted-foreground">
+                    No tasks assigned yet
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Completed Projects</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {Array.isArray(completedJobs) && completedJobs.length > 0 ? (
+                  <div className="grid gap-4">
+                    {completedJobs.slice(0, 3).map((job: any) => (
+                      <JobCard key={job.id} job={job} showActions={false} />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center py-8 text-muted-foreground">
+                    No completed jobs yet
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>

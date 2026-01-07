@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -2818,11 +2818,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/moderator-tasks", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
-      const { title, description, assigneeId, taskType, teamMembers, priority, dueDate } = req.body;
-      
-      if (!title || !assigneeId) {
-        return res.status(400).json({ error: "Title and assignee are required" });
+      const validationResult = insertModeratorTaskSchema.safeParse({
+        ...req.body,
+        assignedById: req.session.userId!,
+      });
+
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.errors 
+        });
       }
+
+      const { title, description, assigneeId, taskType, teamMembers, priority, dueDate } = validationResult.data;
 
       const assignee = await storage.getUser(assigneeId);
       if (!assignee || (assignee.role !== "moderator" && assignee.role !== "head_of_moderation")) {
@@ -2860,6 +2868,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const { status, title, description, priority } = req.body;
 
+      // Validate status if provided
+      const validStatuses = [ModeratorTaskStatus.PENDING, ModeratorTaskStatus.IN_PROGRESS, ModeratorTaskStatus.COMPLETED];
+      if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({ error: "Invalid status. Must be one of: pending, in_progress, completed" });
+      }
+
+      // Validate priority if provided
+      const validPriorities = ["low", "medium", "high"];
+      if (priority && !validPriorities.includes(priority)) {
+        return res.status(400).json({ error: "Invalid priority. Must be one of: low, medium, high" });
+      }
+
       const task = await storage.getModeratorTask(id);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
@@ -2877,12 +2897,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updates: any = {};
       if (status) {
         updates.status = status;
-        if (status === "completed") {
+        if (status === ModeratorTaskStatus.COMPLETED) {
           updates.completedAt = new Date();
+        } else {
+          // Clear completedAt if reverting from completed status
+          updates.completedAt = null;
         }
       }
-      if (title && isAssigner) updates.title = title;
-      if (description !== undefined && isAssigner) updates.description = description;
+      if (title !== undefined && isAssigner) {
+        if (typeof title !== "string" || title.trim().length === 0 || title.length > 200) {
+          return res.status(400).json({ error: "Title must be a non-empty string (max 200 characters)" });
+        }
+        updates.title = title.trim();
+      }
+      if (description !== undefined && isAssigner) {
+        if (description !== null && (typeof description !== "string" || description.length > 1000)) {
+          return res.status(400).json({ error: "Description must be a string (max 1000 characters)" });
+        }
+        updates.description = description;
+      }
       if (priority && isAssigner) updates.priority = priority;
 
       const updatedTask = await storage.updateModeratorTask(id, updates);
