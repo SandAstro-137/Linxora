@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -50,6 +50,7 @@ export function AppSidebar() {
 
   const staffItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
@@ -60,6 +61,7 @@ export function AppSidebar() {
 
   const headOfModerationItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
@@ -71,6 +73,7 @@ export function AppSidebar() {
 
   const founderItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
+    { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Admin Panel", url: "/admin", icon: Crown },
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },

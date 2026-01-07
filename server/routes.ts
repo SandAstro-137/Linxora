@@ -23,6 +23,44 @@ interface TeamRoomClient {
 
 const teamRoomClients = new Map<string, TeamRoomClient>();
 
+// Team Room WebSocket tokens - short-lived tokens for secure WS authentication
+interface TeamRoomToken {
+  userId: string;
+  expiresAt: number;
+}
+
+const teamRoomTokens = new Map<string, TeamRoomToken>();
+
+function generateTeamRoomToken(userId: string): string {
+  // Use cryptographically strong random token
+  const { randomBytes } = require("crypto");
+  const token = randomBytes(32).toString("hex");
+  teamRoomTokens.set(token, {
+    userId,
+    expiresAt: Date.now() + 60000 // Token valid for 60 seconds
+  });
+  // Clean up old expired tokens to prevent unbounded Map growth
+  for (const [key, data] of teamRoomTokens.entries()) {
+    if (Date.now() > data.expiresAt) {
+      teamRoomTokens.delete(key);
+    }
+  }
+  return token;
+}
+
+function validateTeamRoomToken(token: string): string | null {
+  const tokenData = teamRoomTokens.get(token);
+  if (!tokenData) return null;
+  
+  // Delete token after use (one-time use)
+  teamRoomTokens.delete(token);
+  
+  // Check if expired
+  if (Date.now() > tokenData.expiresAt) return null;
+  
+  return tokenData.userId;
+}
+
 declare module "express-session" {
   interface SessionData {
     userId?: string;
@@ -3355,6 +3393,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+  
+  // Get WebSocket token for team room (authenticated endpoint)
+  app.get("/api/team-room/ws-token", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const token = generateTeamRoomToken(userId);
+      res.json({ token });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 
   const httpServer = createServer(app);
   
@@ -3364,12 +3413,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const teamRoomWss = new WebSocketServer({ server: httpServer, path: "/ws/team-room" });
   
   teamRoomWss.on('connection', async (ws: WebSocket, req) => {
-    // Parse session from URL query (client sends userId and token)
+    // Parse token from URL query (client gets token from authenticated endpoint)
     const url = new URL(req.url!, `http://${req.headers.host}`);
-    const userId = url.searchParams.get('userId');
+    const token = url.searchParams.get('token');
     
-    if (!userId) {
+    if (!token) {
       ws.close(4001, 'Authentication required');
+      return;
+    }
+    
+    // Validate the one-time token
+    const userId = validateTeamRoomToken(token);
+    if (!userId) {
+      ws.close(4001, 'Invalid or expired token');
       return;
     }
     

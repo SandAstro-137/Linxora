@@ -36,6 +36,7 @@ import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
 import AdminPage from "@/pages/admin";
 import TeamManagementPage from "@/pages/team-management";
 import MeetingsPage from "@/pages/meetings";
+import TeamRoomPage from "@/pages/team-room";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -158,6 +159,11 @@ function Router() {
       <Route path="/meetings">
         <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
           <MeetingsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/team-room">
+        <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
+          <TeamRoomPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />

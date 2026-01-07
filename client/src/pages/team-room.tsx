@@ -112,19 +112,37 @@ export default function TeamRoomPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const connectWebSocket = useCallback(() => {
+  const connectWebSocket = useCallback(async () => {
     if (!user || wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/team-room?userId=${user.id}`;
-    
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    try {
+      // First, get a secure one-time token from the authenticated API
+      const tokenResponse = await fetch("/api/team-room/ws-token", {
+        credentials: "include"
+      });
+      
+      if (!tokenResponse.ok) {
+        console.error("[TeamRoom] Failed to get WebSocket token");
+        toast({
+          title: "Connection Failed",
+          description: "Unable to authenticate for team room",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const { token } = await tokenResponse.json();
 
-    ws.onopen = () => {
-      setIsConnected(true);
-      console.log("[TeamRoom] Connected to WebSocket");
-    };
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/ws/team-room?token=${token}`;
+      
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        console.log("[TeamRoom] Connected to WebSocket");
+      };
 
     ws.onmessage = async (event) => {
       const data = JSON.parse(event.data);
@@ -204,6 +222,14 @@ export default function TeamRoomPage() {
     ws.onerror = (error) => {
       console.error("[TeamRoom] WebSocket error:", error);
     };
+    } catch (error) {
+      console.error("[TeamRoom] Connection error:", error);
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to team room",
+        variant: "destructive",
+      });
+    }
   }, [user, toast]);
 
   useEffect(() => {

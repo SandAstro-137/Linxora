@@ -37,6 +37,12 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Accept/decline RSVP functionality on the My Meetings page (/meetings)
     - Head of Moderation can view all RSVP responses (accepted, declined, pending)
     - Meetings displayed in Eastern Time (ET) with upcoming/past categorization
+- **Team Room:** Real-time collaboration space for the moderation team (/team-room). Features include:
+    - Persistent team chat with WebSocket-based real-time messaging
+    - Typing indicators and online presence tracking
+    - WebRTC-based voice calls with mute/deafen controls
+    - Content filtering and moderation on chat messages
+    - Role badges and user status display
 - **Discord Integration:** Role synchronization, team collaboration notifications, and automatic posting of approved jobs via webhooks.
 - **Notification Center:** Comprehensive notification infrastructure with a bell icon, unread badge, and categorized alerts for messages, approvals, and system events.
 - **Onboarding System:** Multi-step role-specific onboarding wizard for new users.
