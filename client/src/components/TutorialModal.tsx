@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { ChevronLeft, ChevronRight, X, Briefcase, Wallet, Star, Shield, Clock, Users, Bell } from "lucide-react";
+import { ChevronLeft, ChevronRight, Briefcase, Wallet, Star, Shield, Clock, Users, Bell } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 
 interface TutorialSlide {
@@ -223,19 +223,9 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-lg" data-testid="modal-tutorial">
         <DialogHeader>
-          <div className="flex items-center justify-between">
-            <Badge variant="secondary" className="mb-2">
-              {currentSlide + 1} of {slides.length}
-            </Badge>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleClose}
-              data-testid="button-close-tutorial"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+          <Badge variant="secondary" className="mb-2 w-fit">
+            {currentSlide + 1} of {slides.length}
+          </Badge>
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-full bg-primary/10">
               <Icon className="h-6 w-6 text-primary" />
