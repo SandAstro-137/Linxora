@@ -45,6 +45,7 @@ export class MongoStorage implements IStorage {
   private teamTasks: Collection;
   private teamMessages: Collection;
   private ratings: Collection;
+  private counters: Collection;
 
   constructor(mongoUri: string) {
     // Add connection options if not already in URI
@@ -71,13 +72,32 @@ export class MongoStorage implements IStorage {
     this.teamTasks = this.db.collection('teamTasks');
     this.teamMessages = this.db.collection('teamMessages');
     this.ratings = this.db.collection('ratings');
+    this.counters = this.db.collection('counters');
   }
 
   async connect(): Promise<void> {
     await this.client.connect();
     await this.db.command({ ping: 1 });
     await this.createIndexes();
+    // Initialize userId counter if it doesn't exist
+    await this.counters.updateOne(
+      { _id: 'userId' as any },
+      { $setOnInsert: { sequence: 0 } },
+      { upsert: true }
+    );
     console.log('✓ Connected to MongoDB successfully');
+  }
+
+  private async getNextUserId(): Promise<number> {
+    const result = await this.counters.findOneAndUpdate(
+      { _id: 'userId' as any },
+      { $inc: { sequence: 1 } },
+      { returnDocument: 'after', upsert: true }
+    );
+    if (!result) {
+      throw new Error("Failed to generate user ID");
+    }
+    return result.sequence as number;
   }
 
   async close(): Promise<void> {
@@ -86,6 +106,7 @@ export class MongoStorage implements IStorage {
 
   private async createIndexes(): Promise<void> {
     await this.users.createIndex({ discordId: 1 }, { unique: true });
+    await this.users.createIndex({ userId: 1 }, { unique: true });
     await this.users.createIndex({ username: 1 });
     await this.jobs.createIndex({ status: 1 });
     await this.jobs.createIndex({ customerId: 1 });
@@ -120,6 +141,7 @@ export class MongoStorage implements IStorage {
   private toUser(doc: any): User {
     return {
       id: doc._id.toString(),
+      userId: doc.userId,
       discordId: doc.discordId,
       username: doc.username,
       email: doc.email ?? null,
@@ -331,7 +353,9 @@ export class MongoStorage implements IStorage {
     }
     
     const now = new Date();
+    const userId = await this.getNextUserId(); // Get sequential permanent User ID
     const doc = {
+      userId,
       discordId: insertUser.discordId,
       username: insertUser.username,
       email: insertUser.email ?? null,
@@ -342,6 +366,9 @@ export class MongoStorage implements IStorage {
       workingHours: insertUser.workingHours ?? {},
       completedJobs: insertUser.completedJobs ?? 0,
       rating: insertUser.rating ?? "0",
+      onboardingCompleted: insertUser.onboardingCompleted ?? false,
+      totalRatings: insertUser.totalRatings ?? 0,
+      completionPercentage: insertUser.completionPercentage ?? "0",
       createdAt: now,
       updatedAt: now,
     };

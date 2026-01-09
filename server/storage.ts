@@ -178,10 +178,12 @@ export class MemStorage implements IStorage {
   private moderatorMeetings: Map<string, ModeratorMeeting>;
   private meetingRsvps: Map<string, MeetingRsvp>;
   private teamRoomMessages: Map<string, TeamRoomMessage>;
+  private userIdCounter: number;
 
   constructor() {
     this.users = new Map();
     this.jobs = new Map();
+    this.userIdCounter = 1; // Sequential user IDs start at 1
     this.wallets = new Map();
     this.transactions = new Map();
     this.ptoRequests = new Map();
@@ -233,9 +235,11 @@ export class MemStorage implements IStorage {
     }
     
     const id = randomUUID();
+    const userId = this.userIdCounter++; // Assign sequential permanent User ID
     const user: User = {
       ...insertUser,
       id,
+      userId,
       email: insertUser.email ?? null,
       avatar: insertUser.avatar ?? null,
       specialization: insertUser.specialization ?? null,

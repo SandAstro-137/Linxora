@@ -73,6 +73,7 @@ export function getLevelPayout(level: number): number {
 // Users table
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: integer("user_id").unique().notNull(), // Sequential permanent ID based on creation order
   discordId: text("discord_id").unique().notNull(),
   username: text("username").notNull(),
   email: text("email"),
@@ -92,6 +93,7 @@ export const users = pgTable("users", {
 
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
+  userId: true, // Auto-generated sequential ID
   createdAt: true,
   updatedAt: true,
 });

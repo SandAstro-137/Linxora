@@ -304,6 +304,9 @@ export default function ProfilePage() {
               <h3 className="text-xl font-semibold mb-1" data-testid="text-username">
                 {user.username}
               </h3>
+              <p className="text-sm text-muted-foreground mb-1" data-testid="text-user-id">
+                User ID: {user.userId}
+              </p>
               {user.email && (
                 <p className="text-sm text-muted-foreground mb-2">{user.email}</p>
               )}
