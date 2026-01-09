@@ -284,7 +284,7 @@ export const insertCancellationRequestSchema = createInsertSchema(cancellationRe
 export type InsertCancellationRequest = z.infer<typeof insertCancellationRequestSchema>;
 export type CancellationRequest = typeof cancellationRequests.$inferSelect;
 
-// Chat Messages table
+// Chat Messages table (job-specific chat)
 export const chatMessages = pgTable("chat_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   jobId: varchar("job_id").notNull(),
@@ -303,9 +303,28 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 
+// Direct Messages table (user-to-user messaging)
+export const directMessages = pgTable("direct_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  senderId: varchar("sender_id").notNull(),
+  receiverId: varchar("receiver_id").notNull(),
+  message: text("message").notNull(),
+  read: boolean("read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDirectMessageSchema = createInsertSchema(directMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertDirectMessage = z.infer<typeof insertDirectMessageSchema>;
+export type DirectMessage = typeof directMessages.$inferSelect;
+
 // Notifications table
 export const NotificationType = {
   CHAT_MESSAGE: "chat_message",
+  DIRECT_MESSAGE: "direct_message",
   CANCELLATION_REQUEST: "cancellation_request",
   JOB_APPROVED: "job_approved",
   JOB_REJECTED: "job_rejected",

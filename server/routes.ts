@@ -40,11 +40,11 @@ function generateTeamRoomToken(userId: string): string {
     expiresAt: Date.now() + 60000 // Token valid for 60 seconds
   });
   // Clean up old expired tokens to prevent unbounded Map growth
-  for (const [key, data] of teamRoomTokens.entries()) {
+  Array.from(teamRoomTokens.entries()).forEach(([key, data]) => {
     if (Date.now() > data.expiresAt) {
       teamRoomTokens.delete(key);
     }
-  }
+  });
   return token;
 }
 
@@ -3317,6 +3317,162 @@ export async function registerRoutes(app: Express): Promise<Server> {
         u.role === UserRole.MODERATOR || u.role === UserRole.HEAD_OF_MODERATION
       );
       res.json(moderators);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============ DIRECT MESSAGES API ============
+
+  // Find user by User ID and role
+  app.get("/api/users/find", requireAuth, async (req, res) => {
+    try {
+      const userId = parseInt(req.query.userId as string);
+      const role = req.query.role as string;
+
+      if (isNaN(userId) || !role) {
+        return res.status(400).json({ error: "User ID and role are required" });
+      }
+
+      const validRoles = ["customer", "freelancer", "staff", "moderator", "head_of_moderation", "founder"];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+
+      const user = await storage.getUserByUserIdAndRole(userId, role);
+      if (!user) {
+        return res.status(404).json({ error: "User not found with this ID and role" });
+      }
+
+      // Don't let users message themselves
+      if (user.id === req.session.userId) {
+        return res.status(400).json({ error: "You cannot message yourself" });
+      }
+
+      res.json({
+        id: user.id,
+        userId: user.userId,
+        username: user.username,
+        avatar: user.avatar,
+        role: user.role,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get all conversations for current user
+  app.get("/api/messages/conversations", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const conversations = await storage.getConversations(userId);
+
+      // Enrich with partner details
+      const enrichedConversations = await Promise.all(
+        conversations.map(async (conv) => {
+          const partner = await storage.getUser(conv.partnerId);
+          return {
+            ...conv,
+            partner: partner ? {
+              id: partner.id,
+              userId: partner.userId,
+              username: partner.username,
+              avatar: partner.avatar,
+              role: partner.role,
+            } : null,
+          };
+        })
+      );
+
+      res.json(enrichedConversations);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get messages between current user and another user
+  app.get("/api/messages/:partnerId", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const partnerId = req.params.partnerId;
+
+      const messages = await storage.getDirectMessages(userId, partnerId);
+
+      // Mark messages as read
+      await storage.markDirectMessagesAsRead(partnerId, userId);
+
+      // Enrich with sender info
+      const enrichedMessages = await Promise.all(
+        messages.map(async (msg) => {
+          const sender = await storage.getUser(msg.senderId);
+          return {
+            ...msg,
+            sender: sender ? {
+              id: sender.id,
+              userId: sender.userId,
+              username: sender.username,
+              avatar: sender.avatar,
+              role: sender.role,
+            } : null,
+          };
+        })
+      );
+
+      res.json(enrichedMessages);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Send a direct message
+  app.post("/api/messages/:receiverId", requireAuth, async (req, res) => {
+    try {
+      const senderId = req.session.userId!;
+      const receiverId = req.params.receiverId;
+      const { message } = req.body;
+
+      if (!message || typeof message !== "string" || !message.trim()) {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      // Verify receiver exists
+      const receiver = await storage.getUser(receiverId);
+      if (!receiver) {
+        return res.status(404).json({ error: "Recipient not found" });
+      }
+
+      // Content filtering
+      const contentResult = filterContent(message);
+      if (!contentResult.isClean || isSpamLike(message)) {
+        return res.status(400).json({ error: "Message contains inappropriate content" });
+      }
+
+      const directMessage = await storage.createDirectMessage({
+        senderId,
+        receiverId,
+        message: sanitizeText(message.trim()),
+      });
+
+      // Create notification for receiver
+      const sender = await storage.getUser(senderId);
+      await storage.createNotification({
+        userId: receiverId,
+        type: "direct_message",
+        title: "New Message",
+        message: `${sender?.username || "Someone"} sent you a message`,
+        relatedId: senderId,
+      });
+
+      res.json({
+        ...directMessage,
+        sender: sender ? {
+          id: sender.id,
+          userId: sender.userId,
+          username: sender.username,
+          avatar: sender.avatar,
+          role: sender.role,
+        } : null,
+      });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

@@ -15,6 +15,8 @@ import {
   type InsertCancellationRequest,
   type ChatMessage,
   type InsertChatMessage,
+  type DirectMessage,
+  type InsertDirectMessage,
   type Notification,
   type InsertNotification,
   type TeamNote,
@@ -85,10 +87,17 @@ export interface IStorage {
   createCancellationRequest(request: InsertCancellationRequest): Promise<CancellationRequest>;
   updateCancellationRequest(id: string, request: Partial<CancellationRequest>): Promise<CancellationRequest | undefined>;
 
-  // Chat Message operations
+  // Chat Message operations (job-specific)
   getChatMessages(jobId: string): Promise<ChatMessage[]>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
   markChatMessagesAsRead(jobId: string, userId: string): Promise<void>;
+
+  // Direct Message operations (user-to-user)
+  getUserByUserIdAndRole(userId: number, role: string): Promise<User | undefined>;
+  getDirectMessages(userId1: string, userId2: string): Promise<DirectMessage[]>;
+  getConversations(userId: string): Promise<{ partnerId: string; lastMessage: DirectMessage; unreadCount: number }[]>;
+  createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage>;
+  markDirectMessagesAsRead(senderId: string, receiverId: string): Promise<void>;
 
   // Notification operations
   getNotifications(userId: string): Promise<Notification[]>;
@@ -178,6 +187,7 @@ export class MemStorage implements IStorage {
   private moderatorMeetings: Map<string, ModeratorMeeting>;
   private meetingRsvps: Map<string, MeetingRsvp>;
   private teamRoomMessages: Map<string, TeamRoomMessage>;
+  private directMessages: Map<string, DirectMessage>;
   private userIdCounter: number;
 
   constructor() {
@@ -185,6 +195,7 @@ export class MemStorage implements IStorage {
     this.jobs = new Map();
     this.userIdCounter = 1; // Sequential user IDs start at 1
     this.wallets = new Map();
+    this.directMessages = new Map();
     this.transactions = new Map();
     this.ptoRequests = new Map();
     this.invitations = new Map();
@@ -534,6 +545,68 @@ export class MemStorage implements IStorage {
     for (const [id, message] of entries) {
       if (message.jobId === jobId && message.receiverId === userId && !message.read) {
         this.chatMessages.set(id, { ...message, read: true });
+      }
+    }
+  }
+
+  // Direct Message operations (user-to-user)
+  async getUserByUserIdAndRole(userId: number, role: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(
+      (user) => user.userId === userId && user.role === role
+    );
+  }
+
+  async getDirectMessages(userId1: string, userId2: string): Promise<DirectMessage[]> {
+    return Array.from(this.directMessages.values())
+      .filter(
+        (msg) =>
+          (msg.senderId === userId1 && msg.receiverId === userId2) ||
+          (msg.senderId === userId2 && msg.receiverId === userId1)
+      )
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async getConversations(userId: string): Promise<{ partnerId: string; lastMessage: DirectMessage; unreadCount: number }[]> {
+    const messages = Array.from(this.directMessages.values()).filter(
+      (msg) => msg.senderId === userId || msg.receiverId === userId
+    );
+
+    const partnerMap = new Map<string, { lastMessage: DirectMessage; unreadCount: number }>();
+
+    for (const msg of messages) {
+      const partnerId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+      const existing = partnerMap.get(partnerId);
+      
+      if (!existing || new Date(msg.createdAt!).getTime() > new Date(existing.lastMessage.createdAt!).getTime()) {
+        const unreadCount = messages.filter(
+          (m) => m.senderId === partnerId && m.receiverId === userId && !m.read
+        ).length;
+        partnerMap.set(partnerId, { lastMessage: msg, unreadCount });
+      }
+    }
+
+    return Array.from(partnerMap.entries())
+      .map(([partnerId, data]) => ({ partnerId, ...data }))
+      .sort((a, b) => new Date(b.lastMessage.createdAt!).getTime() - new Date(a.lastMessage.createdAt!).getTime());
+  }
+
+  async createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage> {
+    const id = randomUUID();
+    const directMessage: DirectMessage = {
+      ...message,
+      id,
+      read: false,
+      createdAt: new Date(),
+    };
+    this.directMessages.set(id, directMessage);
+    return directMessage;
+  }
+
+  async markDirectMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
+    const entries = Array.from(this.directMessages.entries());
+    for (const [id, msg] of entries) {
+      if (msg.senderId === senderId && msg.receiverId === receiverId && !msg.read) {
+        this.directMessages.set(id, { ...msg, read: true });
       }
     }
   }

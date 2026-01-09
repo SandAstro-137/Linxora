@@ -37,6 +37,7 @@ import AdminPage from "@/pages/admin";
 import TeamManagementPage from "@/pages/team-management";
 import MeetingsPage from "@/pages/meetings";
 import TeamRoomPage from "@/pages/team-room";
+import MessagesPage from "@/pages/messages";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -164,6 +165,11 @@ function Router() {
       <Route path="/team-room">
         <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
           <TeamRoomPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/messages">
+        <ProtectedRoute>
+          <MessagesPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />
