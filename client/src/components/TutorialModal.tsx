@@ -253,6 +253,13 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
 
         <DialogFooter className="flex gap-2 sm:gap-2">
           <Button
+            variant="ghost"
+            onClick={handleClose}
+            data-testid="button-skip-tutorial"
+          >
+            Skip Tutorial
+          </Button>
+          <Button
             variant="outline"
             onClick={handlePrev}
             disabled={isFirstSlide}
