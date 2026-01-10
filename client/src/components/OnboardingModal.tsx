@@ -243,8 +243,13 @@ export function OnboardingModal({ user, open, onComplete }: OnboardingModalProps
     }
   };
 
+  const handleClose = () => {
+    setCurrentStep(0);
+    onComplete();
+  };
+
   return (
-    <Dialog open={open} onOpenChange={() => {}}>
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose(); }}>
       <DialogContent className="max-w-2xl" data-testid="dialog-onboarding">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2" data-testid="text-onboarding-title">
