@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { WorkingHours } from "@shared/schema";
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditingHours, setIsEditingHours] = useState(false);
@@ -74,8 +74,9 @@ export default function ProfilePage() {
 
   const updateAvatarMutation = useMutation({
     mutationFn: (avatar: string) => apiRequest("PUT", "/api/profile/avatar", { avatar }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      await refetchUser();
       toast({
         title: "Profile picture updated",
         description: "Your new profile picture has been saved",

@@ -195,15 +195,26 @@ export default function WalletPage() {
               <div className="space-y-4">
                 <div>
                   <Label>Amount (USD)</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    placeholder="0.00"
-                    value={withdrawalAmount}
-                    onChange={(e) => setWithdrawalAmount(e.target.value)}
-                    data-testid="input-withdraw-amount"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder="0.00"
+                      value={withdrawalAmount}
+                      onChange={(e) => setWithdrawalAmount(e.target.value)}
+                      data-testid="input-withdraw-amount"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setWithdrawalAmount(availableBalance.toFixed(2))}
+                      disabled={availableBalance <= 0}
+                      data-testid="button-max-withdraw"
+                    >
+                      Max
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     Available: ${availableBalance.toFixed(2)}
                   </p>

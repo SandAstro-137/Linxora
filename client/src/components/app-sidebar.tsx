@@ -21,11 +21,12 @@ export function AppSidebar() {
   const { user } = useAuth();
 
   // Fetch unread notification count
-  const { data: unreadCount = 0 } = useQuery<number>({
+  const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!user && user.role === "freelancer",
     refetchInterval: 5000, // Poll every 5 seconds
   });
+  const unreadCount = unreadData?.count ?? 0;
 
   const freelancerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },

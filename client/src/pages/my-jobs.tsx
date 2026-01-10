@@ -32,6 +32,7 @@ export default function MyJobsPage() {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/profile/stats"] });
       setCancelDialogOpen(false);
       setCancelReason("");
       setSelectedJob(null);

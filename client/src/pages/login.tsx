@@ -14,6 +14,8 @@ export default function LoginPage() {
     { id: "demo-freelancer-1", label: "Demo Freelancer", description: "Alex Chen - Web Developer" },
     { id: "demo-customer-1", label: "Demo Customer", description: "Tech Startup Inc" },
     { id: "demo-moderator-1", label: "Demo Moderator", description: "Admin User" },
+    { id: "demo-head-mod-1", label: "Demo Head of Moderation", description: "Head Moderator" },
+    { id: "demo-founder-1", label: "Demo Founder", description: "Founder - Full Access" },
   ];
 
   return (

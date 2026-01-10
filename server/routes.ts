@@ -78,16 +78,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!user) {
         // Create demo user
+        const getRoleAndName = (id: string) => {
+          if (id.includes('founder')) return { role: 'founder', name: 'Demo Founder' };
+          if (id.includes('head-mod')) return { role: 'head_of_moderation', name: 'Demo Head of Moderation' };
+          if (id.includes('moderator')) return { role: 'moderator', name: 'Demo Moderator' };
+          if (id.includes('customer')) return { role: 'customer', name: 'Demo Customer' };
+          if (id.includes('freelancer')) return { role: 'freelancer', name: 'Demo Freelancer' };
+          return { role: 'freelancer', name: 'Demo User' };
+        };
+        const { role, name } = getRoleAndName(discordId);
         user = await storage.createUser({
           discordId,
-          username: discordId.includes('freelancer') ? 'Demo Freelancer' : 
-                    discordId.includes('customer') ? 'Demo Customer' :
-                    discordId.includes('moderator') ? 'Demo Moderator' : 'Demo User',
-          role: discordId.includes('freelancer') ? 'freelancer' : 
-                discordId.includes('customer') ? 'customer' :
-                discordId.includes('moderator') ? 'moderator' : 'freelancer',
+          username: name,
+          role,
           email: `${discordId}@demo.com`,
-        });
+        }, role === 'founder');
         
         // Create wallet for user
         await storage.createWallet({
