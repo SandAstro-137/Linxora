@@ -2485,6 +2485,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/notifications/:id", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteNotification(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // === USER PREFERENCES ROUTES ===
+
+  app.get("/api/settings", requireAuth, async (req, res) => {
+    try {
+      let prefs = await storage.getUserPreferences(req.session.userId!);
+      if (!prefs) {
+        prefs = await storage.createUserPreferences({ userId: req.session.userId! });
+      }
+      res.json(prefs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.put("/api/settings", requireAuth, async (req, res) => {
+    try {
+      const updates = req.body;
+      let prefs = await storage.getUserPreferences(req.session.userId!);
+      if (!prefs) {
+        prefs = await storage.createUserPreferences({ userId: req.session.userId!, ...updates });
+      } else {
+        prefs = await storage.updateUserPreferences(req.session.userId!, updates);
+      }
+      res.json(prefs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/settings/deactivate-account", requireAuth, async (req, res) => {
+    try {
+      const prefs = await storage.updateUserPreferences(req.session.userId!, {
+        accountDeactivated: true,
+        deactivatedAt: new Date(),
+      });
+      req.session.destroy((err) => {
+        if (err) {
+          return res.status(500).json({ error: "Failed to log out" });
+        }
+        res.json({ success: true, message: "Account deactivated" });
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/settings/download-data", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      const wallet = await storage.getWallet(req.session.userId!);
+      const jobs = await storage.getJobs({ freelancerId: req.session.userId });
+      const notifications = await storage.getNotifications(req.session.userId!);
+      const prefs = await storage.getUserPreferences(req.session.userId!);
+      
+      const userData = {
+        user: user ? { ...user } : null,
+        wallet,
+        jobs,
+        notifications,
+        preferences: prefs,
+        exportedAt: new Date().toISOString(),
+      };
+      
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="linxora-data-${req.session.userId}.json"`);
+      res.json(userData);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // User search for invitations
   app.get("/api/users/search", requireAuth, async (req, res) => {
     try {

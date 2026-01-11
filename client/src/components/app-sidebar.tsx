@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -38,6 +38,7 @@ export function AppSidebar() {
     { title: "PTO Requests", url: "/pto", icon: Clock },
     { title: "Notifications", url: "/notifications", icon: Bell },
     { title: "Role Upgrade", url: "/role-upgrade", icon: ArrowUpCircle },
+    { title: "Settings", url: "/settings", icon: Settings },
   ];
 
   const customerItems = [
@@ -49,6 +50,7 @@ export function AppSidebar() {
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
     { title: "Role Upgrade", url: "/role-upgrade", icon: ArrowUpCircle },
+    { title: "Settings", url: "/settings", icon: Settings },
   ];
 
   const staffItems = [
@@ -61,6 +63,7 @@ export function AppSidebar() {
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "Mod Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Settings", url: "/settings", icon: Settings },
   ];
 
   const headOfModerationItems = [
@@ -74,6 +77,7 @@ export function AppSidebar() {
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Settings", url: "/settings", icon: Settings },
   ];
 
   const founderItems = [
@@ -88,6 +92,7 @@ export function AppSidebar() {
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Settings", url: "/settings", icon: Settings },
   ];
 
   const getMenuItems = () => {

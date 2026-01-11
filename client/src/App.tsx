@@ -38,6 +38,7 @@ import TeamManagementPage from "@/pages/team-management";
 import MeetingsPage from "@/pages/meetings";
 import TeamRoomPage from "@/pages/team-room";
 import MessagesPage from "@/pages/messages";
+import SettingsPage from "@/pages/settings";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -170,6 +171,11 @@ function Router() {
       <Route path="/messages">
         <ProtectedRoute>
           <MessagesPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/settings">
+        <ProtectedRoute>
+          <SettingsPage />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />
