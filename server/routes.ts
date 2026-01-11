@@ -2152,6 +2152,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Profile update route (username and email)
+  app.put("/api/profile", requireAuth, async (req, res) => {
+    try {
+      const { username, email } = req.body;
+      
+      const updates: { username?: string; email?: string } = {};
+      
+      if (username && typeof username === "string") {
+        const trimmedUsername = username.trim();
+        if (trimmedUsername.length < 2 || trimmedUsername.length > 50) {
+          return res.status(400).json({ error: "Username must be between 2 and 50 characters" });
+        }
+        updates.username = trimmedUsername;
+      }
+      
+      if (email !== undefined) {
+        if (email && typeof email === "string") {
+          const trimmedEmail = email.trim();
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(trimmedEmail)) {
+            return res.status(400).json({ error: "Invalid email format" });
+          }
+          updates.email = trimmedEmail;
+        } else if (email === "" || email === null) {
+          updates.email = "";
+        }
+      }
+      
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No valid fields to update" });
+      }
+      
+      const user = await storage.updateUser(req.session.userId!, updates);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      res.json({ username: user.username, email: user.email });
+    } catch (error) {
+      console.error("Profile update error:", error);
+      res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
   // Working Hours routes
   app.get("/api/profile/working-hours", requireAuth, async (req, res) => {
     try {
