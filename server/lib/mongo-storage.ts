@@ -26,6 +26,8 @@ import {
   type InsertTeamMessage,
   type Rating,
   type InsertRating,
+  type DirectMessage,
+  type InsertDirectMessage,
 } from "@shared/schema";
 import type { IStorage } from "../storage";
 
@@ -45,6 +47,7 @@ export class MongoStorage implements IStorage {
   private teamTasks: Collection;
   private teamMessages: Collection;
   private ratings: Collection;
+  private directMessages: Collection;
   private counters: Collection;
 
   constructor(mongoUri: string) {
@@ -72,6 +75,7 @@ export class MongoStorage implements IStorage {
     this.teamTasks = this.db.collection('teamTasks');
     this.teamMessages = this.db.collection('teamMessages');
     this.ratings = this.db.collection('ratings');
+    this.directMessages = this.db.collection('directMessages');
     this.counters = this.db.collection('counters');
   }
 
@@ -330,6 +334,11 @@ export class MongoStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const doc = await this.users.findOne({ username });
+    return doc ? this.toUser(doc) : undefined;
+  }
+
+  async getUserByUserId(userId: number): Promise<User | undefined> {
+    const doc = await this.users.findOne({ userId });
     return doc ? this.toUser(doc) : undefined;
   }
 
@@ -850,5 +859,76 @@ export class MongoStorage implements IStorage {
     };
     const result = await this.ratings.insertOne(doc);
     return this.toRating({ ...doc, _id: result.insertedId });
+  }
+
+  // Direct Message operations
+  private toDirectMessage(doc: any): DirectMessage {
+    return {
+      id: doc._id.toString(),
+      senderId: doc.senderId,
+      receiverId: doc.receiverId,
+      message: doc.message,
+      read: doc.read ?? false,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  async getDirectMessages(userId1: string, userId2: string): Promise<DirectMessage[]> {
+    const docs = await this.directMessages
+      .find({
+        $or: [
+          { senderId: userId1, receiverId: userId2 },
+          { senderId: userId2, receiverId: userId1 },
+        ],
+      })
+      .sort({ createdAt: 1 })
+      .toArray();
+    return docs.map(doc => this.toDirectMessage(doc));
+  }
+
+  async getConversations(userId: string): Promise<{ partnerId: string; lastMessage: DirectMessage; unreadCount: number }[]> {
+    const docs = await this.directMessages
+      .find({
+        $or: [{ senderId: userId }, { receiverId: userId }],
+      })
+      .toArray();
+
+    const messages = docs.map(doc => this.toDirectMessage(doc));
+    const partnerMap = new Map<string, { lastMessage: DirectMessage; unreadCount: number }>();
+
+    for (const msg of messages) {
+      const partnerId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+      const existing = partnerMap.get(partnerId);
+
+      if (!existing || new Date(msg.createdAt!).getTime() > new Date(existing.lastMessage.createdAt!).getTime()) {
+        const unreadCount = messages.filter(
+          (m) => m.senderId === partnerId && m.receiverId === userId && !m.read
+        ).length;
+        partnerMap.set(partnerId, { lastMessage: msg, unreadCount });
+      }
+    }
+
+    return Array.from(partnerMap.entries())
+      .map(([partnerId, data]) => ({ partnerId, ...data }))
+      .sort((a, b) => new Date(b.lastMessage.createdAt!).getTime() - new Date(a.lastMessage.createdAt!).getTime());
+  }
+
+  async createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage> {
+    const doc = {
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+      message: message.message,
+      read: false,
+      createdAt: new Date(),
+    };
+    const result = await this.directMessages.insertOne(doc);
+    return this.toDirectMessage({ ...doc, _id: result.insertedId });
+  }
+
+  async markDirectMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
+    await this.directMessages.updateMany(
+      { senderId, receiverId, read: false },
+      { $set: { read: true } }
+    );
   }
 }

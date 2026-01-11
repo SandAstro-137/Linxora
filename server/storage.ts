@@ -93,7 +93,7 @@ export interface IStorage {
   markChatMessagesAsRead(jobId: string, userId: string): Promise<void>;
 
   // Direct Message operations (user-to-user)
-  getUserByUserIdAndRole(userId: number, role: string): Promise<User | undefined>;
+  getUserByUserId(userId: number): Promise<User | undefined>;
   getDirectMessages(userId1: string, userId2: string): Promise<DirectMessage[]>;
   getConversations(userId: string): Promise<{ partnerId: string; lastMessage: DirectMessage; unreadCount: number }[]>;
   createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage>;
@@ -550,9 +550,9 @@ export class MemStorage implements IStorage {
   }
 
   // Direct Message operations (user-to-user)
-  async getUserByUserIdAndRole(userId: number, role: string): Promise<User | undefined> {
+  async getUserByUserId(userId: number): Promise<User | undefined> {
     return Array.from(this.users.values()).find(
-      (user) => user.userId === userId && user.role === role
+      (user) => user.userId === userId
     );
   }
 

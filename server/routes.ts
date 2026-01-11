@@ -3329,24 +3329,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============ DIRECT MESSAGES API ============
 
-  // Find user by User ID and role
+  // Find user by User ID (globally unique)
   app.get("/api/users/find", requireAuth, async (req, res) => {
     try {
       const userId = parseInt(req.query.userId as string);
-      const role = req.query.role as string;
 
-      if (isNaN(userId) || !role) {
-        return res.status(400).json({ error: "User ID and role are required" });
+      if (isNaN(userId)) {
+        return res.status(400).json({ error: "User ID is required" });
       }
 
-      const validRoles = ["customer", "freelancer", "staff", "moderator", "head_of_moderation", "founder"];
-      if (!validRoles.includes(role)) {
-        return res.status(400).json({ error: "Invalid role" });
-      }
-
-      const user = await storage.getUserByUserIdAndRole(userId, role);
+      const user = await storage.getUserByUserId(userId);
       if (!user) {
-        return res.status(404).json({ error: "User not found with this ID and role" });
+        return res.status(404).json({ error: "User not found with this ID" });
       }
 
       // Don't let users message themselves

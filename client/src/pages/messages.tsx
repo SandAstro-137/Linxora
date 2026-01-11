@@ -9,7 +9,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { MessageSquare, Send, Plus, Search, User } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -55,7 +54,6 @@ export default function MessagesPage() {
   const [newMessage, setNewMessage] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [searchUserId, setSearchUserId] = useState("");
-  const [searchRole, setSearchRole] = useState<string>("");
   const [foundUser, setFoundUser] = useState<UserInfo | null>(null);
   const [searchError, setSearchError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -93,8 +91,8 @@ export default function MessagesPage() {
   });
 
   const searchUserMutation = useMutation({
-    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      const res = await fetch(`/api/users/find?userId=${userId}&role=${role}`, {
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/users/find?userId=${userId}`, {
         credentials: "include",
       });
       if (!res.ok) {
@@ -114,11 +112,11 @@ export default function MessagesPage() {
   });
 
   const handleSearch = () => {
-    if (!searchUserId || !searchRole) {
-      setSearchError("Please enter a User ID and select a role");
+    if (!searchUserId) {
+      setSearchError("Please enter a User ID");
       return;
     }
-    searchUserMutation.mutate({ userId: searchUserId, role: searchRole });
+    searchUserMutation.mutate(searchUserId);
   };
 
   const handleStartConversation = () => {
@@ -127,7 +125,6 @@ export default function MessagesPage() {
       setComposeOpen(false);
       setFoundUser(null);
       setSearchUserId("");
-      setSearchRole("");
       queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
     }
   };
@@ -181,22 +178,9 @@ export default function MessagesPage() {
                   data-testid="input-user-id"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="role">Recipient's Role</Label>
-                <Select value={searchRole} onValueChange={setSearchRole}>
-                  <SelectTrigger data-testid="select-role">
-                    <SelectValue placeholder="Select role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="customer">Customer</SelectItem>
-                    <SelectItem value="freelancer">Freelancer</SelectItem>
-                    <SelectItem value="staff">Staff</SelectItem>
-                    <SelectItem value="moderator">Moderator</SelectItem>
-                    <SelectItem value="head_of_moderation">Head of Moderation</SelectItem>
-                    <SelectItem value="founder">Founder</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                User IDs are globally unique across all roles. You can find a user's ID on their profile.
+              </p>
               <Button
                 onClick={handleSearch}
                 disabled={searchUserMutation.isPending}
