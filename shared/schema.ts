@@ -673,3 +673,32 @@ export const insertTeamRoomMessageSchema = createInsertSchema(teamRoomMessages)
 
 export type InsertTeamRoomMessage = z.infer<typeof insertTeamRoomMessageSchema>;
 export type TeamRoomMessage = typeof teamRoomMessages.$inferSelect;
+
+// User Preferences table - stores user settings
+export const userPreferences = pgTable("user_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").unique().notNull(),
+  // Notification settings
+  notificationsEnabled: boolean("notifications_enabled").default(true),
+  notificationSoundEnabled: boolean("notification_sound_enabled").default(true),
+  deleteConfirmationEnabled: boolean("delete_confirmation_enabled").default(true),
+  // Privacy settings
+  showOnlineStatus: boolean("show_online_status").default(true),
+  allowDirectMessages: boolean("allow_direct_messages").default(true),
+  // Account status
+  accountDeactivated: boolean("account_deactivated").default(false),
+  deactivatedAt: timestamp("deactivated_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUserPreferencesSchema = createInsertSchema(userPreferences)
+  .omit({
+    id: true,
+    deactivatedAt: true,
+    createdAt: true,
+    updatedAt: true,
+  });
+
+export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
+export type UserPreferences = typeof userPreferences.$inferSelect;

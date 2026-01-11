@@ -39,6 +39,8 @@ import {
   type InsertMeetingRsvp,
   type TeamRoomMessage,
   type InsertTeamRoomMessage,
+  type UserPreferences,
+  type InsertUserPreferences,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -105,6 +107,12 @@ export interface IStorage {
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationAsRead(id: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
+  deleteNotification(id: string): Promise<void>;
+
+  // User Preferences operations
+  getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
+  createUserPreferences(prefs: InsertUserPreferences): Promise<UserPreferences>;
+  updateUserPreferences(userId: string, prefs: Partial<UserPreferences>): Promise<UserPreferences | undefined>;
 
   // Team Note operations
   getTeamNotes(jobId: string): Promise<TeamNote[]>;
@@ -188,6 +196,7 @@ export class MemStorage implements IStorage {
   private meetingRsvps: Map<string, MeetingRsvp>;
   private teamRoomMessages: Map<string, TeamRoomMessage>;
   private directMessages: Map<string, DirectMessage>;
+  private userPreferences: Map<string, UserPreferences>;
   private userIdCounter: number;
 
   constructor() {
@@ -212,6 +221,7 @@ export class MemStorage implements IStorage {
     this.moderatorMeetings = new Map();
     this.meetingRsvps = new Map();
     this.teamRoomMessages = new Map();
+    this.userPreferences = new Map();
   }
 
   // User operations
@@ -652,6 +662,42 @@ export class MemStorage implements IStorage {
         this.notifications.set(id, { ...notification, read: true });
       }
     }
+  }
+
+  async deleteNotification(id: string): Promise<void> {
+    this.notifications.delete(id);
+  }
+
+  // User Preferences operations
+  async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+    return Array.from(this.userPreferences.values()).find((p) => p.userId === userId);
+  }
+
+  async createUserPreferences(prefs: InsertUserPreferences): Promise<UserPreferences> {
+    const id = randomUUID();
+    const preferences: UserPreferences = {
+      ...prefs,
+      id,
+      notificationsEnabled: prefs.notificationsEnabled ?? true,
+      notificationSoundEnabled: prefs.notificationSoundEnabled ?? true,
+      deleteConfirmationEnabled: prefs.deleteConfirmationEnabled ?? true,
+      showOnlineStatus: prefs.showOnlineStatus ?? true,
+      allowDirectMessages: prefs.allowDirectMessages ?? true,
+      accountDeactivated: prefs.accountDeactivated ?? false,
+      deactivatedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.userPreferences.set(id, preferences);
+    return preferences;
+  }
+
+  async updateUserPreferences(userId: string, updates: Partial<UserPreferences>): Promise<UserPreferences | undefined> {
+    const existing = await this.getUserPreferences(userId);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates, updatedAt: new Date() };
+    this.userPreferences.set(existing.id, updated);
+    return updated;
   }
 
   // Team Note operations
