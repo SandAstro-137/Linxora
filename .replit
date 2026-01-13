@@ -39,4 +39,4 @@ args = "npm run dev"
 waitForPort = 5000
 
 [agent]
-integrations = ["discord:1.0.0"]
+integrations = ["discord:1.0.0", "resend:1.0.0"]

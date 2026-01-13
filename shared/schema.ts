@@ -77,6 +77,8 @@ export const users = pgTable("users", {
   discordId: text("discord_id").unique().notNull(),
   username: text("username").notNull(),
   email: text("email"),
+  emailVerified: boolean("email_verified").default(false),
+  pendingEmail: text("pending_email"),
   avatar: text("avatar"),
   role: text("role").notNull().default(UserRole.FREELANCER),
   level: integer("level").default(1),
@@ -702,3 +704,24 @@ export const insertUserPreferencesSchema = createInsertSchema(userPreferences)
 
 export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;
+
+// Email verification tokens table
+export const emailVerificationTokens = pgTable("email_verification_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  token: text("token").notNull().unique(),
+  newEmail: text("new_email").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertEmailVerificationTokenSchema = createInsertSchema(emailVerificationTokens)
+  .omit({
+    id: true,
+    usedAt: true,
+    createdAt: true,
+  });
+
+export type InsertEmailVerificationToken = z.infer<typeof insertEmailVerificationTokenSchema>;
+export type EmailVerificationToken = typeof emailVerificationTokens.$inferSelect;
