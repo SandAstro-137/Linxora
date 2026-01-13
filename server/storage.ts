@@ -41,6 +41,8 @@ import {
   type InsertTeamRoomMessage,
   type UserPreferences,
   type InsertUserPreferences,
+  type EmailVerificationToken,
+  type InsertEmailVerificationToken,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -173,6 +175,13 @@ export interface IStorage {
   // Team Room Message operations
   getTeamRoomMessages(limit?: number): Promise<TeamRoomMessage[]>;
   createTeamRoomMessage(message: InsertTeamRoomMessage): Promise<TeamRoomMessage>;
+
+  // Email verification token operations
+  getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined>;
+  getEmailVerificationTokenByUserId(userId: string): Promise<EmailVerificationToken | undefined>;
+  createEmailVerificationToken(token: InsertEmailVerificationToken): Promise<EmailVerificationToken>;
+  markEmailVerificationTokenUsed(token: string): Promise<EmailVerificationToken | undefined>;
+  deleteEmailVerificationTokensByUserId(userId: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -197,6 +206,7 @@ export class MemStorage implements IStorage {
   private teamRoomMessages: Map<string, TeamRoomMessage>;
   private directMessages: Map<string, DirectMessage>;
   private userPreferences: Map<string, UserPreferences>;
+  private emailVerificationTokens: Map<string, EmailVerificationToken>;
   private userIdCounter: number;
 
   constructor() {
@@ -222,6 +232,7 @@ export class MemStorage implements IStorage {
     this.meetingRsvps = new Map();
     this.teamRoomMessages = new Map();
     this.userPreferences = new Map();
+    this.emailVerificationTokens = new Map();
   }
 
   // User operations
@@ -262,6 +273,8 @@ export class MemStorage implements IStorage {
       id,
       userId,
       email: insertUser.email ?? null,
+      emailVerified: insertUser.emailVerified ?? false,
+      pendingEmail: insertUser.pendingEmail ?? null,
       avatar: insertUser.avatar ?? null,
       specialization: insertUser.specialization ?? null,
       role: insertUser.role ?? "freelancer",
@@ -1043,6 +1056,46 @@ export class MemStorage implements IStorage {
     };
     this.teamRoomMessages.set(id, message);
     return message;
+  }
+
+  // Email verification token operations
+  async getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined> {
+    return Array.from(this.emailVerificationTokens.values()).find((t) => t.token === token);
+  }
+
+  async getEmailVerificationTokenByUserId(userId: string): Promise<EmailVerificationToken | undefined> {
+    return Array.from(this.emailVerificationTokens.values())
+      .filter((t) => t.userId === userId && !t.usedAt)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())[0];
+  }
+
+  async createEmailVerificationToken(insertToken: InsertEmailVerificationToken): Promise<EmailVerificationToken> {
+    const id = randomUUID();
+    const token: EmailVerificationToken = {
+      ...insertToken,
+      id,
+      usedAt: null,
+      createdAt: new Date(),
+    };
+    this.emailVerificationTokens.set(id, token);
+    return token;
+  }
+
+  async markEmailVerificationTokenUsed(tokenValue: string): Promise<EmailVerificationToken | undefined> {
+    const token = await this.getEmailVerificationToken(tokenValue);
+    if (!token) return undefined;
+    const updated = { ...token, usedAt: new Date() };
+    this.emailVerificationTokens.set(token.id, updated);
+    return updated;
+  }
+
+  async deleteEmailVerificationTokensByUserId(userId: string): Promise<void> {
+    const entries = Array.from(this.emailVerificationTokens.entries());
+    for (const [id, token] of entries) {
+      if (token.userId === userId) {
+        this.emailVerificationTokens.delete(id);
+      }
+    }
   }
 }
 
