@@ -2152,12 +2152,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Profile update route (username and email)
+  // Profile update route (username only - email requires verification)
   app.put("/api/profile", requireAuth, async (req, res) => {
     try {
-      const { username, email } = req.body;
+      const { username } = req.body;
       
-      const updates: { username?: string; email?: string } = {};
+      const updates: { username?: string } = {};
       
       if (username && typeof username === "string") {
         const trimmedUsername = username.trim();
@@ -2165,19 +2165,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "Username must be between 2 and 50 characters" });
         }
         updates.username = trimmedUsername;
-      }
-      
-      if (email !== undefined) {
-        if (email && typeof email === "string") {
-          const trimmedEmail = email.trim();
-          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-          if (!emailRegex.test(trimmedEmail)) {
-            return res.status(400).json({ error: "Invalid email format" });
-          }
-          updates.email = trimmedEmail;
-        } else if (email === "" || email === null) {
-          updates.email = "";
-        }
       }
       
       if (Object.keys(updates).length === 0) {
@@ -2193,6 +2180,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Profile update error:", error);
       res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Email change request - sends verification email
+  app.post("/api/profile/email-change", requireAuth, async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+      
+      const trimmedEmail = email.trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      
+      if (!emailRegex.test(trimmedEmail)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+      
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Check if email is same as current
+      if (user.email === trimmedEmail) {
+        return res.status(400).json({ error: "This is already your current email" });
+      }
+      
+      // Check rate limiting - 10 minute cooldown
+      const existingToken = await storage.getEmailVerificationTokenByUserId(user.id);
+      if (existingToken) {
+        const tokenAge = Date.now() - new Date(existingToken.createdAt!).getTime();
+        const cooldownMs = 10 * 60 * 1000; // 10 minutes
+        if (tokenAge < cooldownMs) {
+          const remainingMinutes = Math.ceil((cooldownMs - tokenAge) / 60000);
+          return res.status(429).json({ 
+            error: `Please wait ${remainingMinutes} minute(s) before requesting another email change` 
+          });
+        }
+      }
+      
+      // Delete any existing tokens for this user
+      await storage.deleteEmailVerificationTokensByUserId(user.id);
+      
+      // Generate secure token
+      const crypto = await import('crypto');
+      const token = crypto.randomBytes(32).toString('hex');
+      
+      // Store token with 24 hour expiration
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await storage.createEmailVerificationToken({
+        userId: user.id,
+        token,
+        newEmail: trimmedEmail,
+        expiresAt,
+      });
+      
+      // Update user with pending email
+      await storage.updateUser(user.id, { pendingEmail: trimmedEmail });
+      
+      // Send verification email
+      try {
+        const { sendVerificationEmail } = await import('./lib/resend-client');
+        await sendVerificationEmail(trimmedEmail, token, user.username);
+      } catch (emailError) {
+        console.error('Failed to send verification email:', emailError);
+        return res.status(500).json({ error: "Failed to send verification email. Please try again later." });
+      }
+      
+      res.json({ 
+        message: "Verification email sent", 
+        pendingEmail: trimmedEmail 
+      });
+    } catch (error) {
+      console.error("Email change request error:", error);
+      res.status(500).json({ error: "Failed to process email change request" });
+    }
+  });
+
+  // Email verification - confirms the new email
+  app.get("/api/profile/email-verify", async (req, res) => {
+    try {
+      const { token } = req.query;
+      
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Invalid verification link" });
+      }
+      
+      const verificationToken = await storage.getEmailVerificationToken(token);
+      
+      // Don't reveal whether token exists or is expired (security)
+      if (!verificationToken) {
+        return res.status(400).json({ error: "Invalid or expired verification link" });
+      }
+      
+      // Check if token is expired
+      if (new Date() > new Date(verificationToken.expiresAt)) {
+        return res.status(400).json({ error: "Invalid or expired verification link" });
+      }
+      
+      // Check if token was already used
+      if (verificationToken.usedAt) {
+        return res.status(400).json({ error: "This verification link has already been used" });
+      }
+      
+      // Mark token as used
+      await storage.markEmailVerificationTokenUsed(token);
+      
+      // Update user's email
+      const user = await storage.updateUser(verificationToken.userId, {
+        email: verificationToken.newEmail,
+        emailVerified: true,
+        pendingEmail: null,
+      });
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Create notification for user
+      await storage.createNotification({
+        userId: user.id,
+        type: "system",
+        title: "Email verified",
+        message: `Your email has been successfully changed to ${verificationToken.newEmail}`,
+      });
+      
+      res.json({ 
+        success: true, 
+        message: "Email verified successfully",
+        email: verificationToken.newEmail 
+      });
+    } catch (error) {
+      console.error("Email verification error:", error);
+      res.status(500).json({ error: "Failed to verify email" });
+    }
+  });
+
+  // Cancel pending email change
+  app.delete("/api/profile/email-change", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Delete any pending tokens
+      await storage.deleteEmailVerificationTokensByUserId(user.id);
+      
+      // Clear pending email
+      await storage.updateUser(user.id, { pendingEmail: null });
+      
+      res.json({ message: "Email change cancelled" });
+    } catch (error) {
+      console.error("Cancel email change error:", error);
+      res.status(500).json({ error: "Failed to cancel email change" });
     }
   });
 

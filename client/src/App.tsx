@@ -39,6 +39,7 @@ import MeetingsPage from "@/pages/meetings";
 import TeamRoomPage from "@/pages/team-room";
 import MessagesPage from "@/pages/messages";
 import SettingsPage from "@/pages/settings";
+import VerifyEmailPage from "@/pages/verify-email";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -71,6 +72,7 @@ function Router() {
     return (
       <Switch>
         <Route path="/" component={LoginPage} />
+        <Route path="/verify-email" component={VerifyEmailPage} />
         <Route>
           <Redirect to="/" />
         </Route>
@@ -178,6 +180,7 @@ function Router() {
           <SettingsPage />
         </ProtectedRoute>
       </Route>
+      <Route path="/verify-email" component={VerifyEmailPage} />
       <Route component={NotFound} />
     </Switch>
   );

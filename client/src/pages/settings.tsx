@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle } from "lucide-react";
+import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
@@ -19,8 +20,14 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState(user?.username || "");
-  const [email, setEmail] = useState(user?.email || "");
+  const [newEmail, setNewEmail] = useState("");
   const [isDeactivating, setIsDeactivating] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      setUsername(user.username || "");
+    }
+  }, [user]);
 
   const { data: settings, isLoading } = useQuery<UserPreferences>({
     queryKey: ["/api/settings"],
@@ -38,14 +45,50 @@ export default function SettingsPage() {
   });
 
   const updateProfileMutation = useMutation({
-    mutationFn: (data: { username?: string; email?: string }) => apiRequest("PUT", "/api/profile", data),
+    mutationFn: (data: { username?: string }) => apiRequest("PUT", "/api/profile", data),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       await refetchUser();
-      toast({ title: "Profile updated", description: "Your profile has been saved." });
+      toast({ title: "Profile updated", description: "Your username has been saved." });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to update profile.", 
+        variant: "destructive" 
+      });
+    },
+  });
+
+  const requestEmailChangeMutation = useMutation({
+    mutationFn: (email: string) => apiRequest("POST", "/api/profile/email-change", { email }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      await refetchUser();
+      setNewEmail("");
+      toast({ 
+        title: "Verification email sent", 
+        description: "Please check your inbox and click the verification link." 
+      });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to send verification email.", 
+        variant: "destructive" 
+      });
+    },
+  });
+
+  const cancelEmailChangeMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", "/api/profile/email-change", {}),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      await refetchUser();
+      toast({ title: "Cancelled", description: "Email change request has been cancelled." });
     },
     onError: () => {
-      toast({ title: "Error", description: "Failed to update profile.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to cancel email change.", variant: "destructive" });
     },
   });
 
@@ -153,6 +196,21 @@ export default function SettingsPage() {
     updateSettingsMutation.mutate({ [key]: value });
   };
 
+  const handleEmailChange = () => {
+    if (!newEmail.trim()) {
+      toast({ title: "Error", description: "Please enter an email address.", variant: "destructive" });
+      return;
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail.trim())) {
+      toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
+      return;
+    }
+    
+    requestEmailChangeMutation.mutate(newEmail.trim());
+  };
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -163,6 +221,8 @@ export default function SettingsPage() {
       </div>
     );
   }
+
+  const hasPendingEmail = !!user?.pendingEmail;
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -210,35 +270,104 @@ export default function SettingsPage() {
             <div className="flex-1 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
-                <Input
-                  id="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Your username"
-                  data-testid="input-username"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your@email.com"
-                  data-testid="input-email"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Your username"
+                    data-testid="input-username"
+                  />
+                  <Button
+                    onClick={() => updateProfileMutation.mutate({ username })}
+                    disabled={updateProfileMutation.isPending || username === user?.username}
+                    data-testid="button-save-username"
+                  >
+                    <Save className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
-          <Button
-            onClick={() => updateProfileMutation.mutate({ username, email })}
-            disabled={updateProfileMutation.isPending}
-            data-testid="button-save-profile"
-          >
-            <Save className="h-4 w-4 mr-2" />
-            Save Profile
-          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Mail className="h-5 w-5" />
+            Email Settings
+          </CardTitle>
+          <CardDescription>Manage your email address with verification</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Current Email</Label>
+            <div className="flex items-center gap-2">
+              <Input 
+                value={user?.email || "No email set"} 
+                disabled 
+                className="bg-muted"
+                data-testid="input-current-email"
+              />
+              {user?.emailVerified && (
+                <Badge variant="secondary" className="shrink-0">
+                  <Check className="h-3 w-3 mr-1" />
+                  Verified
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          {hasPendingEmail && (
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <Clock className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium text-amber-800 dark:text-amber-200">Verification Pending</p>
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    A verification email was sent to <strong>{user?.pendingEmail}</strong>. 
+                    Please check your inbox and click the verification link.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => cancelEmailChangeMutation.mutate()}
+                  disabled={cancelEmailChangeMutation.isPending}
+                  data-testid="button-cancel-email-change"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!hasPendingEmail && (
+            <div className="space-y-2">
+              <Label htmlFor="new-email">Change Email</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="new-email"
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="Enter new email address"
+                  data-testid="input-new-email"
+                />
+                <Button
+                  onClick={handleEmailChange}
+                  disabled={requestEmailChangeMutation.isPending || !newEmail.trim()}
+                  data-testid="button-change-email"
+                >
+                  {requestEmailChangeMutation.isPending ? "Sending..." : "Verify"}
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                You will receive a verification email to confirm the change.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -316,14 +445,14 @@ export default function SettingsPage() {
           <Separator />
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="allow-direct-messages">Allow Direct Messages</Label>
-              <p className="text-sm text-muted-foreground">Allow anyone to send you direct messages</p>
+              <Label htmlFor="allow-dms">Allow Direct Messages</Label>
+              <p className="text-sm text-muted-foreground">Allow other users to send you direct messages</p>
             </div>
             <Switch
-              id="allow-direct-messages"
+              id="allow-dms"
               checked={settings?.allowDirectMessages ?? true}
               onCheckedChange={(checked) => toggleSetting("allowDirectMessages", checked)}
-              data-testid="switch-allow-direct-messages"
+              data-testid="switch-allow-dms"
             />
           </div>
         </CardContent>
@@ -340,8 +469,8 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label>Download My Data</Label>
-              <p className="text-sm text-muted-foreground">Export all your account data as a JSON file</p>
+              <p className="font-medium">Download Your Data</p>
+              <p className="text-sm text-muted-foreground">Get a copy of all your account data</p>
             </div>
             <Button variant="outline" onClick={handleDownloadData} data-testid="button-download-data">
               <Download className="h-4 w-4 mr-2" />
@@ -351,8 +480,8 @@ export default function SettingsPage() {
           <Separator />
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-destructive">Deactivate Account</Label>
-              <p className="text-sm text-muted-foreground">Temporarily deactivate your account</p>
+              <p className="font-medium text-destructive">Deactivate Account</p>
+              <p className="text-sm text-muted-foreground">Temporarily disable your account</p>
             </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -362,9 +491,10 @@ export default function SettingsPage() {
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Deactivate Account?</AlertDialogTitle>
+                  <AlertDialogTitle>Deactivate your account?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will deactivate your account. You will be logged out and your profile will be hidden. You can reactivate by contacting support.
+                    Your account will be temporarily disabled. You can reactivate it by logging in again.
+                    Your data will be preserved.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -377,7 +507,7 @@ export default function SettingsPage() {
                     disabled={isDeactivating}
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
-                    {isDeactivating ? "Deactivating..." : "Deactivate"}
+                    {isDeactivating ? "Deactivating..." : "Deactivate Account"}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
