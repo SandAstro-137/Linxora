@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -34,6 +34,7 @@ export function AppSidebar() {
     { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Current Job", url: "/current-job", icon: Briefcase },
     { title: "My Applications", url: "/my-applications", icon: FileText },
+    { title: "Job Invitations", url: "/job-invitations", icon: Mail },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
@@ -49,6 +50,7 @@ export function AppSidebar() {
     { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Post New Job", url: "/jobs/create", icon: PlusCircle },
     { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
+    { title: "Recommendations", url: "/incoming-recommendations", icon: Mail },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },

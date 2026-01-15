@@ -833,3 +833,37 @@ export const insertFriendRequestSchema = createInsertSchema(friendRequests).omit
 
 export type InsertFriendRequest = z.infer<typeof insertFriendRequestSchema>;
 export type FriendRequest = typeof friendRequests.$inferSelect;
+
+// Job Recommendation Status
+export const RecommendationStatus = {
+  PENDING: "pending", // Waiting for customer to review
+  CUSTOMER_ACCEPTED: "customer_accepted", // Customer accepted, invitation sent to freelancer
+  CUSTOMER_DECLINED: "customer_declined", // Customer declined the recommendation
+  INVITATION_ACCEPTED: "invitation_accepted", // Freelancer accepted the job invitation
+  INVITATION_DECLINED: "invitation_declined", // Freelancer declined the job invitation
+} as const;
+
+export type RecommendationStatusType = typeof RecommendationStatus[keyof typeof RecommendationStatus];
+
+// Job Recommendations table - tracks freelancer-to-freelancer job recommendations
+export const jobRecommendations = pgTable("job_recommendations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  recommenderId: varchar("recommender_id").notNull(), // Freelancer A who is recommending
+  recommendedFreelancerId: varchar("recommended_freelancer_id").notNull(), // Freelancer B being recommended
+  jobId: varchar("job_id").notNull(), // The job they're being recommended for
+  customerId: varchar("customer_id").notNull(), // The customer/employer
+  status: text("status").notNull().default(RecommendationStatus.PENDING),
+  recommenderMessage: text("recommender_message"), // Optional message from recommender
+  customerNote: text("customer_note"), // Optional note from customer when accepting/declining
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertJobRecommendationSchema = createInsertSchema(jobRecommendations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertJobRecommendation = z.infer<typeof insertJobRecommendationSchema>;
+export type JobRecommendation = typeof jobRecommendations.$inferSelect;

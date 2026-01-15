@@ -4329,18 +4329,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         role: user.role,
         level: user.level || 1,
         rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
-        ratingCount: user.ratingCount || 0,
+        ratingCount: user.totalRatings || 0,
         completedJobs: user.completedJobs || 0,
         createdAt: user.createdAt,
         specialization: user.specialization || null,
-        bio: user.bio || null,
       };
 
       // For freelancers, include their completed job history
       if (user.role === "freelancer" || user.role === "moderator") {
         const jobs = await storage.getJobs();
         const completedJobsList = jobs.filter(
-          j => j.assignedTo === user.id && j.status === "completed"
+          j => j.freelancerId === user.id && j.status === "completed"
         ).slice(0, 10).map(j => ({
           id: j.id,
           title: j.title,
@@ -4395,8 +4394,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         score += Math.min(completedJobs * 2, 30);
         
         // Rating count bonus (more reviews = more trustworthy)
-        const ratingCount = f.ratingCount || 0;
-        score += Math.min(ratingCount * 2, 20);
+        const totalRatings = f.totalRatings || 0;
+        score += Math.min(totalRatings * 2, 20);
 
         return {
           id: f.id,
@@ -4405,7 +4404,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           avatar: f.avatar,
           level: level,
           rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
-          ratingCount: ratingCount,
+          ratingCount: totalRatings,
           completedJobs: completedJobs,
           specialization: f.specialization || null,
           score,
@@ -4415,6 +4414,407 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Sort by score and return top 10
       scoredFreelancers.sort((a, b) => b.score - a.score);
       res.json(scoredFreelancers.slice(0, 10));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============ JOB RECOMMENDATIONS API ============
+
+  // Create a job recommendation (Freelancer A recommends Freelancer B for a job)
+  app.post("/api/recommendations", requireAuth, async (req, res) => {
+    try {
+      const recommender = await storage.getUser(req.session.userId!);
+      if (!recommender) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Only freelancers can recommend other freelancers
+      if (recommender.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can recommend other freelancers" });
+      }
+
+      const { recommendedFreelancerId, jobId, message } = req.body;
+
+      if (!recommendedFreelancerId || !jobId) {
+        return res.status(400).json({ error: "Freelancer ID and Job ID are required" });
+      }
+
+      // Verify the recommended freelancer exists and is a freelancer
+      const recommendedFreelancer = await storage.getUser(recommendedFreelancerId);
+      if (!recommendedFreelancer || recommendedFreelancer.role !== "freelancer") {
+        return res.status(404).json({ error: "Freelancer not found" });
+      }
+
+      // Can't recommend yourself
+      if (recommendedFreelancerId === recommender.id) {
+        return res.status(400).json({ error: "You cannot recommend yourself" });
+      }
+
+      // Verify the job exists and is active
+      const job = await storage.getJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== "active") {
+        return res.status(400).json({ error: "This job is not available for recommendations" });
+      }
+
+      // Check if this recommendation already exists
+      const existingRecs = await storage.getJobRecommendationsByRecommender(recommender.id);
+      const alreadyRecommended = existingRecs.find(
+        r => r.recommendedFreelancerId === recommendedFreelancerId && 
+             r.jobId === jobId && 
+             r.status === "pending"
+      );
+      if (alreadyRecommended) {
+        return res.status(400).json({ error: "You have already recommended this freelancer for this job" });
+      }
+
+      // Create the recommendation
+      const recommendation = await storage.createJobRecommendation({
+        recommenderId: recommender.id,
+        recommendedFreelancerId,
+        jobId,
+        customerId: job.customerId,
+        recommenderMessage: message || null,
+      });
+
+      // Notify the customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_recommendation",
+        title: "Freelancer Recommendation",
+        message: `${recommender.username} recommends ${recommendedFreelancer.username} for your job: ${job.title}`,
+        relatedId: recommendation.id,
+      });
+
+      res.json({ success: true, recommendation });
+    } catch (error) {
+      console.error("Error creating recommendation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get recommendations for customer (incoming recommendations)
+  app.get("/api/recommendations/customer", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (user.role !== "customer") {
+        return res.status(403).json({ error: "Only customers can view incoming recommendations" });
+      }
+
+      const recommendations = await storage.getJobRecommendationsByCustomer(user.id);
+
+      // Enrich with user and job data
+      const enriched = await Promise.all(recommendations.map(async (rec) => {
+        const recommender = await storage.getUser(rec.recommenderId);
+        const recommendedFreelancer = await storage.getUser(rec.recommendedFreelancerId);
+        const job = await storage.getJob(rec.jobId);
+        return {
+          ...rec,
+          recommender: recommender ? { 
+            id: recommender.id, 
+            username: recommender.username, 
+            avatar: recommender.avatar,
+            level: recommender.level,
+            rating: recommender.rating
+          } : null,
+          recommendedFreelancer: recommendedFreelancer ? {
+            id: recommendedFreelancer.id,
+            username: recommendedFreelancer.username,
+            avatar: recommendedFreelancer.avatar,
+            level: recommendedFreelancer.level || 1,
+            rating: recommendedFreelancer.rating,
+            ratingCount: recommendedFreelancer.totalRatings || 0,
+            completedJobs: recommendedFreelancer.completedJobs || 0,
+            specialization: recommendedFreelancer.specialization,
+          } : null,
+          job: job ? { id: job.id, title: job.title, budget: job.budget, category: job.category } : null,
+        };
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get job invitations for freelancer (recommendations that were accepted by customer)
+  app.get("/api/recommendations/invitations", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can view job invitations" });
+      }
+
+      const recommendations = await storage.getJobRecommendationsForFreelancer(user.id);
+      const invitations = recommendations.filter(r => r.status === "customer_accepted");
+
+      // Enrich with user and job data
+      const enriched = await Promise.all(invitations.map(async (rec) => {
+        const recommender = await storage.getUser(rec.recommenderId);
+        const customer = await storage.getUser(rec.customerId);
+        const job = await storage.getJob(rec.jobId);
+        return {
+          ...rec,
+          recommender: recommender ? { 
+            id: recommender.id, 
+            username: recommender.username, 
+            avatar: recommender.avatar 
+          } : null,
+          customer: customer ? {
+            id: customer.id,
+            username: customer.username,
+            avatar: customer.avatar,
+          } : null,
+          job: job ? { 
+            id: job.id, 
+            title: job.title, 
+            description: job.description,
+            budget: job.budget, 
+            category: job.category,
+            deadline: job.deadline
+          } : null,
+        };
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer accepts/declines a recommendation
+  app.post("/api/recommendations/:id/respond", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const recommendation = await storage.getJobRecommendation(req.params.id);
+      if (!recommendation) {
+        return res.status(404).json({ error: "Recommendation not found" });
+      }
+
+      // Only the customer of the job can respond
+      if (recommendation.customerId !== user.id) {
+        return res.status(403).json({ error: "You are not authorized to respond to this recommendation" });
+      }
+
+      if (recommendation.status !== "pending") {
+        return res.status(400).json({ error: "This recommendation has already been processed" });
+      }
+
+      const { accept, note } = req.body;
+
+      if (accept) {
+        // Customer accepts - send invitation to freelancer
+        await storage.updateJobRecommendation(recommendation.id, {
+          status: "customer_accepted",
+          customerNote: note || null,
+        });
+
+        // Notify the freelancer about the invitation
+        const job = await storage.getJob(recommendation.jobId);
+        const recommender = await storage.getUser(recommendation.recommenderId);
+        await storage.createNotification({
+          userId: recommendation.recommendedFreelancerId,
+          type: "job_invitation",
+          title: "Job Invitation",
+          message: `${user.username} has invited you to work on: ${job?.title || "a job"} (recommended by ${recommender?.username || "a friend"})`,
+          relatedId: recommendation.id,
+        });
+
+        // Notify the recommender that their recommendation was accepted
+        await storage.createNotification({
+          userId: recommendation.recommenderId,
+          type: "recommendation_accepted",
+          title: "Recommendation Accepted",
+          message: `Your recommendation was accepted! ${user.username} has invited your friend to work on: ${job?.title || "a job"}`,
+          relatedId: recommendation.id,
+        });
+
+        res.json({ success: true, message: "Invitation sent to freelancer" });
+      } else {
+        // Customer declines
+        await storage.updateJobRecommendation(recommendation.id, {
+          status: "customer_declined",
+          customerNote: note || null,
+        });
+
+        // Notify the recommender
+        const job = await storage.getJob(recommendation.jobId);
+        await storage.createNotification({
+          userId: recommendation.recommenderId,
+          type: "recommendation_declined",
+          title: "Recommendation Declined",
+          message: `Your recommendation for ${job?.title || "a job"} was declined by the customer`,
+          relatedId: recommendation.id,
+        });
+
+        res.json({ success: true, message: "Recommendation declined" });
+      }
+    } catch (error) {
+      console.error("Error responding to recommendation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer accepts/declines a job invitation
+  app.post("/api/recommendations/:id/invitation-respond", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const recommendation = await storage.getJobRecommendation(req.params.id);
+      if (!recommendation) {
+        return res.status(404).json({ error: "Invitation not found" });
+      }
+
+      // Only the recommended freelancer can respond
+      if (recommendation.recommendedFreelancerId !== user.id) {
+        return res.status(403).json({ error: "You are not authorized to respond to this invitation" });
+      }
+
+      if (recommendation.status !== "customer_accepted") {
+        return res.status(400).json({ error: "This invitation is no longer valid" });
+      }
+
+      const { accept } = req.body;
+      const job = await storage.getJob(recommendation.jobId);
+      const recommender = await storage.getUser(recommendation.recommenderId);
+      const customer = await storage.getUser(recommendation.customerId);
+
+      if (accept) {
+        // Check if freelancer already has an active job
+        const activeJobs = await storage.getJobs({ 
+          freelancerId: user.id, 
+          status: "in_progress" 
+        });
+        if (activeJobs.length > 0) {
+          return res.status(400).json({ error: "You already have a job in progress" });
+        }
+
+        // Check if job is still available
+        if (!job || job.status !== "active") {
+          return res.status(400).json({ error: "This job is no longer available" });
+        }
+
+        // Assign the job to the freelancer
+        await storage.updateJob(job.id, {
+          freelancerId: user.id,
+          status: "claimed",
+        });
+
+        await storage.updateJobRecommendation(recommendation.id, {
+          status: "invitation_accepted",
+        });
+
+        // Cancel other pending requests for this job
+        const pendingRequests = await storage.getJobRequestsByJob(job.id);
+        for (const request of pendingRequests) {
+          if (request.status === "pending") {
+            await storage.updateJobRequest(request.id, { status: "cancelled" });
+          }
+        }
+
+        // Notify customer
+        await storage.createNotification({
+          userId: recommendation.customerId,
+          type: "invitation_accepted",
+          title: "Invitation Accepted",
+          message: `${user.username} has accepted your job invitation for: ${job.title}`,
+          relatedId: job.id,
+        });
+
+        // Notify recommender
+        await storage.createNotification({
+          userId: recommendation.recommenderId,
+          type: "recommendation_success",
+          title: "Recommendation Successful",
+          message: `Your friend ${user.username} accepted the job: ${job.title}`,
+          relatedId: job.id,
+        });
+
+        res.json({ success: true, message: "You have been assigned to the job" });
+      } else {
+        // Freelancer declines
+        await storage.updateJobRecommendation(recommendation.id, {
+          status: "invitation_declined",
+        });
+
+        // Notify customer
+        await storage.createNotification({
+          userId: recommendation.customerId,
+          type: "invitation_declined",
+          title: "Invitation Declined",
+          message: `${user.username} has declined your job invitation for: ${job?.title || "a job"}`,
+          relatedId: recommendation.id,
+        });
+
+        // Notify recommender
+        await storage.createNotification({
+          userId: recommendation.recommenderId,
+          type: "invitation_declined",
+          title: "Invitation Declined",
+          message: `Your friend ${user.username} declined the job invitation for: ${job?.title || "a job"}`,
+          relatedId: recommendation.id,
+        });
+
+        res.json({ success: true, message: "Invitation declined" });
+      }
+    } catch (error) {
+      console.error("Error responding to invitation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get jobs that a freelancer can recommend others for (customer's active jobs where freelancer has worked)
+  app.get("/api/recommendations/available-jobs", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can view available jobs for recommendation" });
+      }
+
+      // Get all active jobs (freelancers can recommend for any active job)
+      const allJobs = await storage.getJobs();
+      const activeJobs = allJobs.filter(j => j.status === "active");
+
+      // Return basic job info
+      const jobsWithCustomerInfo = await Promise.all(activeJobs.map(async (job) => {
+        const customer = await storage.getUser(job.customerId);
+        return {
+          id: job.id,
+          title: job.title,
+          budget: job.budget,
+          category: job.category,
+          customer: customer ? {
+            id: customer.id,
+            username: customer.username,
+            avatar: customer.avatar,
+          } : null,
+        };
+      }));
+
+      res.json(jobsWithCustomerInfo);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

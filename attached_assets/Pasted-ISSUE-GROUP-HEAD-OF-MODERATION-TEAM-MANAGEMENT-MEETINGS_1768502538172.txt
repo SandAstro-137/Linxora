@@ -1,0 +1,42 @@
+ISSUE GROUP: HEAD OF MODERATION — TEAM MANAGEMENT, MEETINGS, NOTIFICATIONS
+
+1. Team Management shows “no one on the team” even though moderators exist.
+   - Fix: The Team Management page must correctly fetch and display all users with the Moderator role.
+   - Ensure the Head of Moderation can see the full moderator list.
+
+2. Assign New Task → “Team Members” list is empty.
+   - Fix: Populate the Team Members dropdown with all active moderators.
+   - The Head of Moderation must be able to assign tasks to any moderator.
+   - Fix the backend so task assignment succeeds instead of failing silently.
+
+3. Meeting scheduling allows invalid years (e.g., year 1000).
+   - Fix: Meeting date picker must enforce:
+       • Minimum date: today
+       • Maximum date: 6 months from today
+   - No dates before the current date or beyond 6 months should be selectable or accepted.
+
+4. Notifications tab for Head of Moderation redirects to Dashboard.
+   - Fix: The Notifications tab must open the Notifications page, not redirect.
+   - Ensure role-based routing is correct for Head of Moderation.
+
+5. Meetings should NOT be optional for moderators.
+   - Required behavior:
+       • Moderators are automatically required to attend meetings.
+       • Add a feature for moderators to request exemption.
+       • Head of Moderation must be able to approve or deny exemption requests.
+
+6. Notification behavior is inconsistent:
+   - Issue: Meeting notifications appear in the badge but not in the top-right notification panel.
+   - Issue: Pressing “Mark All as Read” suddenly makes them appear.
+   - Fix:
+       • Notifications must appear immediately in the notification panel.
+       • Mark All as Read should only change read/unread status, not visibility.
+
+7. Created meetings do NOT appear in “My Meetings.”
+   - Issue: After creating a meeting, the creator sees “No upcoming meetings.”
+   - Fix:
+       • Meetings created by Head of Moderation must appear in their own My Meetings list.
+       • Moderators must receive a join/decline prompt.
+       • Meeting invitations must show correctly in all relevant dashboards.
+
+END OF COMMAND

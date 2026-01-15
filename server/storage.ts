@@ -51,6 +51,8 @@ import {
   type Friend,
   type FriendRequest,
   type InsertFriendRequest,
+  type JobRecommendation,
+  type InsertJobRecommendation,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -219,6 +221,14 @@ export interface IStorage {
   createFriendship(userId: string, friendId: string): Promise<void>;
   removeFriendship(userId: string, friendId: string): Promise<void>;
   searchUsersByUserId(userIdQuery: number): Promise<User[]>;
+
+  // Job Recommendation operations
+  getJobRecommendation(id: string): Promise<JobRecommendation | undefined>;
+  getJobRecommendationsByCustomer(customerId: string): Promise<JobRecommendation[]>;
+  getJobRecommendationsByRecommender(recommenderId: string): Promise<JobRecommendation[]>;
+  getJobRecommendationsForFreelancer(freelancerId: string): Promise<JobRecommendation[]>;
+  createJobRecommendation(recommendation: InsertJobRecommendation): Promise<JobRecommendation>;
+  updateJobRecommendation(id: string, updates: Partial<JobRecommendation>): Promise<JobRecommendation | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -249,6 +259,7 @@ export class MemStorage implements IStorage {
   private vaultTransactions: Map<string, VaultTransaction>;
   private friends: Map<string, Friend>;
   private friendRequests: Map<string, FriendRequest>;
+  private jobRecommendations: Map<string, JobRecommendation>;
   private userIdCounter: number;
 
   constructor() {
@@ -280,6 +291,7 @@ export class MemStorage implements IStorage {
     this.vaultTransactions = new Map();
     this.friends = new Map();
     this.friendRequests = new Map();
+    this.jobRecommendations = new Map();
   }
 
   // User operations
@@ -1371,6 +1383,52 @@ export class MemStorage implements IStorage {
   async searchUsersByUserId(userIdQuery: number): Promise<User[]> {
     return Array.from(this.users.values())
       .filter(u => u.userId === userIdQuery);
+  }
+
+  // Job Recommendation operations
+  async getJobRecommendation(id: string): Promise<JobRecommendation | undefined> {
+    return this.jobRecommendations.get(id);
+  }
+
+  async getJobRecommendationsByCustomer(customerId: string): Promise<JobRecommendation[]> {
+    return Array.from(this.jobRecommendations.values())
+      .filter(r => r.customerId === customerId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getJobRecommendationsByRecommender(recommenderId: string): Promise<JobRecommendation[]> {
+    return Array.from(this.jobRecommendations.values())
+      .filter(r => r.recommenderId === recommenderId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getJobRecommendationsForFreelancer(freelancerId: string): Promise<JobRecommendation[]> {
+    return Array.from(this.jobRecommendations.values())
+      .filter(r => r.recommendedFreelancerId === freelancerId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createJobRecommendation(recommendation: InsertJobRecommendation): Promise<JobRecommendation> {
+    const id = randomUUID();
+    const jobRecommendation: JobRecommendation = {
+      id,
+      ...recommendation,
+      status: recommendation.status || "pending",
+      recommenderMessage: recommendation.recommenderMessage ?? null,
+      customerNote: recommendation.customerNote ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.jobRecommendations.set(id, jobRecommendation);
+    return jobRecommendation;
+  }
+
+  async updateJobRecommendation(id: string, updates: Partial<JobRecommendation>): Promise<JobRecommendation | undefined> {
+    const recommendation = this.jobRecommendations.get(id);
+    if (!recommendation) return undefined;
+    const updated = { ...recommendation, ...updates, updatedAt: new Date() };
+    this.jobRecommendations.set(id, updated);
+    return updated;
   }
 }
 

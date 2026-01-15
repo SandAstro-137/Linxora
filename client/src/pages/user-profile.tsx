@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -6,9 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
+import { useState } from "react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface PublicProfile {
   id: string;
@@ -22,13 +28,29 @@ interface PublicProfile {
   completedJobs: number;
   createdAt: string;
   specialization: string | null;
-  bio: string | null;
   recentCompletedJobs?: {
     id: string;
     title: string;
     category: string;
     completedAt: string;
   }[];
+}
+
+interface AvailableJob {
+  id: string;
+  title: string;
+  budget: string;
+  category: string;
+  customer: {
+    id: string;
+    username: string;
+    avatar: string | null;
+  } | null;
+}
+
+interface CurrentUser {
+  id: string;
+  role: string;
 }
 
 function getRoleBadgeVariant(role: string): "default" | "secondary" | "outline" | "destructive" {
@@ -58,6 +80,14 @@ function getRoleDisplay(role: string): string {
 export default function UserProfilePage() {
   const [, params] = useRoute("/user/:id");
   const userId = params?.id;
+  const { toast } = useToast();
+  const [recommendDialogOpen, setRecommendDialogOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string>("");
+  const [recommendMessage, setRecommendMessage] = useState("");
+
+  const { data: currentUser } = useQuery<CurrentUser>({
+    queryKey: ["/api/auth/me"],
+  });
 
   const { data: profile, isLoading, error } = useQuery<PublicProfile>({
     queryKey: ["/api/users", userId, "profile"],
@@ -71,6 +101,43 @@ export default function UserProfilePage() {
     },
     enabled: !!userId,
   });
+
+  const { data: availableJobs = [] } = useQuery<AvailableJob[]>({
+    queryKey: ["/api/recommendations/available-jobs"],
+    enabled: currentUser?.role === "freelancer" && profile?.role === "freelancer",
+  });
+
+  const recommendMutation = useMutation({
+    mutationFn: async (data: { recommendedFreelancerId: string; jobId: string; message?: string }) => {
+      const res = await apiRequest("POST", "/api/recommendations", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Recommendation sent",
+        description: `You have recommended ${profile?.username} for this job. The customer will be notified.`,
+      });
+      setRecommendDialogOpen(false);
+      setSelectedJobId("");
+      setRecommendMessage("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to send recommendation",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleRecommend = () => {
+    if (!selectedJobId || !profile) return;
+    recommendMutation.mutate({
+      recommendedFreelancerId: profile.id,
+      jobId: selectedJobId,
+      message: recommendMessage || undefined,
+    });
+  };
 
   if (isLoading) {
     return (
@@ -140,9 +207,6 @@ export default function UserProfilePage() {
                   {profile.specialization}
                 </p>
               )}
-              {profile.bio && (
-                <p className="text-sm mt-2">{profile.bio}</p>
-              )}
             </div>
           </div>
         </CardHeader>
@@ -154,6 +218,70 @@ export default function UserProfilePage() {
                 Send Message
               </Button>
             </Link>
+            
+            {currentUser?.role === "freelancer" && profile.role === "freelancer" && currentUser.id !== profile.id && (
+              <Dialog open={recommendDialogOpen} onOpenChange={setRecommendDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="outline" data-testid="button-recommend">
+                    <Award className="w-4 h-4 mr-2" />
+                    Recommend for Job
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Recommend {profile.username}</DialogTitle>
+                    <DialogDescription>
+                      Recommend this freelancer to a customer for one of their active jobs.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Select a job</label>
+                      <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+                        <SelectTrigger data-testid="select-job">
+                          <SelectValue placeholder="Choose a job..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableJobs.length === 0 ? (
+                            <div className="p-2 text-sm text-muted-foreground text-center">
+                              No active jobs available
+                            </div>
+                          ) : (
+                            availableJobs.map((job) => (
+                              <SelectItem key={job.id} value={job.id}>
+                                <div className="flex flex-col">
+                                  <span>{job.title}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    ${job.budget} - {job.customer?.username || "Unknown"}
+                                  </span>
+                                </div>
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Message (optional)</label>
+                      <Textarea
+                        placeholder="Why do you recommend this freelancer?"
+                        value={recommendMessage}
+                        onChange={(e) => setRecommendMessage(e.target.value)}
+                        data-testid="input-recommend-message"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleRecommend}
+                      disabled={!selectedJobId || recommendMutation.isPending}
+                      className="w-full"
+                      data-testid="button-submit-recommendation"
+                    >
+                      {recommendMutation.isPending ? "Sending..." : "Send Recommendation"}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
           </div>
 
           <Separator />

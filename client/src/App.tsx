@@ -44,6 +44,8 @@ import VaultPage from "@/pages/vault";
 import FriendsPage from "@/pages/friends";
 import MyApplicationsPage from "@/pages/my-applications";
 import UserProfilePage from "@/pages/user-profile";
+import JobInvitationsPage from "@/pages/job-invitations";
+import IncomingRecommendationsPage from "@/pages/incoming-recommendations";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -202,6 +204,16 @@ function Router() {
       <Route path="/my-applications">
         <ProtectedRoute allowedRoles={["freelancer"]}>
           <MyApplicationsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/job-invitations">
+        <ProtectedRoute allowedRoles={["freelancer"]}>
+          <JobInvitationsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/incoming-recommendations">
+        <ProtectedRoute allowedRoles={["customer"]}>
+          <IncomingRecommendationsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/verify-email" component={VerifyEmailPage} />
