@@ -43,6 +43,7 @@ import VerifyEmailPage from "@/pages/verify-email";
 import VaultPage from "@/pages/vault";
 import FriendsPage from "@/pages/friends";
 import MyApplicationsPage from "@/pages/my-applications";
+import UserProfilePage from "@/pages/user-profile";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -191,6 +192,11 @@ function Router() {
       <Route path="/friends">
         <ProtectedRoute>
           <FriendsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/user/:id">
+        <ProtectedRoute>
+          <UserProfilePage />
         </ProtectedRoute>
       </Route>
       <Route path="/my-applications">

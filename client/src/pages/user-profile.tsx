@@ -1,0 +1,222 @@
+import { useQuery } from "@tanstack/react-query";
+import { useRoute } from "wouter";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft } from "lucide-react";
+import { Link } from "wouter";
+import { format } from "date-fns";
+
+interface PublicProfile {
+  id: string;
+  userId: number;
+  username: string;
+  avatar: string | null;
+  role: string;
+  level: number;
+  rating: string;
+  ratingCount: number;
+  completedJobs: number;
+  createdAt: string;
+  specialization: string | null;
+  bio: string | null;
+  recentCompletedJobs?: {
+    id: string;
+    title: string;
+    category: string;
+    completedAt: string;
+  }[];
+}
+
+function getRoleBadgeVariant(role: string): "default" | "secondary" | "outline" | "destructive" {
+  switch (role) {
+    case "founder": return "default";
+    case "head_of_moderation": return "default";
+    case "moderator": return "secondary";
+    case "staff": return "secondary";
+    case "freelancer": return "outline";
+    case "customer": return "outline";
+    default: return "outline";
+  }
+}
+
+function getRoleDisplay(role: string): string {
+  switch (role) {
+    case "founder": return "Founder";
+    case "head_of_moderation": return "Head of Moderation";
+    case "moderator": return "Moderator";
+    case "staff": return "Staff";
+    case "freelancer": return "Freelancer";
+    case "customer": return "Customer";
+    default: return role;
+  }
+}
+
+export default function UserProfilePage() {
+  const [, params] = useRoute("/user/:id");
+  const userId = params?.id;
+
+  const { data: profile, isLoading, error } = useQuery<PublicProfile>({
+    queryKey: ["/api/users", userId, "profile"],
+    queryFn: async () => {
+      const res = await fetch(`/api/users/${userId}/profile`, { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to load profile");
+      }
+      return res.json();
+    },
+    enabled: !!userId,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto space-y-6">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <Card>
+          <CardContent className="pt-6 text-center">
+            <User className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <h2 className="text-xl font-semibold mb-2">User Not Found</h2>
+            <p className="text-muted-foreground mb-4">
+              {(error as Error)?.message || "This user profile could not be found."}
+            </p>
+            <Link href="/friends">
+              <Button variant="outline">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Friends
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Link href="/friends">
+          <Button variant="ghost" size="sm" data-testid="button-back-to-friends">
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Back to Friends
+          </Button>
+        </Link>
+      </div>
+
+      <Card data-testid="card-user-profile">
+        <CardHeader>
+          <div className="flex items-start gap-4">
+            <Avatar className="h-20 w-20">
+              <AvatarImage src={profile.avatar || undefined} />
+              <AvatarFallback className="text-2xl">
+                {profile.username.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle className="text-2xl" data-testid="text-username">
+                  {profile.username}
+                </CardTitle>
+                <Badge variant={getRoleBadgeVariant(profile.role)} data-testid="badge-role">
+                  {getRoleDisplay(profile.role)}
+                </Badge>
+              </div>
+              <CardDescription className="mt-1">
+                User ID: {profile.userId}
+              </CardDescription>
+              {profile.specialization && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {profile.specialization}
+                </p>
+              )}
+              {profile.bio && (
+                <p className="text-sm mt-2">{profile.bio}</p>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/messages/${profile.id}`}>
+              <Button size="sm" data-testid="button-send-message">
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Send Message
+              </Button>
+            </Link>
+          </div>
+
+          <Separator />
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {(profile.role === "freelancer" || profile.role === "moderator") && (
+              <>
+                <div className="text-center p-3 bg-muted rounded-lg">
+                  <TrendingUp className="w-5 h-5 mx-auto mb-1 text-primary" />
+                  <p className="text-lg font-bold" data-testid="text-level">Level {profile.level}</p>
+                  <p className="text-xs text-muted-foreground">Experience</p>
+                </div>
+                <div className="text-center p-3 bg-muted rounded-lg">
+                  <Star className="w-5 h-5 mx-auto mb-1 text-yellow-500" />
+                  <p className="text-lg font-bold" data-testid="text-rating">
+                    {profile.rating || "N/A"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {profile.ratingCount || 0} reviews
+                  </p>
+                </div>
+                <div className="text-center p-3 bg-muted rounded-lg">
+                  <Briefcase className="w-5 h-5 mx-auto mb-1 text-blue-500" />
+                  <p className="text-lg font-bold" data-testid="text-completed-jobs">
+                    {profile.completedJobs || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Completed Jobs</p>
+                </div>
+              </>
+            )}
+            <div className="text-center p-3 bg-muted rounded-lg">
+              <Calendar className="w-5 h-5 mx-auto mb-1 text-green-500" />
+              <p className="text-sm font-medium" data-testid="text-joined">
+                {format(new Date(profile.createdAt), "MMM yyyy")}
+              </p>
+              <p className="text-xs text-muted-foreground">Member Since</p>
+            </div>
+          </div>
+
+          {profile.recentCompletedJobs && profile.recentCompletedJobs.length > 0 && (
+            <>
+              <Separator />
+              <div>
+                <h3 className="font-semibold mb-3">Recent Completed Jobs</h3>
+                <div className="space-y-2">
+                  {profile.recentCompletedJobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className="flex items-center justify-between p-2 border rounded-lg text-sm"
+                      data-testid={`completed-job-${job.id}`}
+                    >
+                      <div>
+                        <p className="font-medium">{job.title}</p>
+                        <p className="text-xs text-muted-foreground">{job.category}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

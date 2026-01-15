@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -11,9 +13,73 @@ import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
-import { ArrowUpCircle, Clock, CheckCircle, XCircle, Briefcase, Shield } from "lucide-react";
+import { ArrowUpCircle, Clock, CheckCircle, XCircle, Briefcase, Shield, Eye, DollarSign, Users, FileText, Star, ClipboardList, MessageSquare, Wallet } from "lucide-react";
 import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import type { RoleUpgradeRequest } from "@shared/schema";
+
+function RolePreviewDialog({ targetRole }: { targetRole: "freelancer" | "moderator" }) {
+  const freelancerFeatures = [
+    { icon: <Briefcase className="w-5 h-5 text-primary" />, title: "Browse & Apply to Jobs", description: "Access the job board and apply to jobs posted by customers" },
+    { icon: <Wallet className="w-5 h-5 text-green-500" />, title: "Wallet & Earnings", description: "Manage your earnings, view transactions, and request withdrawals" },
+    { icon: <Star className="w-5 h-5 text-yellow-500" />, title: "Profile & Reviews", description: "Build your reputation with ratings and reviews from completed jobs" },
+    { icon: <Users className="w-5 h-5 text-blue-500" />, title: "Team Collaboration", description: "Work with other freelancers on team jobs with automatic profit splitting" },
+    { icon: <MessageSquare className="w-5 h-5 text-purple-500" />, title: "Direct Messaging", description: "Communicate directly with customers and team members" },
+    { icon: <ClipboardList className="w-5 h-5 text-orange-500" />, title: "PTO Management", description: "Request and manage paid time off" },
+  ];
+
+  const moderatorFeatures = [
+    { icon: <Shield className="w-5 h-5 text-red-500" />, title: "Job Moderation Queue", description: "Review, approve, reject, or request changes to submitted jobs" },
+    { icon: <Users className="w-5 h-5 text-blue-500" />, title: "Team Room Access", description: "Join the real-time moderator chat and voice channel" },
+    { icon: <FileText className="w-5 h-5 text-primary" />, title: "Report Review", description: "Handle user reports for jobs, messages, and users" },
+    { icon: <ClipboardList className="w-5 h-5 text-orange-500" />, title: "Task Assignments", description: "Receive and complete tasks assigned by Head of Moderation" },
+    { icon: <Star className="w-5 h-5 text-yellow-500" />, title: "Meeting Scheduling", description: "Get invited to team meetings and participate in moderation discussions" },
+    { icon: <DollarSign className="w-5 h-5 text-green-500" />, title: "Vault Access", description: "View the moderation vault and team fund allocations" },
+  ];
+
+  const features = targetRole === "freelancer" ? freelancerFeatures : moderatorFeatures;
+  const roleTitle = targetRole === "freelancer" ? "Freelancer" : "Moderator";
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" data-testid={`button-preview-${targetRole}`}>
+          <Eye className="w-4 h-4 mr-2" />
+          Preview {roleTitle} Features
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {targetRole === "freelancer" ? <Briefcase className="w-5 h-5" /> : <Shield className="w-5 h-5" />}
+            {roleTitle} Features Preview
+          </DialogTitle>
+          <DialogDescription>
+            Here's what you'll get access to as a {roleTitle}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 mt-4">
+          {features.map((feature, index) => (
+            <div key={index} className="flex gap-3 p-3 bg-muted/50 rounded-lg">
+              <div className="shrink-0">{feature.icon}</div>
+              <div>
+                <h4 className="font-medium text-sm">{feature.title}</h4>
+                <p className="text-xs text-muted-foreground">{feature.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+          <p className="text-sm text-center">
+            {targetRole === "freelancer" 
+              ? "As a Freelancer, you'll keep all existing Customer features plus gain these new abilities!"
+              : "As a Moderator, you'll still be able to take on freelance jobs while helping keep the platform safe!"
+            }
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const customerToFreelancerSchema = z.object({
   reason: z.string().min(10, "Please provide at least 10 characters explaining why you want to become a freelancer"),
@@ -158,6 +224,9 @@ export default function RoleUpgradePage() {
                 </li>
               </ul>
             </div>
+            <div className="mb-4">
+              <RolePreviewDialog targetRole="freelancer" />
+            </div>
             {customerNeedsTime ? (
               <p className="text-muted-foreground">Your account needs to be at least 2 weeks old before you can apply to become a freelancer.</p>
             ) : hasPendingRequest ? (
@@ -256,6 +325,9 @@ export default function RoleUpgradePage() {
                   65% or higher completion rate (Currently {completionRate.toFixed(1)}%)
                 </li>
               </ul>
+            </div>
+            <div className="mb-4">
+              <RolePreviewDialog targetRole="moderator" />
             </div>
             {freelancerMissingRequirements ? (
               <p className="text-muted-foreground">You don't meet all the requirements yet. Keep working to reach your goals!</p>

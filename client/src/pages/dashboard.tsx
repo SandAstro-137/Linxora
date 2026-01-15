@@ -2,12 +2,27 @@ import { useAuth } from "@/lib/auth-context";
 import { useQuery } from "@tanstack/react-query";
 import { StatsCard } from "@/components/stats-card";
 import { JobCard } from "@/components/job-card";
-import { Briefcase, DollarSign, TrendingUp, Users, Shield, CalendarDays, AlertCircle, UserCheck } from "lucide-react";
+import { Briefcase, DollarSign, TrendingUp, Users, Shield, CalendarDays, AlertCircle, UserCheck, Star, Award } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Job } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
+
+interface RecommendedFreelancer {
+  id: string;
+  userId: number;
+  username: string;
+  avatar: string | null;
+  level: number;
+  rating: string;
+  ratingCount: number;
+  completedJobs: number;
+  specialization: string | null;
+  score: number;
+}
 
 interface DashboardStats {
   activeJobs?: number;
@@ -32,6 +47,11 @@ export default function DashboardPage() {
 
   const { data: recentJobs, isLoading: jobsLoading } = useQuery<Job[]>({
     queryKey: ["/api/jobs/recent"],
+  });
+
+  const { data: recommendations = [], isLoading: recommendationsLoading } = useQuery<RecommendedFreelancer[]>({
+    queryKey: ["/api/freelancers/recommendations"],
+    enabled: user?.role === "customer",
   });
 
   if (!user) return null;
@@ -141,6 +161,68 @@ export default function DashboardPage() {
           ) : (
             <p className="text-center text-muted-foreground py-8">
               You haven't posted any jobs yet
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Award className="w-5 h-5 text-yellow-500" />
+            Recommended Freelancers
+          </CardTitle>
+          <CardDescription>Top-rated freelancers based on performance and reputation</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {recommendationsLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
+            </div>
+          ) : recommendations.length > 0 ? (
+            <div className="space-y-3">
+              {recommendations.slice(0, 5).map((freelancer, index) => (
+                <Link key={freelancer.id} href={`/user/${freelancer.id}`}>
+                  <div
+                    className="flex items-center justify-between p-3 border rounded-lg hover-elevate cursor-pointer"
+                    data-testid={`recommended-freelancer-${freelancer.id}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <Avatar>
+                          <AvatarImage src={freelancer.avatar || undefined} />
+                          <AvatarFallback>{freelancer.username.charAt(0).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        {index < 3 && (
+                          <Badge className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs">
+                            {index + 1}
+                          </Badge>
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium">{freelancer.username}</p>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>Level {freelancer.level}</span>
+                          <span className="flex items-center gap-1">
+                            <Star className="w-3 h-3 text-yellow-500" />
+                            {freelancer.rating || "N/A"}
+                          </span>
+                          <span>{freelancer.completedJobs} jobs</span>
+                        </div>
+                      </div>
+                    </div>
+                    <Button size="sm" variant="outline" data-testid={`button-view-${freelancer.id}`}>
+                      View Profile
+                    </Button>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center text-muted-foreground py-4">
+              No freelancer recommendations available yet.
             </p>
           )}
         </CardContent>

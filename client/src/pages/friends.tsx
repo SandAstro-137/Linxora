@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Users, Search, UserPlus, UserMinus, Check, X, Clock, Send, User } from "lucide-react";
+import { Users, Search, UserPlus, UserMinus, Check, X, Clock, Send, User, Eye } from "lucide-react";
 import { toZonedTime, format as formatTz } from "date-fns-tz";
 
 function formatToET(date: Date | string): string {
@@ -319,7 +319,7 @@ export default function FriendsPage() {
                         </Avatar>
                         <div>
                           <div className="flex items-center gap-2">
-                            <Link href={`/profile/${friend.friendId}`} className="font-medium hover:underline">
+                            <Link href={`/user/${friend.friendId}`} className="font-medium hover:underline">
                               {friend.username}
                             </Link>
                             <Badge variant={getRoleBadgeVariant(friend.role)} className="text-xs">
@@ -330,6 +330,11 @@ export default function FriendsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Link href={`/user/${friend.friendId}`}>
+                          <Button size="sm" variant="ghost" data-testid={`button-profile-${friend.friendId}`}>
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                        </Link>
                         <Link href={`/messages/${friend.friendId}`}>
                           <Button size="sm" variant="outline" data-testid={`button-message-${friend.friendId}`}>
                             <Send className="w-4 h-4" />

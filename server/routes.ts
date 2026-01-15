@@ -4307,6 +4307,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============ PUBLIC PROFILE API ============
+
+  // Get public profile of any user
+  app.get("/api/users/:id/profile", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Return public profile info with safe defaults
+      const ratingValue = parseFloat(user.rating?.toString() || "0");
+      const safeRating = isNaN(ratingValue) ? 0 : ratingValue;
+      
+      const publicProfile: any = {
+        id: user.id,
+        userId: user.userId,
+        username: user.username,
+        avatar: user.avatar || null,
+        role: user.role,
+        level: user.level || 1,
+        rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
+        ratingCount: user.ratingCount || 0,
+        completedJobs: user.completedJobs || 0,
+        createdAt: user.createdAt,
+        specialization: user.specialization || null,
+        bio: user.bio || null,
+      };
+
+      // For freelancers, include their completed job history
+      if (user.role === "freelancer" || user.role === "moderator") {
+        const jobs = await storage.getJobs();
+        const completedJobsList = jobs.filter(
+          j => j.assignedTo === user.id && j.status === "completed"
+        ).slice(0, 10).map(j => ({
+          id: j.id,
+          title: j.title,
+          category: j.category,
+          completedAt: j.updatedAt,
+        }));
+        publicProfile.recentCompletedJobs = completedJobsList;
+      }
+
+      res.json(publicProfile);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get freelancer recommendations
+  app.get("/api/freelancers/recommendations", requireAuth, async (req, res) => {
+    try {
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const users = await storage.getUsers();
+      
+      // Get customer's blacklist if they are a customer
+      const customerBlacklist = currentUser.role === "customer" 
+        ? (currentUser.blacklistedFreelancers || []) 
+        : [];
+      
+      const freelancers = users.filter(u => 
+        u.role === "freelancer" && 
+        u.id !== req.session.userId &&
+        !customerBlacklist.includes(u.id) // Exclude blacklisted freelancers
+      );
+
+      // Score freelancers based on various factors
+      const scoredFreelancers = freelancers.map(f => {
+        let score = 0;
+        
+        // Rating bonus (up to 50 points) - safely parse rating
+        const ratingValue = parseFloat(f.rating?.toString() || "0");
+        const safeRating = isNaN(ratingValue) ? 0 : ratingValue;
+        score += safeRating * 10;
+        
+        // Level bonus (up to 50 points)
+        const level = f.level || 1;
+        score += level * 5;
+        
+        // Completed jobs bonus (up to 30 points)
+        const completedJobs = f.completedJobs || 0;
+        score += Math.min(completedJobs * 2, 30);
+        
+        // Rating count bonus (more reviews = more trustworthy)
+        const ratingCount = f.ratingCount || 0;
+        score += Math.min(ratingCount * 2, 20);
+
+        return {
+          id: f.id,
+          userId: f.userId,
+          username: f.username,
+          avatar: f.avatar,
+          level: level,
+          rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
+          ratingCount: ratingCount,
+          completedJobs: completedJobs,
+          specialization: f.specialization || null,
+          score,
+        };
+      });
+
+      // Sort by score and return top 10
+      scoredFreelancers.sort((a, b) => b.score - a.score);
+      res.json(scoredFreelancers.slice(0, 10));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // ============ DIRECT MESSAGES API ============
 
   // Find user by User ID (globally unique)
