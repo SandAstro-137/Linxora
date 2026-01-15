@@ -41,6 +41,8 @@ import MessagesPage from "@/pages/messages";
 import SettingsPage from "@/pages/settings";
 import VerifyEmailPage from "@/pages/verify-email";
 import VaultPage from "@/pages/vault";
+import FriendsPage from "@/pages/friends";
+import MyApplicationsPage from "@/pages/my-applications";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -184,6 +186,16 @@ function Router() {
       <Route path="/settings">
         <ProtectedRoute>
           <SettingsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/friends">
+        <ProtectedRoute>
+          <FriendsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/my-applications">
+        <ProtectedRoute allowedRoles={["freelancer"]}>
+          <MyApplicationsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/verify-email" component={VerifyEmailPage} />

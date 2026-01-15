@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -31,7 +31,9 @@ export function AppSidebar() {
   const freelancerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Messages", url: "/messages", icon: MessageSquare },
+    { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Current Job", url: "/current-job", icon: Briefcase },
+    { title: "My Applications", url: "/my-applications", icon: FileText },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
@@ -44,6 +46,7 @@ export function AppSidebar() {
   const customerItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Messages", url: "/messages", icon: MessageSquare },
+    { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Post New Job", url: "/jobs/create", icon: PlusCircle },
     { title: "My Jobs", url: "/my-jobs", icon: Briefcase },
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
@@ -57,6 +60,7 @@ export function AppSidebar() {
   const staffItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Messages", url: "/messages", icon: MessageSquare },
+    { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
@@ -71,6 +75,7 @@ export function AppSidebar() {
   const headOfModerationItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Messages", url: "/messages", icon: MessageSquare },
+    { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "Team Vault", url: "/vault", icon: Vault },
@@ -87,6 +92,7 @@ export function AppSidebar() {
   const founderItems = [
     { title: "Dashboard", url: "/dashboard", icon: Home },
     { title: "Messages", url: "/messages", icon: MessageSquare },
+    { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Admin Panel", url: "/admin", icon: Crown },
     { title: "Team Management", url: "/team-management", icon: Users },

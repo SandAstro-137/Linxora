@@ -20,10 +20,11 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Job Board:**
     - Browse and search approved jobs.
     - Detailed job view with client information and requirements.
-    - Freelancers can claim jobs and invite team members for collaboration.
+    - **Job Application Queue System:** Freelancers apply to jobs (max 5 pending applications). Customers review applicants, accepting or rejecting each. Upon acceptance, other pending applications are automatically cancelled.
     - Automated equal profit splitting among team members.
     - Customers can create job posts, subject to moderator approval.
     - Moderation queue for staff to approve, reject, or request changes to jobs, with customer notification and re-submission flow.
+    - **My Applications Page:** Freelancers can view and manage their pending job applications (/my-applications), including withdrawing applications.
 - **Wallet:**
     - Simple USD-based balance tracking.
     - Deposit and withdrawal functionality for testing.
@@ -51,6 +52,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Rating System:** Customers can rate freelancers post-completion, with automatic recalculation of freelancer averages.
 - **Auto-Leveling & Statistics:** Automatic update of freelancer statistics (completion percentage, level based on completed jobs) displayed on profile pages.
 - **Role Upgrade System:** Customers can apply to become Freelancers, and Freelancers can apply for Moderator status (requires 5+ completed jobs). Moderators review and approve/reject applications. Automatic role updates upon approval with full notification system.
+- **Friends System:** Global user search by unique user ID, friend requests with accept/decline functionality, friends list management, and quick message access. Available at /friends for all roles.
 - **Tutorial System:** Slide-based walkthrough with role-specific content (6 slides for freelancers, 5 for customers, 4 for moderators), accessible via help button in header.
 - **Safety & Moderation:**
     - Content Filter: Server-side library (server/lib/content-filter.ts) with inappropriate/suspicious pattern detection, XSS sanitization via sanitizeText(), and spam detection via isSpamLike().

@@ -722,7 +722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get freelancer's pending job requests
+  // Get freelancer's job requests (all statuses)
   app.get("/api/my-job-requests", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
@@ -730,7 +730,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can view their job requests" });
       }
 
-      const requests = await storage.getPendingJobRequestsByFreelancer(req.session.userId!);
+      // Get all job requests for this freelancer (no status filter)
+      const requests = await storage.getJobRequestsByFreelancer(req.session.userId!);
       
       // Enrich with job data
       const enrichedRequests = await Promise.all(
@@ -743,6 +744,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               title: job.title,
               budget: job.budget,
               category: job.category,
+              status: job.status,
+              customerId: job.customerId,
               deadline: job.deadline,
             } : null,
           };
@@ -2189,6 +2192,299 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(transaction);
     } catch (error) {
       console.error("Vault distribution error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Friend routes
+  app.get("/api/friends", requireAuth, async (req, res) => {
+    try {
+      const friendships = await storage.getFriends(req.session.userId!);
+      
+      // Enrich with user info
+      const friends = await Promise.all(friendships.map(async (f) => {
+        const friendId = f.userId === req.session.userId ? f.friendId : f.userId;
+        const user = await storage.getUser(friendId);
+        return user ? {
+          id: f.id,
+          friendId: user.id,
+          userId: user.userId,
+          username: user.username,
+          avatar: user.avatar,
+          role: user.role,
+          createdAt: f.createdAt,
+        } : null;
+      }));
+      
+      res.json(friends.filter(Boolean));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/friend-requests", requireAuth, async (req, res) => {
+    try {
+      const incoming = await storage.getIncomingFriendRequests(req.session.userId!);
+      
+      // Enrich with user info
+      const enrichedRequests = await Promise.all(incoming.map(async (r) => {
+        const fromUser = await storage.getUser(r.fromUserId);
+        return {
+          ...r,
+          fromUser: fromUser ? {
+            id: fromUser.id,
+            userId: fromUser.userId,
+            username: fromUser.username,
+            avatar: fromUser.avatar,
+            role: fromUser.role,
+          } : null,
+        };
+      }));
+      
+      res.json(enrichedRequests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/friend-requests/outgoing", requireAuth, async (req, res) => {
+    try {
+      const allRequests = await storage.getFriendRequestsByUser(req.session.userId!);
+      const outgoing = allRequests.filter(r => r.fromUserId === req.session.userId && r.status === "pending");
+      
+      // Enrich with user info
+      const enrichedRequests = await Promise.all(outgoing.map(async (r) => {
+        const toUser = await storage.getUser(r.toUserId);
+        return {
+          ...r,
+          toUser: toUser ? {
+            id: toUser.id,
+            userId: toUser.userId,
+            username: toUser.username,
+            avatar: toUser.avatar,
+            role: toUser.role,
+          } : null,
+        };
+      }));
+      
+      res.json(enrichedRequests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/friend-requests", requireAuth, async (req, res) => {
+    try {
+      const { toUserId } = req.body;
+      
+      if (!toUserId) {
+        return res.status(400).json({ error: "Target user ID is required" });
+      }
+      
+      // Can't send friend request to yourself
+      if (toUserId === req.session.userId) {
+        return res.status(400).json({ error: "Cannot send friend request to yourself" });
+      }
+      
+      // Check if target user exists
+      const targetUser = await storage.getUser(toUserId);
+      if (!targetUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Check if already friends
+      const alreadyFriends = await storage.areFriends(req.session.userId!, toUserId);
+      if (alreadyFriends) {
+        return res.status(400).json({ error: "Already friends with this user" });
+      }
+      
+      // Check if there's already a pending request between these users
+      const existingRequest = await storage.getFriendRequestBetweenUsers(req.session.userId!, toUserId);
+      if (existingRequest && existingRequest.status === "pending") {
+        return res.status(400).json({ error: "A friend request already exists between you and this user" });
+      }
+      
+      const request = await storage.createFriendRequest({
+        fromUserId: req.session.userId!,
+        toUserId,
+        status: "pending",
+      });
+      
+      // Notify the target user
+      const sender = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: toUserId,
+        type: "friend_request",
+        title: "Friend Request",
+        message: `${sender?.username || "Someone"} sent you a friend request.`,
+        relatedId: request.id,
+      });
+      
+      res.json(request);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/friend-requests/:id/accept", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getFriendRequest(req.params.id);
+      
+      if (!request) {
+        return res.status(404).json({ error: "Friend request not found" });
+      }
+      
+      if (request.toUserId !== req.session.userId) {
+        return res.status(403).json({ error: "Can only accept requests sent to you" });
+      }
+      
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request has already been processed" });
+      }
+      
+      // Update request status
+      await storage.updateFriendRequest(request.id, { status: "accepted" });
+      
+      // Create the friendship
+      await storage.createFriendship(request.fromUserId, request.toUserId);
+      
+      // Notify the sender
+      const accepter = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: request.fromUserId,
+        type: "friend_accepted",
+        title: "Friend Request Accepted",
+        message: `${accepter?.username || "Someone"} accepted your friend request.`,
+        relatedId: request.id,
+      });
+      
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/friend-requests/:id/decline", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getFriendRequest(req.params.id);
+      
+      if (!request) {
+        return res.status(404).json({ error: "Friend request not found" });
+      }
+      
+      if (request.toUserId !== req.session.userId) {
+        return res.status(403).json({ error: "Can only decline requests sent to you" });
+      }
+      
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request has already been processed" });
+      }
+      
+      await storage.updateFriendRequest(request.id, { status: "declined" });
+      
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/friend-requests/:id/cancel", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getFriendRequest(req.params.id);
+      
+      if (!request) {
+        return res.status(404).json({ error: "Friend request not found" });
+      }
+      
+      if (request.fromUserId !== req.session.userId) {
+        return res.status(403).json({ error: "Can only cancel requests you sent" });
+      }
+      
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request has already been processed" });
+      }
+      
+      await storage.updateFriendRequest(request.id, { status: "declined" });
+      
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/friends/:friendId", requireAuth, async (req, res) => {
+    try {
+      const areFriends = await storage.areFriends(req.session.userId!, req.params.friendId);
+      
+      if (!areFriends) {
+        return res.status(400).json({ error: "Not friends with this user" });
+      }
+      
+      await storage.removeFriendship(req.session.userId!, req.params.friendId);
+      
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/search", requireAuth, async (req, res) => {
+    try {
+      const { userId } = req.query;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID query is required" });
+      }
+      
+      const userIdNum = parseInt(userId as string);
+      if (isNaN(userIdNum)) {
+        return res.status(400).json({ error: "Invalid user ID" });
+      }
+      
+      const users = await storage.searchUsersByUserId(userIdNum);
+      
+      // Return safe user info
+      const results = users.map(u => ({
+        id: u.id,
+        userId: u.userId,
+        username: u.username,
+        avatar: u.avatar,
+        role: u.role,
+        level: u.level,
+        completedJobs: u.completedJobs,
+        rating: u.rating,
+      }));
+      
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/:id/friend-status", requireAuth, async (req, res) => {
+    try {
+      const targetUserId = req.params.id;
+      
+      if (targetUserId === req.session.userId) {
+        return res.json({ status: "self" });
+      }
+      
+      const areFriends = await storage.areFriends(req.session.userId!, targetUserId);
+      if (areFriends) {
+        return res.json({ status: "friends" });
+      }
+      
+      const existingRequest = await storage.getFriendRequestBetweenUsers(req.session.userId!, targetUserId);
+      if (existingRequest && existingRequest.status === "pending") {
+        if (existingRequest.fromUserId === req.session.userId) {
+          return res.json({ status: "pending_outgoing", requestId: existingRequest.id });
+        } else {
+          return res.json({ status: "pending_incoming", requestId: existingRequest.id });
+        }
+      }
+      
+      res.json({ status: "none" });
+    } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });

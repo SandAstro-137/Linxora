@@ -48,6 +48,9 @@ import {
   type ModerationVault,
   type VaultTransaction,
   type InsertVaultTransaction,
+  type Friend,
+  type FriendRequest,
+  type InsertFriendRequest,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -203,6 +206,19 @@ export interface IStorage {
   depositToVault(amount: number, fromUserId: string, note?: string): Promise<VaultTransaction>;
   distributeFromVault(amount: number, toUserId: string, distributedByUserId: string, note?: string): Promise<VaultTransaction>;
   getVaultTransactions(limit?: number): Promise<VaultTransaction[]>;
+
+  // Friend operations
+  getFriends(userId: string): Promise<Friend[]>;
+  getFriendRequest(id: string): Promise<FriendRequest | undefined>;
+  getFriendRequestsByUser(userId: string): Promise<FriendRequest[]>;
+  getIncomingFriendRequests(userId: string): Promise<FriendRequest[]>;
+  getFriendRequestBetweenUsers(userId1: string, userId2: string): Promise<FriendRequest | undefined>;
+  areFriends(userId1: string, userId2: string): Promise<boolean>;
+  createFriendRequest(request: InsertFriendRequest): Promise<FriendRequest>;
+  updateFriendRequest(id: string, updates: Partial<FriendRequest>): Promise<FriendRequest | undefined>;
+  createFriendship(userId: string, friendId: string): Promise<void>;
+  removeFriendship(userId: string, friendId: string): Promise<void>;
+  searchUsersByUserId(userIdQuery: number): Promise<User[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -231,6 +247,8 @@ export class MemStorage implements IStorage {
   private jobRequests: Map<string, JobRequest>;
   private moderationVault: ModerationVault | null;
   private vaultTransactions: Map<string, VaultTransaction>;
+  private friends: Map<string, Friend>;
+  private friendRequests: Map<string, FriendRequest>;
   private userIdCounter: number;
 
   constructor() {
@@ -260,6 +278,8 @@ export class MemStorage implements IStorage {
     this.jobRequests = new Map();
     this.moderationVault = null;
     this.vaultTransactions = new Map();
+    this.friends = new Map();
+    this.friendRequests = new Map();
   }
 
   // User operations
@@ -1265,6 +1285,91 @@ export class MemStorage implements IStorage {
     return Array.from(this.vaultTransactions.values())
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
       .slice(0, limit);
+  }
+
+  // Friend operations
+  async getFriends(userId: string): Promise<Friend[]> {
+    return Array.from(this.friends.values())
+      .filter(f => f.userId === userId || f.friendId === userId);
+  }
+
+  async getFriendRequest(id: string): Promise<FriendRequest | undefined> {
+    return this.friendRequests.get(id);
+  }
+
+  async getFriendRequestsByUser(userId: string): Promise<FriendRequest[]> {
+    return Array.from(this.friendRequests.values())
+      .filter(r => r.fromUserId === userId || r.toUserId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getIncomingFriendRequests(userId: string): Promise<FriendRequest[]> {
+    return Array.from(this.friendRequests.values())
+      .filter(r => r.toUserId === userId && r.status === "pending")
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getFriendRequestBetweenUsers(userId1: string, userId2: string): Promise<FriendRequest | undefined> {
+    return Array.from(this.friendRequests.values())
+      .find(r => 
+        (r.fromUserId === userId1 && r.toUserId === userId2) ||
+        (r.fromUserId === userId2 && r.toUserId === userId1)
+      );
+  }
+
+  async areFriends(userId1: string, userId2: string): Promise<boolean> {
+    return Array.from(this.friends.values())
+      .some(f => 
+        (f.userId === userId1 && f.friendId === userId2) ||
+        (f.userId === userId2 && f.friendId === userId1)
+      );
+  }
+
+  async createFriendRequest(request: InsertFriendRequest): Promise<FriendRequest> {
+    const id = randomUUID();
+    const friendRequest: FriendRequest = {
+      id,
+      ...request,
+      status: request.status || "pending",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.friendRequests.set(id, friendRequest);
+    return friendRequest;
+  }
+
+  async updateFriendRequest(id: string, updates: Partial<FriendRequest>): Promise<FriendRequest | undefined> {
+    const request = this.friendRequests.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.friendRequests.set(id, updated);
+    return updated;
+  }
+
+  async createFriendship(userId: string, friendId: string): Promise<void> {
+    const id = randomUUID();
+    const friendship: Friend = {
+      id,
+      userId,
+      friendId,
+      createdAt: new Date(),
+    };
+    this.friends.set(id, friendship);
+  }
+
+  async removeFriendship(userId: string, friendId: string): Promise<void> {
+    const entries = Array.from(this.friends.entries());
+    for (const [id, f] of entries) {
+      if ((f.userId === userId && f.friendId === friendId) ||
+          (f.userId === friendId && f.friendId === userId)) {
+        this.friends.delete(id);
+      }
+    }
+  }
+
+  async searchUsersByUserId(userIdQuery: number): Promise<User[]> {
+    return Array.from(this.users.values())
+      .filter(u => u.userId === userIdQuery);
   }
 }
 

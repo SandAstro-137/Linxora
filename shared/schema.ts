@@ -794,3 +794,41 @@ export const insertVaultTransactionSchema = createInsertSchema(vaultTransactions
 
 export type InsertVaultTransaction = z.infer<typeof insertVaultTransactionSchema>;
 export type VaultTransaction = typeof vaultTransactions.$inferSelect;
+
+// Friend Request Status
+export const FriendRequestStatus = {
+  PENDING: "pending",
+  ACCEPTED: "accepted",
+  DECLINED: "declined"
+} as const;
+
+export type FriendRequestStatusType = typeof FriendRequestStatus[keyof typeof FriendRequestStatus];
+
+// Friends table - tracks friend relationships
+export const friends = pgTable("friends", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  friendId: varchar("friend_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Friend = typeof friends.$inferSelect;
+
+// Friend Requests table - tracks pending friend requests
+export const friendRequests = pgTable("friend_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fromUserId: varchar("from_user_id").notNull(),
+  toUserId: varchar("to_user_id").notNull(),
+  status: text("status").notNull().default(FriendRequestStatus.PENDING),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertFriendRequestSchema = createInsertSchema(friendRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertFriendRequest = z.infer<typeof insertFriendRequestSchema>;
+export type FriendRequest = typeof friendRequests.$inferSelect;
