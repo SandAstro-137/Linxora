@@ -336,6 +336,7 @@ export class MemStorage implements IStorage {
       totalRatings: insertUser.totalRatings ?? 0,
       completionPercentage: insertUser.completionPercentage ?? "0",
       workingHours: insertUser.workingHours ?? {},
+      blacklistedFreelancers: insertUser.blacklistedFreelancers ?? [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };

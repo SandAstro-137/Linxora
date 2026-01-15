@@ -178,7 +178,7 @@ function Router() {
           <VaultPage />
         </ProtectedRoute>
       </Route>
-      <Route path="/messages">
+      <Route path="/messages/:userId?">
         <ProtectedRoute>
           <MessagesPage />
         </ProtectedRoute>

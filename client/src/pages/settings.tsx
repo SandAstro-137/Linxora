@@ -10,10 +10,148 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check } from "lucide-react";
+import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
+
+interface BlacklistedUser {
+  id: string;
+  userId: number;
+  username: string;
+  avatar: string | null;
+  level: number;
+  rating: string;
+}
+
+function BlacklistSection() {
+  const { toast } = useToast();
+  const [searchId, setSearchId] = useState("");
+
+  const { data: blacklist = [], isLoading } = useQuery<BlacklistedUser[]>({
+    queryKey: ["/api/blacklist"],
+  });
+
+  const addToBlacklistMutation = useMutation({
+    mutationFn: async (freelancerId: string) => {
+      return apiRequest("POST", `/api/blacklist/${freelancerId}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/blacklist"] });
+      toast({ title: "Freelancer Blacklisted", description: "They can no longer apply to your jobs." });
+      setSearchId("");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const removeFromBlacklistMutation = useMutation({
+    mutationFn: async (freelancerId: string) => {
+      return apiRequest("DELETE", `/api/blacklist/${freelancerId}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/blacklist"] });
+      toast({ title: "Removed from Blacklist", description: "Freelancer can now apply to your jobs." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const searchFreelancerMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/users/find?userId=${userId}`, { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "User not found");
+      }
+      return res.json();
+    },
+    onSuccess: (user) => {
+      if (user.role !== "freelancer") {
+        toast({ title: "Error", description: "Can only blacklist freelancers", variant: "destructive" });
+        return;
+      }
+      addToBlacklistMutation.mutate(user.id);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Ban className="h-5 w-5" />
+          Freelancer Blacklist
+        </CardTitle>
+        <CardDescription>Block specific freelancers from applying to your jobs</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex gap-2">
+          <Input
+            type="number"
+            placeholder="Enter User ID to blacklist"
+            value={searchId}
+            onChange={(e) => setSearchId(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchId && searchFreelancerMutation.mutate(searchId)}
+            data-testid="input-blacklist-user-id"
+          />
+          <Button
+            onClick={() => searchId && searchFreelancerMutation.mutate(searchId)}
+            disabled={!searchId || searchFreelancerMutation.isPending || addToBlacklistMutation.isPending}
+            data-testid="button-add-to-blacklist"
+          >
+            <Ban className="w-4 h-4 mr-2" />
+            Block
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading blacklist...</p>
+        ) : blacklist.length === 0 ? (
+          <div className="text-center py-4 text-muted-foreground">
+            <Ban className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">No freelancers are blacklisted.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">Blocked Freelancers ({blacklist.length})</p>
+            {blacklist.map((freelancer) => (
+              <div
+                key={freelancer.id}
+                className="flex items-center justify-between p-2 border rounded-lg"
+                data-testid={`blacklisted-${freelancer.id}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={freelancer.avatar || undefined} />
+                    <AvatarFallback>{freelancer.username.charAt(0).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-sm font-medium">{freelancer.username}</p>
+                    <p className="text-xs text-muted-foreground">ID: {freelancer.userId} | Level {freelancer.level}</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => removeFromBlacklistMutation.mutate(freelancer.id)}
+                  disabled={removeFromBlacklistMutation.isPending}
+                  data-testid={`button-unblock-${freelancer.id}`}
+                >
+                  <UserMinus className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function SettingsPage() {
   const { user, refetchUser } = useAuth();
@@ -457,6 +595,10 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {user?.role === "customer" && (
+        <BlacklistSection />
+      )}
 
       <Card>
         <CardHeader>

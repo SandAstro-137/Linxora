@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useRoute } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,13 +51,21 @@ function formatDateET(date: Date | string) {
 export default function MessagesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [, params] = useRoute("/messages/:userId");
+  const urlUserId = params?.userId;
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(urlUserId || null);
   const [newMessage, setNewMessage] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [searchUserId, setSearchUserId] = useState("");
   const [foundUser, setFoundUser] = useState<UserInfo | null>(null);
   const [searchError, setSearchError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (urlUserId && urlUserId !== selectedConversation) {
+      setSelectedConversation(urlUserId);
+    }
+  }, [urlUserId]);
 
   const { data: conversations = [], isLoading: conversationsLoading } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],

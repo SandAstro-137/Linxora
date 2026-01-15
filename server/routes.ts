@@ -798,6 +798,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!job) {
         return res.status(404).json({ error: "This job no longer exists. It may have been removed by the customer." });
       }
+
+      // Check if freelancer is blacklisted by this customer
+      const customer = await storage.getUser(job.customerId);
+      if (customer?.blacklistedFreelancers?.includes(req.session.userId!)) {
+        return res.status(403).json({ error: "You are not eligible to apply for this customer's jobs." });
+      }
       
       if (job.status === "completed") {
         return res.status(400).json({ error: "This job has already been completed." });
@@ -3398,6 +3404,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
 
       res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // === CUSTOMER BLACKLIST ROUTES ===
+
+  // Get customer's blacklist
+  app.get("/api/blacklist", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "customer") {
+        return res.status(403).json({ error: "Only customers can manage blacklists" });
+      }
+
+      const blacklistedIds = user.blacklistedFreelancers || [];
+      
+      // Enrich with freelancer details
+      const blacklistedUsers = await Promise.all(
+        blacklistedIds.map(async (freelancerId: string) => {
+          const freelancer = await storage.getUser(freelancerId);
+          return freelancer ? {
+            id: freelancer.id,
+            userId: freelancer.userId,
+            username: freelancer.username,
+            avatar: freelancer.avatar,
+            level: freelancer.level,
+            rating: freelancer.rating,
+          } : null;
+        })
+      );
+
+      res.json(blacklistedUsers.filter(Boolean));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Add freelancer to blacklist
+  app.post("/api/blacklist/:freelancerId", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "customer") {
+        return res.status(403).json({ error: "Only customers can manage blacklists" });
+      }
+
+      const freelancer = await storage.getUser(req.params.freelancerId);
+      if (!freelancer) {
+        return res.status(404).json({ error: "Freelancer not found" });
+      }
+      if (freelancer.role !== "freelancer") {
+        return res.status(400).json({ error: "Can only blacklist freelancers" });
+      }
+
+      const currentBlacklist = user.blacklistedFreelancers || [];
+      if (currentBlacklist.includes(req.params.freelancerId)) {
+        return res.status(400).json({ error: "Freelancer is already blacklisted" });
+      }
+
+      await storage.updateUser(req.session.userId!, {
+        blacklistedFreelancers: [...currentBlacklist, req.params.freelancerId],
+      });
+
+      res.json({ success: true, message: `${freelancer.username} has been blacklisted` });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Remove freelancer from blacklist
+  app.delete("/api/blacklist/:freelancerId", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "customer") {
+        return res.status(403).json({ error: "Only customers can manage blacklists" });
+      }
+
+      const currentBlacklist = user.blacklistedFreelancers || [];
+      if (!currentBlacklist.includes(req.params.freelancerId)) {
+        return res.status(400).json({ error: "Freelancer is not in your blacklist" });
+      }
+
+      await storage.updateUser(req.session.userId!, {
+        blacklistedFreelancers: currentBlacklist.filter((id: string) => id !== req.params.freelancerId),
+      });
+
+      res.json({ success: true, message: "Freelancer has been removed from blacklist" });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
