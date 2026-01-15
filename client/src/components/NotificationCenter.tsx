@@ -35,6 +35,7 @@ export function NotificationCenter() {
   const { data: notifications = [] } = useQuery<Notification[]>({
     queryKey: ["/api/notifications"],
     enabled: true,
+    refetchInterval: 10000,
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({

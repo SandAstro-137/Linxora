@@ -3962,8 +3962,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Moderator Meeting routes - scheduled by Head of Moderation or Founder
   app.get("/api/moderator-meetings", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
-      const meetings = await storage.getModeratorMeetings(req.session.userId!);
-      res.json(meetings);
+      const userId = req.session.userId!;
+      // Get meetings user is invited to
+      const invitedMeetings = await storage.getModeratorMeetings(userId);
+      // Also get meetings user scheduled (for HoM/Founder to see their own meetings)
+      const scheduledMeetings = await storage.getModeratorMeetingsScheduledBy(userId);
+      
+      // Combine and deduplicate
+      const meetingMap = new Map<string, any>();
+      [...invitedMeetings, ...scheduledMeetings].forEach(m => meetingMap.set(m.id, m));
+      const allMeetings = Array.from(meetingMap.values()).sort(
+        (a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime()
+      );
+      
+      res.json(allMeetings);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -4031,6 +4043,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const parsedDate = new Date(scheduledDate);
       if (isNaN(parsedDate.getTime())) {
         return res.status(400).json({ error: "Invalid scheduled date" });
+      }
+
+      // Validate date is within allowed range (today to 6 months from now)
+      const now = new Date();
+      const sixMonthsFromNow = new Date();
+      sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+      
+      if (parsedDate < now) {
+        return res.status(400).json({ error: "Meeting date cannot be in the past" });
+      }
+      if (parsedDate > sixMonthsFromNow) {
+        return res.status(400).json({ error: "Meeting date cannot be more than 6 months in the future" });
       }
 
       // Validate duration if provided
@@ -4201,6 +4225,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Meeting Exemption routes - moderators can request exemption from required meetings
+  app.get("/api/meeting-exemptions", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      // HoM/Founder can see all pending exemptions, moderators see only their own
+      if (user.role === UserRole.HEAD_OF_MODERATION || user.role === UserRole.FOUNDER) {
+        const exemptions = await storage.getPendingMeetingExemptions();
+        // Enrich with user and meeting data
+        const enrichedExemptions = await Promise.all(
+          exemptions.map(async (e) => {
+            const moderator = await storage.getUser(e.moderatorId);
+            const meeting = await storage.getModeratorMeeting(e.meetingId);
+            return { ...e, moderator, meeting };
+          })
+        );
+        res.json(enrichedExemptions);
+      } else {
+        const exemptions = await storage.getMeetingExemptionsByModerator(req.session.userId!);
+        const enrichedExemptions = await Promise.all(
+          exemptions.map(async (e) => {
+            const meeting = await storage.getModeratorMeeting(e.meetingId);
+            return { ...e, meeting };
+          })
+        );
+        res.json(enrichedExemptions);
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/meeting-exemptions", requireRole("moderator"), async (req, res) => {
+    try {
+      const { meetingId, reason } = req.body;
+      const userId = req.session.userId!;
+
+      if (!meetingId || !reason) {
+        return res.status(400).json({ error: "Meeting ID and reason are required" });
+      }
+
+      if (typeof reason !== "string" || reason.trim().length < 10 || reason.length > 500) {
+        return res.status(400).json({ error: "Reason must be between 10 and 500 characters" });
+      }
+
+      // Verify meeting exists
+      const meeting = await storage.getModeratorMeeting(meetingId);
+      if (!meeting) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+
+      // Check if user is invited to this meeting
+      const isInvited = meeting.isTeamMeeting || meeting.invitedModeratorIds?.includes(userId);
+      if (!isInvited) {
+        return res.status(403).json({ error: "You are not invited to this meeting" });
+      }
+
+      // Check for existing pending exemption
+      const existingExemptions = await storage.getMeetingExemptionsByModerator(userId);
+      const hasPending = existingExemptions.some(
+        e => e.meetingId === meetingId && e.status === "pending"
+      );
+      if (hasPending) {
+        return res.status(400).json({ error: "You already have a pending exemption request for this meeting" });
+      }
+
+      const exemption = await storage.createMeetingExemption({
+        meetingId,
+        moderatorId: userId,
+        reason: reason.trim(),
+      });
+
+      // Notify HoM/Founder
+      const users = await storage.getUsers();
+      const admins = users.filter(u => 
+        u.role === UserRole.HEAD_OF_MODERATION || u.role === UserRole.FOUNDER
+      );
+      const requester = await storage.getUser(userId);
+      for (const admin of admins) {
+        await storage.createNotification({
+          userId: admin.id,
+          type: "system",
+          title: "Meeting Exemption Request",
+          message: `${requester?.username || "A moderator"} has requested an exemption from "${meeting.title}"`,
+          relatedId: exemption.id,
+        });
+      }
+
+      res.status(201).json(exemption);
+    } catch (error) {
+      console.error("Error creating exemption:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/meeting-exemptions/:id/respond", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { approved, note } = req.body;
+      const userId = req.session.userId!;
+
+      if (typeof approved !== "boolean") {
+        return res.status(400).json({ error: "Approved must be true or false" });
+      }
+
+      const exemption = await storage.getMeetingExemption(id);
+      if (!exemption) {
+        return res.status(404).json({ error: "Exemption request not found" });
+      }
+
+      if (exemption.status !== "pending") {
+        return res.status(400).json({ error: "This exemption request has already been reviewed" });
+      }
+
+      const updatedExemption = await storage.updateMeetingExemption(id, {
+        status: approved ? "approved" : "denied",
+        reviewedById: userId,
+        reviewNote: note?.trim() || null,
+        reviewedAt: new Date(),
+      });
+
+      // Notify the moderator
+      const meeting = await storage.getModeratorMeeting(exemption.meetingId);
+      await storage.createNotification({
+        userId: exemption.moderatorId,
+        type: "system",
+        title: approved ? "Exemption Approved" : "Exemption Denied",
+        message: approved
+          ? `Your exemption request for "${meeting?.title || "a meeting"}" has been approved`
+          : `Your exemption request for "${meeting?.title || "a meeting"}" has been denied${note ? `: ${note}` : ""}`,
+        relatedId: exemption.id,
+      });
+
+      res.json(updatedExemption);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Founder-only routes for managing Head of Moderation
   app.get("/api/admin/heads-of-moderation", requireRole("founder"), async (req, res) => {
     try {
@@ -4294,8 +4460,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all moderators (for Founder to see who can be promoted)
-  app.get("/api/admin/moderators", requireRole("founder"), async (req, res) => {
+  // Get all moderators (for Founder and Head of Moderation to manage team)
+  app.get("/api/admin/moderators", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const users = await storage.getUsers();
       const moderators = users.filter(u => 

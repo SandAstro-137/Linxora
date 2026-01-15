@@ -142,7 +142,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/notifications">
-        <ProtectedRoute allowedRoles={["freelancer"]}>
+        <ProtectedRoute allowedRoles={["freelancer", "customer", "moderator", "head_of_moderation", "founder"]}>
           <NotificationsPage />
         </ProtectedRoute>
       </Route>

@@ -657,6 +657,44 @@ export const insertMeetingRsvpSchema = createInsertSchema(meetingRsvps)
 export type InsertMeetingRsvp = z.infer<typeof insertMeetingRsvpSchema>;
 export type MeetingRsvp = typeof meetingRsvps.$inferSelect;
 
+// Meeting Exemption Status
+export const MeetingExemptionStatus = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  DENIED: "denied"
+} as const;
+
+export type MeetingExemptionStatusType = typeof MeetingExemptionStatus[keyof typeof MeetingExemptionStatus];
+
+// Meeting Exemption Requests table - moderators can request exemption from meetings
+export const meetingExemptions = pgTable("meeting_exemptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  meetingId: varchar("meeting_id").notNull(),
+  moderatorId: varchar("moderator_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default(MeetingExemptionStatus.PENDING),
+  reviewedById: varchar("reviewed_by_id"),
+  reviewNote: text("review_note"),
+  createdAt: timestamp("created_at").defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+});
+
+export const insertMeetingExemptionSchema = createInsertSchema(meetingExemptions)
+  .omit({
+    id: true,
+    status: true,
+    reviewedById: true,
+    reviewNote: true,
+    createdAt: true,
+    reviewedAt: true,
+  })
+  .extend({
+    reason: z.string().min(10, "Reason must be at least 10 characters").max(500),
+  });
+
+export type InsertMeetingExemption = z.infer<typeof insertMeetingExemptionSchema>;
+export type MeetingExemption = typeof meetingExemptions.$inferSelect;
+
 // Team Room Messages table - persistent chat for moderator team room
 export const teamRoomMessages = pgTable("team_room_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

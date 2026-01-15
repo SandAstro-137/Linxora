@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { format, formatDistanceToNow } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
-import { Shield, Users, Calendar, ClipboardList, Plus, Clock, CheckCircle2, XCircle, AlertCircle, User, CalendarDays } from "lucide-react";
+import { Shield, Users, Calendar, ClipboardList, Plus, Clock, CheckCircle2, XCircle, AlertCircle, User, CalendarDays, FileQuestion } from "lucide-react";
 
 interface User {
   id: string;
@@ -68,6 +68,20 @@ interface MeetingRsvp {
   moderator?: User;
 }
 
+interface MeetingExemption {
+  id: string;
+  meetingId: string;
+  moderatorId: string;
+  reason: string;
+  status: string;
+  reviewedById: string | null;
+  reviewNote: string | null;
+  createdAt: Date;
+  reviewedAt: Date | null;
+  moderator?: User;
+  meeting?: ModeratorMeeting;
+}
+
 const ET_TIMEZONE = "America/New_York";
 
 function formatToET(date: Date | string): string {
@@ -102,6 +116,28 @@ export default function TeamManagementPage() {
       const res = await fetch(`/api/moderator-meetings/${selectedMeetingId}/rsvps`);
       if (!res.ok) throw new Error("Failed to fetch RSVPs");
       return res.json();
+    },
+  });
+
+  const { data: pendingExemptions = [], isLoading: exemptionsLoading } = useQuery<MeetingExemption[]>({
+    queryKey: ["/api/meeting-exemptions"],
+  });
+
+  const respondExemptionMutation = useMutation({
+    mutationFn: async ({ id, approved, note }: { id: string; approved: boolean; note?: string }) => {
+      return apiRequest("POST", `/api/meeting-exemptions/${id}/respond`, { approved, note });
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/meeting-exemptions"] });
+      toast({
+        title: variables.approved ? "Exemption Approved" : "Exemption Denied",
+        description: variables.approved
+          ? "The moderator has been notified of the approval"
+          : "The moderator has been notified of the denial",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message || "Failed to respond to exemption", variant: "destructive" });
     },
   });
 
@@ -183,7 +219,7 @@ export default function TeamManagementPage() {
       </div>
 
       <Tabs defaultValue="team" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="team" data-testid="tab-team">
             <Users className="w-4 h-4 mr-2" />
             Team
@@ -195,6 +231,10 @@ export default function TeamManagementPage() {
           <TabsTrigger value="calendar" data-testid="tab-calendar">
             <Calendar className="w-4 h-4 mr-2" />
             Meetings
+          </TabsTrigger>
+          <TabsTrigger value="exemptions" data-testid="tab-exemptions">
+            <FileQuestion className="w-4 h-4 mr-2" />
+            Exemptions
           </TabsTrigger>
         </TabsList>
 
@@ -347,6 +387,81 @@ export default function TeamManagementPage() {
                   rsvps={selectedMeetingId === meeting.id ? meetingRsvps : []}
                   showRsvps={selectedMeetingId === meeting.id}
                 />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="exemptions" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold">Pending Exemption Requests</h2>
+            <Badge variant="secondary">{pendingExemptions.length} pending</Badge>
+          </div>
+
+          {exemptionsLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : pendingExemptions.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <FileQuestion className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No pending exemption requests</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {pendingExemptions.map((exemption) => (
+                <Card key={exemption.id} data-testid={`card-exemption-${exemption.id}`}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-4">
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={exemption.moderator?.avatar || undefined} />
+                        <AvatarFallback>
+                          {exemption.moderator?.username?.charAt(0).toUpperCase() || "?"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <h3 className="font-semibold">{exemption.moderator?.username || "Unknown"}</h3>
+                          <Badge variant="outline">Exemption Request</Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          Meeting: {exemption.meeting?.title || "Unknown meeting"}
+                        </p>
+                        <div className="bg-muted p-3 rounded-md mb-3">
+                          <p className="text-sm font-medium mb-1">Reason:</p>
+                          <p className="text-sm text-muted-foreground">{exemption.reason}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => respondExemptionMutation.mutate({ id: exemption.id, approved: true })}
+                            disabled={respondExemptionMutation.isPending}
+                            data-testid={`button-approve-exemption-${exemption.id}`}
+                          >
+                            <CheckCircle2 className="w-4 h-4 mr-1" />
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => respondExemptionMutation.mutate({ id: exemption.id, approved: false })}
+                            disabled={respondExemptionMutation.isPending}
+                            data-testid={`button-deny-exemption-${exemption.id}`}
+                          >
+                            <XCircle className="w-4 h-4 mr-1" />
+                            Deny
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {exemption.createdAt && formatDistanceToNow(new Date(exemption.createdAt), { addSuffix: true })}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           )}
@@ -518,6 +633,12 @@ function MeetingForm({
   const [isTeamMeeting, setIsTeamMeeting] = useState(true);
   const [selectedModerators, setSelectedModerators] = useState<string[]>([]);
 
+  const today = new Date();
+  const minDate = today.toISOString().slice(0, 16);
+  const sixMonthsFromNow = new Date(today);
+  sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+  const maxDate = sixMonthsFromNow.toISOString().slice(0, 16);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
@@ -563,9 +684,12 @@ function MeetingForm({
             type="datetime-local"
             value={scheduledDate}
             onChange={(e) => setScheduledDate(e.target.value)}
+            min={minDate}
+            max={maxDate}
             required
             data-testid="input-meeting-date"
           />
+          <p className="text-xs text-muted-foreground">Must be within the next 6 months</p>
         </div>
 
         <div className="space-y-2">

@@ -1,14 +1,18 @@
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { format } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
-import { CalendarDays, Clock, Users, CheckCircle2, XCircle, AlertCircle, Shield } from "lucide-react";
+import { CalendarDays, Clock, Users, CheckCircle2, XCircle, AlertCircle, Shield, FileQuestion } from "lucide-react";
 
 interface ModeratorMeeting {
   id: string;
@@ -66,6 +70,26 @@ export default function MeetingsPage() {
       toast({
         title: "Error",
         description: error.message || "Failed to respond to meeting",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const exemptionMutation = useMutation({
+    mutationFn: async ({ meetingId, reason }: { meetingId: string; reason: string }) => {
+      return apiRequest("POST", "/api/meeting-exemptions", { meetingId, reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/meeting-exemptions"] });
+      toast({
+        title: "Request Submitted",
+        description: "Your exemption request has been sent for review",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to submit exemption request",
         variant: "destructive",
       });
     },
@@ -130,7 +154,8 @@ export default function MeetingsPage() {
                   meeting={meeting}
                   onAccept={() => rsvpMutation.mutate({ meetingId: meeting.id, status: "accepted" })}
                   onDecline={() => rsvpMutation.mutate({ meetingId: meeting.id, status: "declined" })}
-                  isPending={rsvpMutation.isPending}
+                  onRequestExemption={(reason) => exemptionMutation.mutate({ meetingId: meeting.id, reason })}
+                  isPending={rsvpMutation.isPending || exemptionMutation.isPending}
                 />
               ))}
             </div>
@@ -160,16 +185,21 @@ function MeetingCard({
   meeting,
   onAccept,
   onDecline,
+  onRequestExemption,
   isPending,
   isPast,
 }: {
   meeting: ModeratorMeeting;
   onAccept?: () => void;
   onDecline?: () => void;
+  onRequestExemption?: (reason: string) => void;
   isPending?: boolean;
   isPast?: boolean;
 }) {
+  const { toast } = useToast();
   const { user } = useAuth();
+  const [exemptionDialogOpen, setExemptionDialogOpen] = useState(false);
+  const [exemptionReason, setExemptionReason] = useState("");
 
   const { data: myRsvp } = useQuery<MeetingRsvp>({
     queryKey: ["/api/moderator-meetings", meeting.id, "my-rsvp"],
@@ -185,12 +215,28 @@ function MeetingCard({
   const statusConfig = {
     accepted: { icon: CheckCircle2, color: "text-green-500", bg: "bg-green-500/10", label: "Accepted" },
     declined: { icon: XCircle, color: "text-red-500", bg: "bg-red-500/10", label: "Declined" },
-    pending: { icon: AlertCircle, color: "text-yellow-500", bg: "bg-yellow-500/10", label: "Pending" },
+    pending: { icon: AlertCircle, color: "text-yellow-500", bg: "bg-yellow-500/10", label: "Pending Response" },
   };
 
   const rsvpStatus = myRsvp?.status || "pending";
   const status = statusConfig[rsvpStatus as keyof typeof statusConfig] || statusConfig.pending;
   const StatusIcon = status.icon;
+
+  const handleExemptionSubmit = () => {
+    if (exemptionReason.trim().length < 10) {
+      toast({
+        title: "Error",
+        description: "Please provide a reason of at least 10 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+    onRequestExemption?.(exemptionReason);
+    setExemptionDialogOpen(false);
+    setExemptionReason("");
+  };
+
+  const isModerator = user?.role === "moderator";
 
   return (
     <Card data-testid={`card-meeting-${meeting.id}`} className={isPast ? "opacity-70" : ""}>
@@ -203,6 +249,7 @@ function MeetingCard({
               {meeting.isTeamMeeting && (
                 <Badge variant="outline">Team Meeting</Badge>
               )}
+              <Badge variant="secondary">Required</Badge>
               {isPast && (
                 <Badge variant="secondary">Past</Badge>
               )}
@@ -223,36 +270,81 @@ function MeetingCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {!isPast && rsvpStatus === "pending" ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onAccept}
-                  disabled={isPending}
-                  className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                  data-testid={`button-accept-${meeting.id}`}
-                >
-                  <CheckCircle2 className="w-4 h-4 mr-1" />
-                  Accept
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onDecline}
-                  disabled={isPending}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  data-testid={`button-decline-${meeting.id}`}
-                >
-                  <XCircle className="w-4 h-4 mr-1" />
-                  Decline
-                </Button>
-              </>
-            ) : (
-              <div className={`flex items-center gap-1 px-2 py-1 rounded-md ${status.bg}`}>
-                <StatusIcon className={`w-4 h-4 ${status.color}`} />
-                <span className={`text-sm font-medium ${status.color}`}>{status.label}</span>
+          <div className="flex flex-col items-end gap-2">
+            <div className={`flex items-center gap-1 px-2 py-1 rounded-md ${status.bg}`}>
+              <StatusIcon className={`w-4 h-4 ${status.color}`} />
+              <span className={`text-sm font-medium ${status.color}`}>{status.label}</span>
+            </div>
+            
+            {!isPast && (
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {rsvpStatus !== "accepted" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onAccept}
+                    disabled={isPending}
+                    className="text-green-600 hover:text-green-700"
+                    data-testid={`button-accept-${meeting.id}`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-1" />
+                    Confirm
+                  </Button>
+                )}
+                
+                {isModerator && (
+                  <Dialog open={exemptionDialogOpen} onOpenChange={setExemptionDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid={`button-exemption-${meeting.id}`}
+                      >
+                        <FileQuestion className="w-4 h-4 mr-1" />
+                        Request Exemption
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Request Meeting Exemption</DialogTitle>
+                        <DialogDescription>
+                          Meetings are mandatory. If you cannot attend, please provide a valid reason for your exemption request.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="exemption-reason">Reason for exemption</Label>
+                          <Textarea
+                            id="exemption-reason"
+                            value={exemptionReason}
+                            onChange={(e) => setExemptionReason(e.target.value)}
+                            placeholder="Please explain why you need to be exempted from this meeting..."
+                            className="min-h-[100px]"
+                            data-testid="input-exemption-reason"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Minimum 10 characters required
+                          </p>
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setExemptionDialogOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleExemptionSubmit}
+                          disabled={exemptionReason.trim().length < 10}
+                          data-testid="button-submit-exemption"
+                        >
+                          Submit Request
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </div>
             )}
           </div>

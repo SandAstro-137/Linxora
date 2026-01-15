@@ -37,6 +37,8 @@ import {
   type InsertModeratorMeeting,
   type MeetingRsvp,
   type InsertMeetingRsvp,
+  type MeetingExemption,
+  type InsertMeetingExemption,
   type TeamRoomMessage,
   type InsertTeamRoomMessage,
   type UserPreferences,
@@ -53,6 +55,7 @@ import {
   type InsertFriendRequest,
   type JobRecommendation,
   type InsertJobRecommendation,
+  MeetingExemptionStatus,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -182,6 +185,14 @@ export interface IStorage {
   createMeetingRsvp(rsvp: InsertMeetingRsvp): Promise<MeetingRsvp>;
   updateMeetingRsvp(id: string, updates: Partial<MeetingRsvp>): Promise<MeetingRsvp | undefined>;
 
+  // Meeting Exemption operations
+  getMeetingExemption(id: string): Promise<MeetingExemption | undefined>;
+  getMeetingExemptionsByMeeting(meetingId: string): Promise<MeetingExemption[]>;
+  getMeetingExemptionsByModerator(moderatorId: string): Promise<MeetingExemption[]>;
+  getPendingMeetingExemptions(): Promise<MeetingExemption[]>;
+  createMeetingExemption(exemption: InsertMeetingExemption): Promise<MeetingExemption>;
+  updateMeetingExemption(id: string, updates: Partial<MeetingExemption>): Promise<MeetingExemption | undefined>;
+
   // Team Room Message operations
   getTeamRoomMessages(limit?: number): Promise<TeamRoomMessage[]>;
   createTeamRoomMessage(message: InsertTeamRoomMessage): Promise<TeamRoomMessage>;
@@ -260,6 +271,7 @@ export class MemStorage implements IStorage {
   private friends: Map<string, Friend>;
   private friendRequests: Map<string, FriendRequest>;
   private jobRecommendations: Map<string, JobRecommendation>;
+  private meetingExemptions: Map<string, MeetingExemption>;
   private userIdCounter: number;
 
   constructor() {
@@ -292,6 +304,7 @@ export class MemStorage implements IStorage {
     this.friends = new Map();
     this.friendRequests = new Map();
     this.jobRecommendations = new Map();
+    this.meetingExemptions = new Map();
   }
 
   // User operations
@@ -1100,6 +1113,48 @@ export class MemStorage implements IStorage {
     if (!rsvp) return undefined;
     const updated = { ...rsvp, ...updates };
     this.meetingRsvps.set(id, updated);
+    return updated;
+  }
+
+  // Meeting Exemption operations
+  async getMeetingExemption(id: string): Promise<MeetingExemption | undefined> {
+    return this.meetingExemptions.get(id);
+  }
+
+  async getMeetingExemptionsByMeeting(meetingId: string): Promise<MeetingExemption[]> {
+    return Array.from(this.meetingExemptions.values()).filter((e) => e.meetingId === meetingId);
+  }
+
+  async getMeetingExemptionsByModerator(moderatorId: string): Promise<MeetingExemption[]> {
+    return Array.from(this.meetingExemptions.values()).filter((e) => e.moderatorId === moderatorId);
+  }
+
+  async getPendingMeetingExemptions(): Promise<MeetingExemption[]> {
+    return Array.from(this.meetingExemptions.values()).filter(
+      (e) => e.status === MeetingExemptionStatus.PENDING
+    );
+  }
+
+  async createMeetingExemption(insertExemption: InsertMeetingExemption): Promise<MeetingExemption> {
+    const id = randomUUID();
+    const exemption: MeetingExemption = {
+      ...insertExemption,
+      id,
+      status: MeetingExemptionStatus.PENDING,
+      reviewedById: null,
+      reviewNote: null,
+      createdAt: new Date(),
+      reviewedAt: null,
+    };
+    this.meetingExemptions.set(id, exemption);
+    return exemption;
+  }
+
+  async updateMeetingExemption(id: string, updates: Partial<MeetingExemption>): Promise<MeetingExemption | undefined> {
+    const exemption = this.meetingExemptions.get(id);
+    if (!exemption) return undefined;
+    const updated = { ...exemption, ...updates };
+    this.meetingExemptions.set(id, updated);
     return updated;
   }
 
