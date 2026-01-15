@@ -705,6 +705,36 @@ export const insertUserPreferencesSchema = createInsertSchema(userPreferences)
 export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;
 
+// Job Requests table - tracks freelancer applications to jobs
+export const JobRequestStatus = {
+  PENDING: "pending",
+  ACCEPTED: "accepted",
+  REJECTED: "rejected",
+  CANCELLED: "cancelled",
+  WITHDRAWN: "withdrawn"
+} as const;
+
+export type JobRequestStatusType = typeof JobRequestStatus[keyof typeof JobRequestStatus];
+
+export const jobRequests = pgTable("job_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  status: text("status").notNull().default(JobRequestStatus.PENDING),
+  message: text("message"), // Optional cover letter/message from freelancer
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertJobRequestSchema = createInsertSchema(jobRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertJobRequest = z.infer<typeof insertJobRequestSchema>;
+export type JobRequest = typeof jobRequests.$inferSelect;
+
 // Email verification tokens table
 export const emailVerificationTokens = pgTable("email_verification_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -725,3 +755,42 @@ export const insertEmailVerificationTokenSchema = createInsertSchema(emailVerifi
 
 export type InsertEmailVerificationToken = z.infer<typeof insertEmailVerificationTokenSchema>;
 export type EmailVerificationToken = typeof emailVerificationTokens.$inferSelect;
+
+// Moderation Vault - single vault for the moderation team
+export const moderationVault = pgTable("moderation_vault", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  balance: decimal("balance", { precision: 18, scale: 8 }).default("0"),
+  totalDeposited: decimal("total_deposited", { precision: 18, scale: 8 }).default("0"),
+  totalDistributed: decimal("total_distributed", { precision: 18, scale: 8 }).default("0"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type ModerationVault = typeof moderationVault.$inferSelect;
+
+// Vault Transaction Types
+export const VaultTransactionType = {
+  DEPOSIT: "deposit",
+  DISTRIBUTION: "distribution"
+} as const;
+
+export type VaultTransactionTypeEnum = typeof VaultTransactionType[keyof typeof VaultTransactionType];
+
+// Moderation Vault Transactions - track deposits and distributions
+export const vaultTransactions = pgTable("vault_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(), // "deposit" or "distribution"
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  fromUserId: varchar("from_user_id"), // Founder who deposited (for deposits)
+  toUserId: varchar("to_user_id"), // Moderator who received (for distributions)
+  distributedByUserId: varchar("distributed_by_user_id"), // Head of Moderation who distributed
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertVaultTransactionSchema = createInsertSchema(vaultTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertVaultTransaction = z.infer<typeof insertVaultTransactionSchema>;
+export type VaultTransaction = typeof vaultTransactions.$inferSelect;

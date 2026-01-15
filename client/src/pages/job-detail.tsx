@@ -84,6 +84,232 @@ interface TeamMessage {
   avatar?: string;
 }
 
+interface JobRequestWithFreelancer {
+  id: string;
+  jobId: string;
+  freelancerId: string;
+  status: string;
+  message: string | null;
+  createdAt: Date;
+  freelancer: {
+    id: string;
+    userId: number;
+    username: string;
+    avatar: string | null;
+    level: number;
+    rating: string;
+    completedJobs: number;
+    completionPercentage: string;
+  } | null;
+}
+
+function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: boolean }) {
+  const { toast } = useToast();
+  const [sortBy, setSortBy] = useState<"date" | "level" | "rating" | "jobs">("date");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+  const { data: requests = [], isLoading } = useQuery<JobRequestWithFreelancer[]>({
+    queryKey: ["/api/jobs", jobId, "requests"],
+    enabled: !!jobId && isJobOwner,
+  });
+
+  const approveFreelancerMutation = useMutation({
+    mutationFn: (freelancerId: string) => 
+      apiRequest("POST", `/api/jobs/${jobId}/approve-freelancer`, { freelancerId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      toast({
+        title: "Freelancer approved!",
+        description: "The freelancer has been assigned to your job.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to approve freelancer",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectFreelancerMutation = useMutation({
+    mutationFn: (freelancerId: string) => 
+      apiRequest("POST", `/api/jobs/${jobId}/reject-freelancer`, { freelancerId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "requests"] });
+      toast({
+        title: "Application declined",
+        description: "The freelancer has been notified.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to decline application",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const pendingRequests = requests.filter(r => r.status === "pending");
+
+  const sortedRequests = [...pendingRequests].sort((a, b) => {
+    const freelancerA = a.freelancer;
+    const freelancerB = b.freelancer;
+    
+    let comparison = 0;
+    
+    switch (sortBy) {
+      case "date":
+        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        break;
+      case "level":
+        comparison = (freelancerA?.level || 0) - (freelancerB?.level || 0);
+        break;
+      case "rating":
+        comparison = parseFloat(freelancerA?.rating || "0") - parseFloat(freelancerB?.rating || "0");
+        break;
+      case "jobs":
+        comparison = (freelancerA?.completedJobs || 0) - (freelancerB?.completedJobs || 0);
+        break;
+    }
+    
+    return sortOrder === "desc" ? -comparison : comparison;
+  });
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Freelancer Applications</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="animate-pulse space-y-3">
+            <div className="h-16 bg-muted rounded" />
+            <div className="h-16 bg-muted rounded" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (pendingRequests.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="w-5 h-5" />
+            Freelancer Applications
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground text-center py-4">
+            No applications yet. When freelancers apply, they will appear here.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <Users className="w-5 h-5" />
+            Freelancer Applications ({pendingRequests.length})
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <select
+              className="text-sm border rounded px-2 py-1 bg-background"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              data-testid="select-sort-by"
+            >
+              <option value="date">Date Applied</option>
+              <option value="level">Level</option>
+              <option value="rating">Rating</option>
+              <option value="jobs">Completed Jobs</option>
+            </select>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+              data-testid="button-toggle-sort"
+            >
+              {sortOrder === "desc" ? "↓" : "↑"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {sortedRequests.map((request) => (
+          <div
+            key={request.id}
+            className="flex items-center justify-between p-4 rounded-lg border bg-card"
+            data-testid={`job-request-${request.id}`}
+          >
+            <div className="flex items-center gap-4">
+              <Avatar className="h-12 w-12">
+                <AvatarImage src={request.freelancer?.avatar || undefined} />
+                <AvatarFallback>
+                  {request.freelancer?.username?.charAt(0).toUpperCase() || "?"}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{request.freelancer?.username || "Unknown"}</p>
+                  <Badge variant="secondary" className="text-xs">
+                    Level {request.freelancer?.level || 1}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Star className="w-3 h-3" />
+                    {parseFloat(request.freelancer?.rating || "0").toFixed(1)}
+                  </span>
+                  <span>{request.freelancer?.completedJobs || 0} jobs</span>
+                  <span>
+                    {formatDistanceToNow(new Date(request.createdAt), { addSuffix: true })}
+                  </span>
+                </div>
+                {request.message && (
+                  <p className="text-sm mt-1 text-muted-foreground italic">
+                    "{request.message}"
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => approveFreelancerMutation.mutate(request.freelancerId)}
+                disabled={approveFreelancerMutation.isPending || rejectFreelancerMutation.isPending}
+                data-testid={`button-approve-${request.freelancerId}`}
+              >
+                <Check className="w-4 h-4 mr-1" />
+                Accept
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => rejectFreelancerMutation.mutate(request.freelancerId)}
+                disabled={approveFreelancerMutation.isPending || rejectFreelancerMutation.isPending}
+                data-testid={`button-reject-${request.freelancerId}`}
+              >
+                <X className="w-4 h-4 mr-1" />
+                Decline
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function PublicTeamViewer({ job }: { job: EnrichedJob }) {
   const leadFreelancer = job.collaboratorData?.find(c => c.id === job.freelancerId);
   const otherCollaborators = job.collaboratorData?.filter(c => c.id !== job.freelancerId) || [];
@@ -679,15 +905,16 @@ export default function JobDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-job-requests"] });
       toast({
-        title: "Job claimed successfully!",
-        description: "You can now start working on this job.",
+        title: "Application submitted!",
+        description: "The customer will review your application.",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
-        title: "Failed to claim job",
-        description: "Please try again later.",
+        title: "Failed to apply",
+        description: error.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -788,8 +1015,9 @@ export default function JobDetailPage() {
 
   const isJobTaken = job.status === "claimed" || job.status === "in_progress";
   const isEligibleToClaim = job.status === "active" && user?.role === "freelancer";
-  const isJobOwner = job.freelancerId === user?.id;
-  const canOfferTeam = isJobTaken && !isJobOwner;
+  const isCustomer = job.customerId === user?.id;
+  const isFreelancerOwner = job.freelancerId === user?.id;
+  const canOfferTeam = isJobTaken && !isFreelancerOwner;
   const isTeamMember = 
     user?.id === job.customerId || 
     user?.id === job.freelancerId || 
@@ -957,6 +1185,11 @@ export default function JobDetailPage() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Show job requests queue for customers when job is active */}
+              {isCustomer && job.status === "active" && (
+                <JobRequestsViewer jobId={jobId!} isJobOwner={isCustomer} />
+              )}
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6 mt-6">
@@ -1046,7 +1279,7 @@ export default function JobDetailPage() {
                   disabled={claimJobMutation.isPending}
                   data-testid="button-claim-job"
                 >
-                  {claimJobMutation.isPending ? "Claiming..." : "Request to Take Job"}
+                  {claimJobMutation.isPending ? "Applying..." : "Apply for Job"}
                 </Button>
               )}
               {isJobTaken && (
@@ -1142,7 +1375,7 @@ export default function JobDetailPage() {
                   </DialogContent>
                 </Dialog>
               )}
-              {isJobOwner && (job.status === "claimed" || job.status === "in_progress") && (
+              {isCustomer && (job.status === "claimed" || job.status === "in_progress") && (
                 <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
                   <DialogTrigger asChild>
                     <Button

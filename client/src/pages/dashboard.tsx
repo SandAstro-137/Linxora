@@ -2,15 +2,31 @@ import { useAuth } from "@/lib/auth-context";
 import { useQuery } from "@tanstack/react-query";
 import { StatsCard } from "@/components/stats-card";
 import { JobCard } from "@/components/job-card";
-import { Briefcase, DollarSign, TrendingUp, Users } from "lucide-react";
+import { Briefcase, DollarSign, TrendingUp, Users, Shield, CalendarDays, AlertCircle, UserCheck } from "lucide-react";
 import { Job } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
+
+interface DashboardStats {
+  activeJobs?: number;
+  postedJobs?: number;
+  pendingJobs?: number;
+  totalSpent?: string;
+  approvedToday?: number;
+  totalJobs?: number;
+  teamMembers?: number;
+  pendingReports?: number;
+  upgradeRequests?: number;
+  totalUsers?: number;
+  platformRevenue?: string;
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
   });
 
@@ -174,6 +190,204 @@ export default function DashboardPage() {
     </>
   );
 
+  const renderHeadOfModerationDashboard = () => (
+    <>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatsCard
+          title="Team Members"
+          value={statsLoading ? "..." : stats?.teamMembers || 0}
+          icon={Users}
+          description="Active moderators"
+        />
+        <StatsCard
+          title="Pending Reports"
+          value={statsLoading ? "..." : stats?.pendingReports || 0}
+          icon={AlertCircle}
+          description="Needs attention"
+        />
+        <StatsCard
+          title="Upgrade Requests"
+          value={statsLoading ? "..." : stats?.upgradeRequests || 0}
+          icon={UserCheck}
+          description="Awaiting review"
+        />
+        <StatsCard
+          title="Pending Review"
+          value={statsLoading ? "..." : stats?.pendingJobs || 0}
+          icon={Briefcase}
+          description="Jobs to moderate"
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              Team Management
+            </CardTitle>
+            <CardDescription>
+              Manage your moderation team
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Assign tasks, schedule meetings, and monitor team performance.
+            </p>
+            <Button asChild>
+              <Link href="/team-management">
+                Manage Team
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5" />
+              Upcoming Meetings
+            </CardTitle>
+            <CardDescription>
+              Your scheduled meetings
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              View and manage your upcoming meetings with the team.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/meetings">
+                View Meetings
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5" />
+              Moderation Queue
+            </CardTitle>
+            <CardDescription>
+              Review pending jobs and reports
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Approve jobs, handle reports, and maintain platform quality.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/moderation">
+                Open Queue
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserCheck className="w-5 h-5" />
+              Role Upgrades
+            </CardTitle>
+            <CardDescription>
+              Process role upgrade applications
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Review applications from users requesting role upgrades.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/role-upgrade-review">
+                Review Requests
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+
+  const renderFounderDashboard = () => (
+    <>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatsCard
+          title="Total Users"
+          value={statsLoading ? "..." : stats?.totalUsers || 0}
+          icon={Users}
+          description="All platform users"
+        />
+        <StatsCard
+          title="Total Jobs"
+          value={statsLoading ? "..." : stats?.totalJobs || 0}
+          icon={Briefcase}
+          description="All time"
+        />
+        <StatsCard
+          title="Active Jobs"
+          value={statsLoading ? "..." : stats?.activeJobs || 0}
+          icon={TrendingUp}
+          description="Currently in progress"
+        />
+        <StatsCard
+          title="Platform Revenue"
+          value={statsLoading ? "..." : `$${stats?.platformRevenue || 0}`}
+          icon={DollarSign}
+          description="Total earnings"
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5" />
+              Admin Panel
+            </CardTitle>
+            <CardDescription>
+              Manage platform leadership
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Promote moderators to Head of Moderation and manage platform roles.
+            </p>
+            <Button asChild>
+              <Link href="/admin">
+                Open Admin Panel
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              Team Management
+            </CardTitle>
+            <CardDescription>
+              Oversee moderation team
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Schedule meetings and coordinate with the moderation team.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/team-management">
+                Manage Team
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -188,6 +402,8 @@ export default function DashboardPage() {
       {user.role === "freelancer" && renderFreelancerDashboard()}
       {user.role === "customer" && renderCustomerDashboard()}
       {(user.role === "staff" || user.role === "moderator") && renderStaffDashboard()}
+      {user.role === "head_of_moderation" && renderHeadOfModerationDashboard()}
+      {user.role === "founder" && renderFounderDashboard()}
     </div>
   );
 }

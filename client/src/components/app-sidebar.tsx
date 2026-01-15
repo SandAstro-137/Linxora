@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -20,10 +20,10 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
 
-  // Fetch unread notification count
+  // Fetch unread notification count for all roles
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
-    enabled: !!user && user.role === "freelancer",
+    enabled: !!user,
     refetchInterval: 5000, // Poll every 5 seconds
   });
   const unreadCount = unreadData?.count ?? 0;
@@ -49,6 +49,7 @@ export function AppSidebar() {
     { title: "Browse Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Notifications", url: "/notifications", icon: Bell },
     { title: "Role Upgrade", url: "/role-upgrade", icon: ArrowUpCircle },
     { title: "Settings", url: "/settings", icon: Settings },
   ];
@@ -63,6 +64,7 @@ export function AppSidebar() {
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "Mod Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Notifications", url: "/notifications", icon: Bell },
     { title: "Settings", url: "/settings", icon: Settings },
   ];
 
@@ -71,12 +73,14 @@ export function AppSidebar() {
     { title: "Messages", url: "/messages", icon: MessageSquare },
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Team Management", url: "/team-management", icon: Users },
+    { title: "Team Vault", url: "/vault", icon: Vault },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Notifications", url: "/notifications", icon: Bell },
     { title: "Settings", url: "/settings", icon: Settings },
   ];
 
@@ -86,12 +90,14 @@ export function AppSidebar() {
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Admin Panel", url: "/admin", icon: Crown },
     { title: "Team Management", url: "/team-management", icon: Users },
+    { title: "Team Vault", url: "/vault", icon: Vault },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },
     { title: "My Wallet", url: "/wallet", icon: Wallet },
     { title: "My Profile", url: "/profile", icon: User },
+    { title: "Notifications", url: "/notifications", icon: Bell },
     { title: "Settings", url: "/settings", icon: Settings },
   ];
 

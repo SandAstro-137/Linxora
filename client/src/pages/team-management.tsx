@@ -182,17 +182,78 @@ export default function TeamManagementPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="tasks" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs defaultValue="team" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="team" data-testid="tab-team">
+            <Users className="w-4 h-4 mr-2" />
+            Team
+          </TabsTrigger>
           <TabsTrigger value="tasks" data-testid="tab-tasks">
             <ClipboardList className="w-4 h-4 mr-2" />
             Tasks
           </TabsTrigger>
           <TabsTrigger value="calendar" data-testid="tab-calendar">
             <Calendar className="w-4 h-4 mr-2" />
-            Meetings & Calendar
+            Meetings
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="team" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold">Moderation Team</h2>
+            <Badge variant="secondary">{allModerators.length} members</Badge>
+          </div>
+
+          {allModerators.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No moderators on the team yet</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {allModerators.map((mod) => {
+                const modTasks = tasksAssignedByMe.filter(t => t.assigneeId === mod.id);
+                const completedTasks = modTasks.filter(t => t.status === "completed").length;
+                const pendingTasks = modTasks.filter(t => t.status === "pending" || t.status === "in_progress").length;
+                
+                return (
+                  <Card key={mod.id} data-testid={`card-moderator-${mod.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        <Avatar className="h-12 w-12">
+                          <AvatarImage src={mod.avatar || undefined} />
+                          <AvatarFallback>{mod.username.charAt(0).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold truncate">{mod.username}</h3>
+                            <Badge variant={mod.role === "head_of_moderation" ? "default" : "secondary"}>
+                              {mod.role === "head_of_moderation" ? "Head of Mod" : "Moderator"}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground">Level {mod.level}</p>
+                          
+                          <div className="flex gap-4 mt-3 text-sm">
+                            <div className="flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                              <span>{completedTasks} completed</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-4 h-4 text-yellow-500" />
+                              <span>{pendingTasks} pending</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
 
         <TabsContent value="tasks" className="space-y-4">
           <div className="flex justify-between items-center">

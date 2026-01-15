@@ -43,6 +43,11 @@ import {
   type InsertUserPreferences,
   type EmailVerificationToken,
   type InsertEmailVerificationToken,
+  type JobRequest,
+  type InsertJobRequest,
+  type ModerationVault,
+  type VaultTransaction,
+  type InsertVaultTransaction,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -182,6 +187,22 @@ export interface IStorage {
   createEmailVerificationToken(token: InsertEmailVerificationToken): Promise<EmailVerificationToken>;
   markEmailVerificationTokenUsed(token: string): Promise<EmailVerificationToken | undefined>;
   deleteEmailVerificationTokensByUserId(userId: string): Promise<void>;
+
+  // Job Request operations (freelancer applications to jobs)
+  getJobRequest(id: string): Promise<JobRequest | undefined>;
+  getJobRequestsByJob(jobId: string): Promise<JobRequest[]>;
+  getJobRequestsByFreelancer(freelancerId: string, status?: string): Promise<JobRequest[]>;
+  getPendingJobRequestsByFreelancer(freelancerId: string): Promise<JobRequest[]>;
+  getJobRequestByJobAndFreelancer(jobId: string, freelancerId: string): Promise<JobRequest | undefined>;
+  createJobRequest(request: InsertJobRequest): Promise<JobRequest>;
+  updateJobRequest(id: string, updates: Partial<JobRequest>): Promise<JobRequest | undefined>;
+  cancelPendingJobRequestsByFreelancer(freelancerId: string, exceptJobId?: string): Promise<void>;
+
+  // Moderation Vault operations
+  getModerationVault(): Promise<ModerationVault>;
+  depositToVault(amount: number, fromUserId: string, note?: string): Promise<VaultTransaction>;
+  distributeFromVault(amount: number, toUserId: string, distributedByUserId: string, note?: string): Promise<VaultTransaction>;
+  getVaultTransactions(limit?: number): Promise<VaultTransaction[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -207,6 +228,9 @@ export class MemStorage implements IStorage {
   private directMessages: Map<string, DirectMessage>;
   private userPreferences: Map<string, UserPreferences>;
   private emailVerificationTokens: Map<string, EmailVerificationToken>;
+  private jobRequests: Map<string, JobRequest>;
+  private moderationVault: ModerationVault | null;
+  private vaultTransactions: Map<string, VaultTransaction>;
   private userIdCounter: number;
 
   constructor() {
@@ -233,6 +257,9 @@ export class MemStorage implements IStorage {
     this.teamRoomMessages = new Map();
     this.userPreferences = new Map();
     this.emailVerificationTokens = new Map();
+    this.jobRequests = new Map();
+    this.moderationVault = null;
+    this.vaultTransactions = new Map();
   }
 
   // User operations
@@ -268,6 +295,10 @@ export class MemStorage implements IStorage {
     
     const id = randomUUID();
     const userId = this.userIdCounter++; // Assign sequential permanent User ID
+    
+    // Founder role doesn't need onboarding tutorial - auto-complete for them
+    const skipOnboarding = insertUser.role === "founder";
+    
     const user: User = {
       ...insertUser,
       id,
@@ -281,7 +312,7 @@ export class MemStorage implements IStorage {
       level: insertUser.level ?? 1,
       completedJobs: insertUser.completedJobs ?? 0,
       rating: insertUser.rating ?? "0",
-      onboardingCompleted: insertUser.onboardingCompleted ?? false,
+      onboardingCompleted: insertUser.onboardingCompleted ?? skipOnboarding,
       totalRatings: insertUser.totalRatings ?? 0,
       completionPercentage: insertUser.completionPercentage ?? "0",
       workingHours: insertUser.workingHours ?? {},
@@ -1096,6 +1127,144 @@ export class MemStorage implements IStorage {
         this.emailVerificationTokens.delete(id);
       }
     }
+  }
+
+  // Job Request operations
+  async getJobRequest(id: string): Promise<JobRequest | undefined> {
+    return this.jobRequests.get(id);
+  }
+
+  async getJobRequestsByJob(jobId: string): Promise<JobRequest[]> {
+    return Array.from(this.jobRequests.values())
+      .filter((r) => r.jobId === jobId)
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async getJobRequestsByFreelancer(freelancerId: string, status?: string): Promise<JobRequest[]> {
+    return Array.from(this.jobRequests.values())
+      .filter((r) => r.freelancerId === freelancerId && (!status || r.status === status))
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getPendingJobRequestsByFreelancer(freelancerId: string): Promise<JobRequest[]> {
+    return this.getJobRequestsByFreelancer(freelancerId, "pending");
+  }
+
+  async getJobRequestByJobAndFreelancer(jobId: string, freelancerId: string): Promise<JobRequest | undefined> {
+    return Array.from(this.jobRequests.values()).find(
+      (r) => r.jobId === jobId && r.freelancerId === freelancerId
+    );
+  }
+
+  async createJobRequest(insertRequest: InsertJobRequest): Promise<JobRequest> {
+    const id = randomUUID();
+    const request: JobRequest = {
+      ...insertRequest,
+      id,
+      status: insertRequest.status ?? "pending",
+      message: insertRequest.message ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.jobRequests.set(id, request);
+    return request;
+  }
+
+  async updateJobRequest(id: string, updates: Partial<JobRequest>): Promise<JobRequest | undefined> {
+    const request = this.jobRequests.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.jobRequests.set(id, updated);
+    return updated;
+  }
+
+  async cancelPendingJobRequestsByFreelancer(freelancerId: string, exceptJobId?: string): Promise<void> {
+    const entries = Array.from(this.jobRequests.entries());
+    for (const [id, request] of entries) {
+      if (request.freelancerId === freelancerId && request.status === "pending") {
+        if (!exceptJobId || request.jobId !== exceptJobId) {
+          this.jobRequests.set(id, { ...request, status: "cancelled", updatedAt: new Date() });
+        }
+      }
+    }
+  }
+
+  // Moderation Vault operations
+  async getModerationVault(): Promise<ModerationVault> {
+    if (!this.moderationVault) {
+      this.moderationVault = {
+        id: randomUUID(),
+        balance: "0",
+        totalDeposited: "0",
+        totalDistributed: "0",
+        updatedAt: new Date(),
+      };
+    }
+    return this.moderationVault;
+  }
+
+  async depositToVault(amount: number, fromUserId: string, note?: string): Promise<VaultTransaction> {
+    const vault = await this.getModerationVault();
+    const currentBalance = parseFloat(vault.balance || "0");
+    const totalDeposited = parseFloat(vault.totalDeposited || "0");
+    
+    this.moderationVault = {
+      ...vault,
+      balance: (currentBalance + amount).toString(),
+      totalDeposited: (totalDeposited + amount).toString(),
+      updatedAt: new Date(),
+    };
+
+    const id = randomUUID();
+    const transaction: VaultTransaction = {
+      id,
+      type: "deposit",
+      amount: amount.toString(),
+      fromUserId,
+      toUserId: null,
+      distributedByUserId: null,
+      note: note || null,
+      createdAt: new Date(),
+    };
+    this.vaultTransactions.set(id, transaction);
+    return transaction;
+  }
+
+  async distributeFromVault(amount: number, toUserId: string, distributedByUserId: string, note?: string): Promise<VaultTransaction> {
+    const vault = await this.getModerationVault();
+    const currentBalance = parseFloat(vault.balance || "0");
+    const totalDistributed = parseFloat(vault.totalDistributed || "0");
+    
+    if (currentBalance < amount) {
+      throw new Error("Insufficient vault balance");
+    }
+    
+    this.moderationVault = {
+      ...vault,
+      balance: (currentBalance - amount).toString(),
+      totalDistributed: (totalDistributed + amount).toString(),
+      updatedAt: new Date(),
+    };
+
+    const id = randomUUID();
+    const transaction: VaultTransaction = {
+      id,
+      type: "distribution",
+      amount: amount.toString(),
+      fromUserId: null,
+      toUserId,
+      distributedByUserId,
+      note: note || null,
+      createdAt: new Date(),
+    };
+    this.vaultTransactions.set(id, transaction);
+    return transaction;
+  }
+
+  async getVaultTransactions(limit: number = 50): Promise<VaultTransaction[]> {
+    return Array.from(this.vaultTransactions.values())
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
+      .slice(0, limit);
   }
 }
 

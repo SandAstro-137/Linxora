@@ -20,6 +20,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useState } from "react";
+import { Link } from "wouter";
 
 interface EnrichedCancellationRequest extends CancellationRequest {
   jobTitle?: string;
@@ -516,6 +517,36 @@ export default function ModerationPage() {
                     <div>
                       <h4 className="font-semibold mb-2">Target ID</h4>
                       <p className="text-sm text-muted-foreground font-mono">{report.targetId}</p>
+                    </div>
+
+                    {/* Context-specific actions based on report type */}
+                    <div className="flex gap-2 pt-2 flex-wrap">
+                      {report.reportType === "job" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          asChild
+                          data-testid={`button-view-job-${report.id}`}
+                        >
+                          <Link href={`/jobs/${report.targetId}`}>
+                            <Briefcase className="w-4 h-4 mr-1" />
+                            View Reported Job
+                          </Link>
+                        </Button>
+                      )}
+                      {report.reportType === "user" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          asChild
+                          data-testid={`button-view-user-${report.id}`}
+                        >
+                          <Link href={`/profile/${report.targetId}`}>
+                            <User className="w-4 h-4 mr-1" />
+                            View Reported User
+                          </Link>
+                        </Button>
+                      )}
                     </div>
 
                     <div className="flex gap-2 pt-4 border-t flex-wrap">

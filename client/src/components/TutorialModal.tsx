@@ -172,6 +172,69 @@ const moderatorSlides: TutorialSlide[] = [
   }
 ];
 
+const headOfModerationSlides: TutorialSlide[] = [
+  {
+    title: "Welcome Head of Moderation",
+    description: "As Head of Moderation, you lead the moderation team and ensure platform quality.",
+    icon: Shield,
+    tips: [
+      "Oversee all moderation activities",
+      "Manage and support your moderator team",
+      "Set standards for content quality"
+    ]
+  },
+  {
+    title: "Team Management",
+    description: "Coordinate your moderation team effectively.",
+    icon: Users,
+    tips: [
+      "Assign tasks to moderators",
+      "Schedule team meetings and check-ins",
+      "Monitor team performance and workload"
+    ]
+  },
+  {
+    title: "Meeting Scheduling",
+    description: "Organize meetings with your moderation team.",
+    icon: Clock,
+    tips: [
+      "Schedule individual or team-wide meetings",
+      "Track RSVP responses from moderators",
+      "All times displayed in Eastern Time (ET)"
+    ]
+  },
+  {
+    title: "Team Room",
+    description: "Collaborate in real-time with your moderation team.",
+    icon: Users,
+    tips: [
+      "Use team chat for quick discussions",
+      "Join voice calls for important conversations",
+      "Stay connected with your team"
+    ]
+  },
+  {
+    title: "Moderation Vault",
+    description: "Manage team compensation from the moderation vault.",
+    icon: Wallet,
+    tips: [
+      "View available funds from Founder deposits",
+      "Distribute payments to moderators",
+      "Track all vault transactions"
+    ]
+  },
+  {
+    title: "Reports & Reviews",
+    description: "Handle user reports and upgrade requests.",
+    icon: Shield,
+    tips: [
+      "Review user reports promptly",
+      "Process role upgrade applications",
+      "Escalate serious issues when needed"
+    ]
+  }
+];
+
 interface TutorialModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -181,7 +244,14 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
   const { user } = useAuth();
   const [currentSlide, setCurrentSlide] = useState(0);
 
-  const getSlides = () => {
+  const getSlides = (): TutorialSlide[] | null => {
+    // Founder doesn't need onboarding tutorial
+    if (user?.role === "founder") {
+      return null;
+    }
+    if (user?.role === "head_of_moderation") {
+      return headOfModerationSlides;
+    }
     if (user?.role === "moderator" || user?.role === "staff") {
       return moderatorSlides;
     }
@@ -192,6 +262,15 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
   };
 
   const slides = getSlides();
+  
+  // If no slides (e.g., founder), close the modal immediately
+  if (!slides) {
+    if (open) {
+      onOpenChange(false);
+    }
+    return null;
+  }
+  
   const slide = slides[currentSlide];
   const progress = ((currentSlide + 1) / slides.length) * 100;
   const isLastSlide = currentSlide === slides.length - 1;

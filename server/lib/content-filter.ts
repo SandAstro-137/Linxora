@@ -1,3 +1,4 @@
+// Words that indicate inappropriate content in job postings
 const inappropriatePatterns: RegExp[] = [
   /\b(spam|scam|fraud)\b/i,
   /\b(hack|exploit)\b/i,
@@ -6,6 +7,13 @@ const inappropriatePatterns: RegExp[] = [
   /\b(violence|violent)\b/i,
   /\b(harassment|harass)\b/i,
   /\b(phishing|malware)\b/i,
+];
+
+// Words that are acceptable when reporting issues (these describe what's being reported)
+const reportingContextWords: RegExp[] = [
+  /\b(spam|scam|fraud)\b/i,
+  /\b(phishing|malware)\b/i,
+  /\b(harassment|harass)\b/i,
 ];
 
 const suspiciousPatterns: RegExp[] = [
@@ -22,7 +30,9 @@ export interface ContentFilterResult {
   severity: "low" | "medium" | "high";
 }
 
-export function filterContent(text: string): ContentFilterResult {
+export type FilterContext = "job" | "report" | "message" | "general";
+
+export function filterContent(text: string, context: FilterContext = "general"): ContentFilterResult {
   const flags: string[] = [];
   let severity: "low" | "medium" | "high" = "low";
 
@@ -30,6 +40,15 @@ export function filterContent(text: string): ContentFilterResult {
     if (pattern.test(text)) {
       const match = text.match(pattern);
       if (match) {
+        // In report context, allow words that describe what's being reported
+        if (context === "report") {
+          const isReportingWord = reportingContextWords.some(rp => rp.test(match[0]));
+          if (isReportingWord) {
+            // Skip this flag - it's acceptable in reporting context
+            continue;
+          }
+        }
+        
         flags.push(`Inappropriate content detected: "${match[0]}"`);
         severity = "high";
       }

@@ -40,6 +40,7 @@ import TeamRoomPage from "@/pages/team-room";
 import MessagesPage from "@/pages/messages";
 import SettingsPage from "@/pages/settings";
 import VerifyEmailPage from "@/pages/verify-email";
+import VaultPage from "@/pages/vault";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -168,6 +169,11 @@ function Router() {
       <Route path="/team-room">
         <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
           <TeamRoomPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/vault">
+        <ProtectedRoute allowedRoles={["head_of_moderation", "founder"]}>
+          <VaultPage />
         </ProtectedRoute>
       </Route>
       <Route path="/messages">

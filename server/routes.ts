@@ -307,6 +307,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           j.updatedAt && 
           new Date(j.updatedAt) >= today
         ).length;
+      } else if (user.role === "head_of_moderation") {
+        const allUsers = await storage.getUsers();
+        const pendingJobs = await storage.getJobsByStatus("pending");
+        const allJobs = await storage.getJobs();
+        const reports = await storage.getReports();
+        const upgradeRequests = await storage.getRoleUpgradeRequests();
+        
+        // Count team members (moderators + staff)
+        stats.teamMembers = allUsers.filter(u => 
+          u.role === "moderator" || u.role === "staff"
+        ).length;
+        stats.pendingReports = reports.filter(r => r.status === "pending").length;
+        stats.upgradeRequests = upgradeRequests.filter(r => r.status === "pending").length;
+        stats.pendingJobs = pendingJobs.length;
+        stats.totalJobs = allJobs.length;
+        stats.activeJobs = allJobs.filter(j => j.status === "active").length;
+      } else if (user.role === "founder") {
+        const allUsers = await storage.getUsers();
+        const allJobs = await storage.getJobs();
+        
+        stats.totalUsers = allUsers.length;
+        stats.totalJobs = allJobs.length;
+        stats.activeJobs = allJobs.filter(j => 
+          j.status === "active" || j.status === "in_progress" || j.status === "claimed"
+        ).length;
+        // Calculate platform revenue from completed jobs
+        const completedJobs = allJobs.filter(j => j.status === "completed");
+        stats.platformRevenue = completedJobs.reduce((sum, j) => sum + parseFloat(j.budget), 0).toFixed(2);
       }
 
       res.json(stats);
@@ -650,6 +678,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get job requests for a specific job (for customers to see applicants)
+  app.get("/api/jobs/:id/requests", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only job owner or moderators can see requests
+      const user = await storage.getUser(req.session.userId!);
+      if (job.customerId !== req.session.userId! && 
+          !["staff", "moderator", "head_of_moderation", "founder"].includes(user?.role || "")) {
+        return res.status(403).json({ error: "Not authorized to view job requests" });
+      }
+
+      const requests = await storage.getJobRequestsByJob(req.params.id);
+      
+      // Enrich with freelancer data
+      const enrichedRequests = await Promise.all(
+        requests.map(async (request) => {
+          const freelancer = await storage.getUser(request.freelancerId);
+          return {
+            ...request,
+            freelancer: freelancer ? {
+              id: freelancer.id,
+              userId: freelancer.userId,
+              username: freelancer.username,
+              avatar: freelancer.avatar,
+              level: freelancer.level,
+              rating: freelancer.rating,
+              completedJobs: freelancer.completedJobs,
+              completionPercentage: freelancer.completionPercentage,
+            } : null,
+          };
+        })
+      );
+
+      res.json(enrichedRequests);
+    } catch (error) {
+      console.error("Error getting job requests:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get freelancer's pending job requests
+  app.get("/api/my-job-requests", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can view their job requests" });
+      }
+
+      const requests = await storage.getPendingJobRequestsByFreelancer(req.session.userId!);
+      
+      // Enrich with job data
+      const enrichedRequests = await Promise.all(
+        requests.map(async (request) => {
+          const job = await storage.getJob(request.jobId);
+          return {
+            ...request,
+            job: job ? {
+              id: job.id,
+              title: job.title,
+              budget: job.budget,
+              category: job.category,
+              deadline: job.deadline,
+            } : null,
+          };
+        })
+      );
+
+      res.json(enrichedRequests);
+    } catch (error) {
+      console.error("Error getting my job requests:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/jobs/:id/claim", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
@@ -658,15 +764,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (user.role !== "freelancer") {
-        return res.status(403).json({ error: "Only freelancers can claim jobs. Please upgrade your account to become a freelancer." });
+        return res.status(403).json({ error: "Only freelancers can apply for jobs. Please upgrade your account to become a freelancer." });
       }
 
-      // Check account eligibility
-      if (!user.createdAt) {
-        // Account age check - this would need createdAt field
-      }
-
-      // Check for one-job-at-a-time restriction
+      // Check if freelancer already has an active/claimed job
       const activeJobs = await storage.getJobs({ 
         freelancerId: req.session.userId!, 
         status: "in_progress" 
@@ -675,21 +776,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         freelancerId: req.session.userId!, 
         status: "claimed" 
       });
-      const requestedJobs = await storage.getJobs({ 
-        freelancerId: req.session.userId!, 
-        status: "freelancer_requested" 
-      });
 
       if (activeJobs.length > 0) {
-        return res.status(400).json({ error: "You already have a job in progress. Complete or cancel it before claiming another." });
+        return res.status(400).json({ error: "You already have a job in progress. Complete or cancel it before applying to new jobs." });
       }
       
       if (claimedJobs.length > 0) {
         return res.status(400).json({ error: "You already have a claimed job waiting to start. Complete or cancel it first." });
       }
-      
-      if (requestedJobs.length > 0) {
-        return res.status(400).json({ error: "You have a pending job request. Wait for the customer's response or cancel it first." });
+
+      // Check pending request limit (max 5)
+      const pendingRequests = await storage.getPendingJobRequestsByFreelancer(req.session.userId!);
+      if (pendingRequests.length >= 5) {
+        return res.status(400).json({ error: "You have reached the maximum of 5 pending job applications. Cancel one to apply to another." });
       }
 
       const job = await storage.getJob(req.params.id);
@@ -705,12 +804,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "This job has been cancelled by the customer." });
       }
       
-      if (job.status === "in_progress" || job.status === "claimed" || job.status === "freelancer_requested") {
-        return res.status(400).json({ error: "This job has already been claimed by another freelancer." });
+      if (job.status === "in_progress" || job.status === "claimed") {
+        return res.status(400).json({ error: "This job has already been assigned to another freelancer." });
       }
       
       if (job.status !== "active") {
-        return res.status(400).json({ error: "This job is not currently available for claiming." });
+        return res.status(400).json({ error: "This job is not currently available for applications." });
+      }
+
+      // Check if freelancer already applied to this job
+      const existingRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, req.session.userId!);
+      if (existingRequest && existingRequest.status === "pending") {
+        return res.status(400).json({ error: "You have already applied to this job." });
       }
 
       // Check if job has expired
@@ -721,31 +826,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Set job to freelancer_requested status
-      const updatedJob = await storage.updateJob(req.params.id, {
-        status: "freelancer_requested",
+      // Create job request (not directly assigning to job)
+      const jobRequest = await storage.createJobRequest({
+        jobId: req.params.id,
         freelancerId: req.session.userId!,
+        status: "pending",
+        message: req.body.message || null,
       });
 
       // Create notification for customer
       await storage.createNotification({
         userId: job.customerId,
         type: "job_request",
-        title: "New job request",
-        message: `${user.username} has requested to work on your job: ${job.title}`,
+        title: "New job application",
+        message: `${user.username} has applied to work on your job: ${job.title}`,
         relatedId: job.id,
       });
 
-      res.json(updatedJob);
+      res.json({ success: true, request: jobRequest });
     } catch (error) {
-      console.error("Error requesting job:", error);
+      console.error("Error applying for job:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // Customer approve/reject freelancer request
+  // Cancel a job application
+  app.post("/api/jobs/:id/cancel-request", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const jobRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, req.session.userId!);
+      if (!jobRequest) {
+        return res.status(404).json({ error: "No application found for this job" });
+      }
+
+      if (jobRequest.status !== "pending") {
+        return res.status(400).json({ error: "Can only cancel pending applications" });
+      }
+
+      await storage.updateJobRequest(jobRequest.id, { status: "withdrawn" });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error cancelling job request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer approve a freelancer from the request queue
   app.post("/api/jobs/:id/approve-freelancer", requireAuth, async (req, res) => {
     try {
+      const { freelancerId } = req.body;
+      if (!freelancerId) {
+        return res.status(400).json({ error: "Freelancer ID is required" });
+      }
+
       const user = await storage.getUser(req.session.userId!);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
@@ -760,8 +898,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only the job owner can approve freelancers" });
       }
 
-      if (job.status !== "freelancer_requested") {
-        return res.status(400).json({ error: "No pending freelancer request for this job" });
+      if (job.status !== "active") {
+        return res.status(400).json({ error: "This job is not available for assignment" });
+      }
+
+      // Find the pending request for this freelancer
+      const jobRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, freelancerId);
+      if (!jobRequest || jobRequest.status !== "pending") {
+        return res.status(404).json({ error: "No pending application found from this freelancer" });
+      }
+
+      // Check if freelancer is still eligible (no active jobs)
+      const freelancerActiveJobs = await storage.getJobs({ freelancerId, status: "in_progress" });
+      const freelancerClaimedJobs = await storage.getJobs({ freelancerId, status: "claimed" });
+      if (freelancerActiveJobs.length > 0 || freelancerClaimedJobs.length > 0) {
+        // Mark the request as cancelled since freelancer is busy
+        await storage.updateJobRequest(jobRequest.id, { status: "cancelled" });
+        return res.status(400).json({ error: "This freelancer already has an active job and cannot accept new jobs" });
       }
 
       // Check if customer has enough available balance (total - pending)
@@ -782,21 +935,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Add to customer's pending balance (funds are now locked for this job)
       await storage.adjustPendingBalance(req.session.userId!, jobBudget);
 
-      // Update job status to claimed
+      // Update job - assign to freelancer and set status to claimed
       const updatedJob = await storage.updateJob(req.params.id, {
         status: "claimed",
+        freelancerId: freelancerId,
       });
 
-      // Notify freelancer
-      if (job.freelancerId) {
-        await storage.createNotification({
-          userId: job.freelancerId,
-          type: "job_approved",
-          title: "Job request approved!",
-          message: `Your request for "${job.title}" has been approved. You can now start working!`,
-          relatedId: job.id,
-        });
+      // Mark this request as accepted
+      await storage.updateJobRequest(jobRequest.id, { status: "accepted" });
+
+      // Cancel all other pending requests for this job
+      const allRequests = await storage.getJobRequestsByJob(req.params.id);
+      for (const request of allRequests) {
+        if (request.id !== jobRequest.id && request.status === "pending") {
+          await storage.updateJobRequest(request.id, { status: "rejected" });
+          // Notify rejected freelancers
+          await storage.createNotification({
+            userId: request.freelancerId,
+            type: "job_rejected",
+            title: "Application not selected",
+            message: `Another freelancer was selected for "${job.title}".`,
+            relatedId: job.id,
+          });
+        }
       }
+
+      // Cancel all other pending requests from this freelancer (they now have a job)
+      await storage.cancelPendingJobRequestsByFreelancer(freelancerId, req.params.id);
+
+      // Notify the accepted freelancer
+      await storage.createNotification({
+        userId: freelancerId,
+        type: "job_approved",
+        title: "Application accepted!",
+        message: `Your application for "${job.title}" has been accepted. You can now start working!`,
+        relatedId: job.id,
+      });
 
       res.json(updatedJob);
     } catch (error) {
@@ -805,8 +979,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Customer reject a freelancer from the request queue
   app.post("/api/jobs/:id/reject-freelancer", requireAuth, async (req, res) => {
     try {
+      const { freelancerId } = req.body;
+      if (!freelancerId) {
+        return res.status(400).json({ error: "Freelancer ID is required" });
+      }
+
       const user = await storage.getUser(req.session.userId!);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
@@ -821,30 +1001,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only the job owner can reject freelancers" });
       }
 
-      if (job.status !== "freelancer_requested") {
-        return res.status(400).json({ error: "No pending freelancer request for this job" });
+      // Find the pending request for this freelancer
+      const jobRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, freelancerId);
+      if (!jobRequest || jobRequest.status !== "pending") {
+        return res.status(404).json({ error: "No pending application found from this freelancer" });
       }
 
-      const freelancerId = job.freelancerId;
-
-      // Update job status back to active and clear freelancer
-      const updatedJob = await storage.updateJob(req.params.id, {
-        status: "active",
-        freelancerId: null,
-      });
+      // Mark request as rejected
+      await storage.updateJobRequest(jobRequest.id, { status: "rejected" });
 
       // Notify freelancer
-      if (freelancerId) {
-        await storage.createNotification({
-          userId: freelancerId,
-          type: "job_rejected",
-          title: "Job request declined",
-          message: `Your request for "${job.title}" was not accepted.`,
-          relatedId: job.id,
-        });
-      }
+      await storage.createNotification({
+        userId: freelancerId,
+        type: "job_rejected",
+        title: "Application declined",
+        message: `Your application for "${job.title}" was not selected.`,
+        relatedId: job.id,
+      });
 
-      res.json(updatedJob);
+      res.json({ success: true });
     } catch (error) {
       console.error("Error rejecting freelancer:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -1866,6 +2041,154 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(transaction);
     } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderation Vault routes
+  app.get("/api/vault", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const vault = await storage.getModerationVault();
+      res.json(vault);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/vault/transactions", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const transactions = await storage.getVaultTransactions();
+      
+      // Enrich with user info
+      const enrichedTransactions = await Promise.all(transactions.map(async (t) => {
+        let fromUser = null;
+        let toUser = null;
+        let distributedBy = null;
+        
+        if (t.fromUserId) {
+          const user = await storage.getUser(t.fromUserId);
+          fromUser = user ? { id: user.id, username: user.username } : null;
+        }
+        if (t.toUserId) {
+          const user = await storage.getUser(t.toUserId);
+          toUser = user ? { id: user.id, username: user.username } : null;
+        }
+        if (t.distributedByUserId) {
+          const user = await storage.getUser(t.distributedByUserId);
+          distributedBy = user ? { id: user.id, username: user.username } : null;
+        }
+        
+        return {
+          ...t,
+          fromUser,
+          toUser,
+          distributedBy,
+        };
+      }));
+      
+      res.json(enrichedTransactions);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/vault/deposit", requireRole("founder"), async (req, res) => {
+    try {
+      const { amount, note } = req.body;
+      const depositAmount = parseFloat(amount);
+      
+      if (isNaN(depositAmount) || depositAmount <= 0) {
+        return res.status(400).json({ error: "Deposit amount must be greater than $0" });
+      }
+      
+      if (depositAmount < 1.00) {
+        return res.status(400).json({ error: "Minimum deposit is $1.00" });
+      }
+
+      const transaction = await storage.depositToVault(depositAmount, req.session.userId!, note);
+      
+      // Notify Head of Moderation about the deposit
+      const users = await storage.getUsers();
+      const homUsers = users.filter(u => u.role === "head_of_moderation");
+      for (const hom of homUsers) {
+        await storage.createNotification({
+          userId: hom.id,
+          type: "vault_deposit",
+          title: "Vault Deposit",
+          message: `The Founder deposited $${depositAmount.toFixed(2)} to the moderation vault.`,
+          relatedId: transaction.id,
+        });
+      }
+      
+      res.json(transaction);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/vault/distribute", requireRole("head_of_moderation"), async (req, res) => {
+    try {
+      const { amount, toUserId, note } = req.body;
+      const distributeAmount = parseFloat(amount);
+      
+      if (isNaN(distributeAmount) || distributeAmount <= 0) {
+        return res.status(400).json({ error: "Distribution amount must be greater than $0" });
+      }
+
+      if (!toUserId) {
+        return res.status(400).json({ error: "Recipient user ID is required" });
+      }
+
+      // Verify recipient is a moderator or staff
+      const recipient = await storage.getUser(toUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found" });
+      }
+      
+      if (!["moderator", "staff"].includes(recipient.role)) {
+        return res.status(400).json({ error: "Can only distribute funds to moderators or staff" });
+      }
+
+      // Check vault balance
+      const vault = await storage.getModerationVault();
+      const vaultBalance = parseFloat(vault.balance || "0");
+      if (vaultBalance < distributeAmount) {
+        return res.status(400).json({ error: "Insufficient vault balance" });
+      }
+
+      // Perform distribution
+      const transaction = await storage.distributeFromVault(
+        distributeAmount,
+        toUserId,
+        req.session.userId!,
+        note
+      );
+
+      // Add funds to recipient's wallet
+      let recipientWallet = await storage.getWallet(toUserId);
+      if (!recipientWallet) {
+        recipientWallet = await storage.createWallet({
+          userId: toUserId,
+          walletAddress: `0x${Math.random().toString(36).substring(2, 15)}`,
+        });
+      }
+      const currentBalance = parseFloat(recipientWallet.usdtBalance || "0");
+      await storage.updateWallet(toUserId, {
+        usdtBalance: (currentBalance + distributeAmount).toString(),
+      });
+
+      // Notify the recipient
+      await storage.createNotification({
+        userId: toUserId,
+        type: "vault_distribution",
+        title: "Funds Received",
+        message: `You received $${distributeAmount.toFixed(2)} from the moderation vault${note ? `: ${note}` : ""}.`,
+        relatedId: transaction.id,
+      });
+      
+      res.json(transaction);
+    } catch (error) {
+      console.error("Vault distribution error:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -3010,8 +3333,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Report appears to contain spam content" });
       }
 
-      // Check for suspicious/inappropriate content
-      const filterResult = filterContent(contentToCheck);
+      // Check for suspicious/inappropriate content (using "report" context to allow words like "scam")
+      const filterResult = filterContent(contentToCheck, "report");
       if (filterResult.severity === "high") {
         return res.status(400).json({ 
           error: "Report contains inappropriate content and cannot be submitted" 
