@@ -1,0 +1,109 @@
+1. Messaging System — “Find User” returns Unauthorized
+Issue:  
+When creating a new message, entering a User ID and clicking Find User returns 401 Unauthorized even though the user is logged in.
+
+Expected Behavior:
+
+Any authenticated user should be able to search for another user by ID.
+
+The endpoint must validate authentication correctly and not return 401 for normal users.
+
+2. Job Application — UI does not update without refresh
+Issue:  
+After sending a job application, the UI does not update until the user manually refreshes the page.
+
+Expected Behavior:
+
+Job application status should update immediately after the API response.
+
+No manual refresh should be required.
+
+Real‑time or state‑based UI updates must be implemented.
+
+3. Cancelling Job Applications — Error 400
+Issue:  
+Cancelling an application returns:
+“400: Can only cancel pending applications”  
+even though the application is pending.
+The UI also fails to update until multiple refreshes.
+
+Expected Behavior:
+
+Backend must correctly detect pending status.
+
+Cancellation should succeed when status = pending.
+
+UI must update immediately after cancellation.
+
+4. Customer Blacklist System
+Feature Request:  
+Customers need the ability to blacklist specific freelancers from applying to their jobs.
+
+Expected Behavior:
+
+Add a Blacklist section for customers.
+
+Blacklisted freelancers cannot apply to that customer’s jobs.
+
+System should return a clear message to the freelancer.
+
+5. Mobile UI Layout Issues
+Issue:  
+Mobile UI elements glitch, overlap, or move off‑screen due to lack of responsive layout.
+
+Expected Behavior:
+
+Implement proper responsive design breakpoints.
+
+Ensure all pages (Dashboard, Jobs, Wallet, Notifications, etc.) render correctly on mobile.
+
+No overlapping or off‑screen elements.
+
+6. Demo Mode — Role Upgrade Preview Missing
+Issue:  
+Demo accounts cannot preview the role upgrade flow because they do not meet requirements.
+
+Expected Behavior:
+
+Demo mode should allow view‑only preview of the role upgrade screen.
+
+Final upgrade action should be disabled with a “Demo Only” label.
+
+7. Friends Page — Broken Button (404)
+Issue:  
+A button on the Friends page looks identical to the Send button.
+Clicking it returns 404 Page Not Found.
+
+Expected Behavior:
+
+Button must be removed or linked to a valid route.
+
+No button should lead to a 404.
+
+8. Friends System — Profile Viewing + Recommendation Flow
+Feature Request:  
+Add full social functionality between friends.
+
+8.1 View Friend Profiles
+Users must be able to click a friend and view their full profile.
+
+8.2 Recommendation System
+Flow Requirements:
+
+Freelancer A views Freelancer B’s profile → clicks Recommend.
+
+A selects which job (from their employer) to recommend B for.
+
+Employer receives a recommendation request with B’s profile.
+
+Employer options:
+
+Accept → sends job invitation to B
+
+Decline → notify A that employer declined
+
+If B receives an invitation:
+
+They can Accept → immediately assigned to job
+
+Or Decline → notify employer + recommender
