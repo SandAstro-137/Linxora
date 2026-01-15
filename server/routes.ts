@@ -3372,8 +3372,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // User search for invitations
-  app.get("/api/users/search", requireAuth, async (req, res) => {
+  // User search for job invitations (search freelancers by name)
+  app.get("/api/users/search-freelancers", requireAuth, async (req, res) => {
     try {
       const { query } = req.query;
       

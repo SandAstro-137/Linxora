@@ -1,0 +1,209 @@
+1. Messages: “Find User” returns Unauthorized
+Problem:
+
+In Messages → New Message, when a user types a User ID and clicks Find User, the system returns Unauthorized.
+
+Required behavior:
+
+Any authenticated user should be allowed to:
+
+Search for another user by User ID
+
+Open a chat with that user
+
+The endpoint used by Find User must:
+
+Check authentication
+
+Return 403 only if the user truly lacks permission
+
+Not return 401/Unauthorized for normal, logged‑in users
+
+2. Job application: requires manual refresh to update
+Problem:
+
+When a freelancer sends an application to take a job:
+
+The UI does not update until the user manually refreshes the page/tab.
+
+Required behavior:
+
+After submitting an application:
+
+The job card and relevant UI should update immediately (without manual refresh).
+
+The job should show the application as Pending.
+
+Implementation options:
+
+Use real‑time updates (WebSockets) or
+
+Trigger a UI state update after a successful API response
+
+3. Cancelling applications: error 400 and stale state
+Problem:
+
+When cancelling an application:
+
+The system returns 400: Can only cancel pending applications
+
+The application is still shown as Pending in the UI
+
+Sometimes, after multiple refreshes, it eventually updates and cancels
+
+Required behavior:
+
+The backend must:
+
+Correctly recognize the application’s current status
+
+Allow cancellation when status is Pending
+
+The frontend must:
+
+Refresh the application state after cancellation
+
+Immediately remove or update the cancelled request in the UI
+
+No 400 error should appear when the application is truly pending.
+
+4. Customer blacklist for freelancers
+Required feature:
+
+Customers must be able to blacklist specific freelancers from taking their jobs.
+
+Behavior:
+
+Add a Blacklist section for each customer:
+
+List of blocked freelancer IDs
+
+When a blacklisted freelancer:
+
+Tries to apply for that customer’s job → application is blocked
+
+Optionally:
+
+Show a message like: “You are not eligible to apply for this customer’s jobs.”
+
+5. Mobile UI issues (layout glitches)
+Problem:
+
+On mobile, the UI:
+
+Glitches
+
+Elements overlap or move around
+
+Screen runs out of space
+
+Required behavior:
+
+Implement a responsive layout for mobile:
+
+Use proper breakpoints
+
+Stack elements vertically where needed
+
+Ensure sidebars, cards, and modals fit within small screens
+
+All core pages (Dashboard, Jobs, Wallet, Notifications, etc.) must be usable on mobile without layout breaking.
+
+6. Demo: role upgrade visibility
+Problem:
+
+In demo mode, the account does not meet the requirements to upgrade roles.
+
+There is no way to see what the role upgrade flow looks like.
+
+Required behavior:
+
+In demo mode:
+
+Allow a preview of the role upgrade screen, even if requirements are not met.
+
+Show the requirements and the upgrade flow (buttons, steps), but disable the final action with a clear label like “Demo only”.
+
+7. Friends page: 404 button
+Problem:
+
+On the Friends page, there is a button that looks like the Send button.
+
+Clicking it returns 404 Page Not Found.
+
+Required behavior:
+
+That button must:
+
+Either be removed if not needed
+
+Or be wired to a valid route/action (e.g., “Add Friend” or “Open Chat”)
+
+No button on the Friends page should lead to a 404.
+
+8. Friends: profile viewing + recommendation system
+Required features:
+
+8.1 View friend profiles
+From the Friends list:
+
+Users must be able to click a friend and view their full profile:
+
+Role
+
+Level
+
+Stats
+
+Specialization (for freelancers)
+
+Basic info
+
+8.2 Freelancer recommendation flow
+When a freelancer views a friend’s profile, they should see a Recommend button.
+
+Flow:
+
+Freelancer A goes to Freelancer B’s profile and clicks Recommend.
+
+A dialog appears to select which job (from A’s current or past employers) they want to recommend B for.
+
+The system sends a recommendation request to the job owner (customer):
+
+Customer sees:
+
+The recommended freelancer’s profile
+
+Who recommended them
+
+The job context
+
+Customer options:
+
+Accept recommendation:
+
+Sends a job invitation to the recommended freelancer.
+
+Decline recommendation:
+
+Sends a notification back to the recommender:
+
+“The employer declined your recommendation.”
+
+Recommended freelancer options:
+
+When they receive the invitation:
+
+They see:
+
+Job details
+
+Employer info
+
+They can:
+
+Accept → they are immediately assigned to the job (respecting existing job rules)
+
+Decline → both the employer and the recommender are notified:
+
+“The recommended freelancer declined the invitation.”

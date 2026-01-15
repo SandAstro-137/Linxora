@@ -58,15 +58,16 @@ export default function JobsPage() {
     mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/claim`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-job-requests"] });
       toast({
-        title: "Job claimed successfully!",
-        description: "You can now start working on this job.",
+        title: "Application submitted!",
+        description: "The customer will review your application.",
       });
     },
-    onError: () => {
+    onError: (error: Error) => {
       toast({
-        title: "Failed to claim job",
-        description: "Please try again later.",
+        title: "Failed to apply for job",
+        description: error.message || "Please try again later.",
         variant: "destructive",
       });
     },
