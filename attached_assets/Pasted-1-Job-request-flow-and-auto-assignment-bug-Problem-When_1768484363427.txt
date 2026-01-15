@@ -1,0 +1,272 @@
+1. Job request flow and auto‑assignment bug
+Problem:
+
+When a freelancer requests to take a job, the customer gets a notification.
+
+After the customer clicks the notification and views the job, the system sometimes shows the freelancer as already assigned to the job—even though the customer never explicitly accepted or denied the request.
+
+The job is marked as having that freelancer on it, but the freelancer’s Current Job section is empty.
+
+Required behavior:
+
+Job requests must go into a dedicated request queue for each job (e.g., Job Requests list).
+
+Clicking the notification should redirect the customer to the job’s request queue, not auto‑assign anyone.
+
+A job is only assigned when the customer explicitly clicks Accept Request for a specific freelancer.
+
+Once assigned:
+
+The job appears in the freelancer’s Current Job section.
+
+The job is marked as assigned to that freelancer on the customer side.
+
+2. New rule: freelancers can apply to up to 5 jobs
+Current behavior:
+
+Freelancers can only have 1 active job request at a time.
+
+New behavior:
+
+Freelancers can have up to 5 active job requests at the same time.
+
+Freelancers can cancel any pending request at any time.
+
+When a customer accepts one of the freelancer’s requests:
+
+That job becomes the freelancer’s active job and moves to Current Job.
+
+All other pending job requests from that freelancer are automatically cancelled.
+
+That accepted job is treated as their top priority.
+
+3. Notifications tab for all roles
+Problem:
+
+Only freelancers currently have a Notifications tab.
+
+Required behavior:
+
+All roles (Customer, Freelancer, Moderator, Head of Moderation, Founder) must have a Notifications tab in the sidebar.
+
+Notifications should be role‑aware (job requests, approvals, reports, system updates, etc.).
+
+4. Head of Moderation tutorial
+Problem:
+
+Head of Moderation currently gets the freelancer tutorial, which is incorrect.
+
+Required behavior:
+
+Head of Moderation must have its own custom onboarding/tutorial, focused on:
+
+Managing moderators
+
+Reviewing moderation performance
+
+Using the Moderation Vault
+
+Handling escalated cases and punishments
+
+5. Head of Moderation dashboard is empty
+Problem:
+
+The Head of Moderation dashboard currently shows no meaningful data.
+
+Required behavior:
+
+Head of Moderation dashboard should include:
+
+Overview of moderators (count, ranks, active/inactive)
+
+Pending reports and pending jobs requiring higher‑level review
+
+Summary of recent actions (bans, suspensions, dissolved jobs, etc.)
+
+Overview of Moderation Vault balance and recent distributions
+
+6. Head of Moderation: moderator management tab
+Required feature:
+
+Add a “Moderators” tab for Head of Moderation with:
+
+List of all moderators
+
+Their rank (Bronze, Iron, Silver, Gold, etc.)
+
+Key stats (cases reviewed, accuracy, activity)
+
+Ability to promote/demote moderator ranks
+
+7. Moderation Vault system
+Required feature:
+
+Add a “Moderation Vault” tab accessible to:
+
+Founder
+
+Head of Moderation
+
+Behavior:
+
+Founder can deposit funds into the Moderation Vault monthly.
+
+Head of Moderation can:
+
+View current vault balance
+
+Distribute funds to moderators
+
+View transaction history (who received what and when)
+
+8. Founder onboarding and settings
+Required changes:
+
+Founder does not need:
+
+Onboarding/tutorial screens
+
+The question mark icon to reopen onboarding
+
+An account management area in settings (for normal user account changes)
+
+Founder should have a clean, direct admin experience without user‑level onboarding clutter.
+
+9. Voice calls for Founder and Head of Moderation
+Problem:
+
+Founder and Head of Moderation currently cannot start voice calls, and the system always says “Connecting”.
+
+Required behavior:
+
+Both Founder and Head of Moderation must be able to:
+
+Start voice calls (e.g., in Team Room or relevant communication areas).
+
+The “Connecting…” state must resolve properly:
+
+Show connected when call is active.
+
+Show failed or disconnected if it cannot connect.
+
+10. Report system: “scam” flagged as inappropriate
+Problem:
+
+The report system is treating the word “scam” as inappropriate language.
+
+Required behavior:
+
+Words like “scam” must not be flagged as inappropriate.
+
+The inappropriate language filter should focus on:
+
+Slurs
+
+Harassment
+
+Explicit insults
+
+Reporting legitimate concerns (e.g., “this looks like a scam”) must be allowed.
+
+11. Report resolution options in Moderation Queue
+Current behavior:
+
+In the Moderation Queue report section, options are:
+
+Resolve
+
+Mark Reviewed
+
+Dismiss
+
+“Resolve” currently does nothing meaningful.
+
+Required behavior:
+
+When resolving a report, the system must show context‑appropriate actions based on what is being reported:
+
+If the report is about a job:
+Possible actions:
+
+Dissolve job (cancel/remove job)
+
+Warn job owner
+
+Lock job from further applications
+
+Flag job for internal review
+
+If the report is about a person (customer/freelancer/moderator):
+Possible actions:
+
+Warn user
+
+Suspend account (temporary)
+
+Ban account (permanent)
+
+Push back level (for freelancers)
+
+Suspend ability to take jobs (for freelancers)
+
+Suspend ability to post jobs (for customers)
+
+“Resolve” should open a punishment/action dialog instead of doing nothing.
+
+12. Pending jobs and cancellation requests: better options
+Current behavior:
+
+Pending jobs and cancellation requests have options that don’t fully make sense (unclear behavior).
+
+Required behavior (high‑level spec):
+
+For Pending Jobs:
+
+Options should include:
+
+Approve job
+
+Reject job
+
+Request changes (send feedback to job owner)
+
+For Cancellation Requests:
+
+Options should include:
+
+Approve cancellation
+
+Deny cancellation
+
+Possibly partial resolution (e.g., partial payment, dispute escalation)
+
+(Exact labels and flows can be refined, but they must be meaningful and consistent.)
+
+13. Global user search by ID + social actions
+Required feature:
+
+All roles must have a “User Search” tab or feature where they can:
+
+Search users by User ID number
+
+View the user’s profile
+
+Send friend requests
+
+Report or block the user
+
+Friend system:
+
+Add a Friends tab with:
+
+List of accepted friends
+
+Pending friend requests (incoming/outgoing)
+
+Ability to:
+
+Accept / decline friend requests
+
+Remove friends
+
+Block/unblock users
