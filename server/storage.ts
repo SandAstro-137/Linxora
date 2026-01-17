@@ -56,6 +56,30 @@ import {
   type JobRecommendation,
   type InsertJobRecommendation,
   MeetingExemptionStatus,
+  // New types from spec
+  type Escrow,
+  type InsertEscrow,
+  type JobFreelancer,
+  type InsertJobFreelancer,
+  type JobSubmission,
+  type InsertJobSubmission,
+  type Dispute,
+  type InsertDispute,
+  type ModerationLog,
+  type InsertModerationLog,
+  type ScheduledTask,
+  type InsertScheduledTask,
+  type UserBan,
+  type InsertUserBan,
+  type CustomerReview,
+  type InsertCustomerReview,
+  type CancellationNegotiation,
+  type InsertCancellationNegotiation,
+  EscrowStatus,
+  JobFreelancerStatus,
+  JobSubmissionStatus,
+  DisputeStatus,
+  ScheduledTaskStatus,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -240,6 +264,62 @@ export interface IStorage {
   getJobRecommendationsForFreelancer(freelancerId: string): Promise<JobRecommendation[]>;
   createJobRecommendation(recommendation: InsertJobRecommendation): Promise<JobRecommendation>;
   updateJobRecommendation(id: string, updates: Partial<JobRecommendation>): Promise<JobRecommendation | undefined>;
+
+  // ============================================================
+  // NEW OPERATIONS FROM SPEC - Escrow, Disputes, Job Lifecycle
+  // ============================================================
+
+  // Escrow operations
+  getEscrow(id: string): Promise<Escrow | undefined>;
+  getEscrowByJob(jobId: string): Promise<Escrow | undefined>;
+  createEscrow(escrow: InsertEscrow): Promise<Escrow>;
+  updateEscrow(id: string, updates: Partial<Escrow>): Promise<Escrow | undefined>;
+
+  // Job Freelancer operations (multi-freelancer support)
+  getJobFreelancers(jobId: string): Promise<JobFreelancer[]>;
+  getJobFreelancersByFreelancer(freelancerId: string): Promise<JobFreelancer[]>;
+  createJobFreelancer(jf: InsertJobFreelancer): Promise<JobFreelancer>;
+  updateJobFreelancer(id: string, updates: Partial<JobFreelancer>): Promise<JobFreelancer | undefined>;
+
+  // Job Submission operations
+  getJobSubmission(id: string): Promise<JobSubmission | undefined>;
+  getJobSubmissions(jobId: string): Promise<JobSubmission[]>;
+  createJobSubmission(submission: InsertJobSubmission): Promise<JobSubmission>;
+  updateJobSubmission(id: string, updates: Partial<JobSubmission>): Promise<JobSubmission | undefined>;
+
+  // Dispute operations
+  getDispute(id: string): Promise<Dispute | undefined>;
+  getDisputeByJob(jobId: string): Promise<Dispute | undefined>;
+  getDisputes(filters?: { status?: string; moderatorId?: string }): Promise<Dispute[]>;
+  createDispute(dispute: InsertDispute): Promise<Dispute>;
+  updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined>;
+
+  // Moderation Log operations
+  getModerationLogs(filters?: { moderatorId?: string; jobId?: string }): Promise<ModerationLog[]>;
+  createModerationLog(log: InsertModerationLog): Promise<ModerationLog>;
+
+  // Scheduled Task operations
+  getScheduledTask(id: string): Promise<ScheduledTask | undefined>;
+  getScheduledTasks(filters?: { jobId?: string; status?: string; taskType?: string }): Promise<ScheduledTask[]>;
+  getPendingScheduledTasks(beforeDate: Date): Promise<ScheduledTask[]>;
+  createScheduledTask(task: InsertScheduledTask): Promise<ScheduledTask>;
+  updateScheduledTask(id: string, updates: Partial<ScheduledTask>): Promise<ScheduledTask | undefined>;
+
+  // User Ban operations
+  getUserBan(userId: string): Promise<UserBan | undefined>;
+  getUserBans(): Promise<UserBan[]>;
+  createUserBan(ban: InsertUserBan): Promise<UserBan>;
+
+  // Customer Review operations
+  getCustomerReview(id: string): Promise<CustomerReview | undefined>;
+  getCustomerReviewBySubmission(submissionId: string): Promise<CustomerReview | undefined>;
+  createCustomerReview(review: InsertCustomerReview): Promise<CustomerReview>;
+
+  // Cancellation Negotiation operations
+  getCancellationNegotiation(id: string): Promise<CancellationNegotiation | undefined>;
+  getCancellationNegotiationByJob(jobId: string): Promise<CancellationNegotiation | undefined>;
+  createCancellationNegotiation(negotiation: InsertCancellationNegotiation): Promise<CancellationNegotiation>;
+  updateCancellationNegotiation(id: string, updates: Partial<CancellationNegotiation>): Promise<CancellationNegotiation | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -273,6 +353,16 @@ export class MemStorage implements IStorage {
   private jobRecommendations: Map<string, JobRecommendation>;
   private meetingExemptions: Map<string, MeetingExemption>;
   private userIdCounter: number;
+  // New maps from spec
+  private escrowRecords: Map<string, Escrow>;
+  private jobFreelancersMap: Map<string, JobFreelancer>;
+  private jobSubmissionsMap: Map<string, JobSubmission>;
+  private disputesMap: Map<string, Dispute>;
+  private moderationLogsMap: Map<string, ModerationLog>;
+  private scheduledTasksMap: Map<string, ScheduledTask>;
+  private userBansMap: Map<string, UserBan>;
+  private customerReviewsMap: Map<string, CustomerReview>;
+  private cancellationNegotiationsMap: Map<string, CancellationNegotiation>;
 
   constructor() {
     this.users = new Map();
@@ -305,6 +395,16 @@ export class MemStorage implements IStorage {
     this.friendRequests = new Map();
     this.jobRecommendations = new Map();
     this.meetingExemptions = new Map();
+    // Initialize new maps from spec
+    this.escrowRecords = new Map();
+    this.jobFreelancersMap = new Map();
+    this.jobSubmissionsMap = new Map();
+    this.disputesMap = new Map();
+    this.moderationLogsMap = new Map();
+    this.scheduledTasksMap = new Map();
+    this.userBansMap = new Map();
+    this.customerReviewsMap = new Map();
+    this.cancellationNegotiationsMap = new Map();
   }
 
   // User operations
@@ -424,12 +524,18 @@ export class MemStorage implements IStorage {
     const job: Job = {
       ...insertJob,
       id,
-      status: insertJob.status ?? "pending",
+      status: insertJob.status ?? "draft",
       freelancerId: insertJob.freelancerId ?? null,
       requirements: insertJob.requirements ?? null,
       deadline: insertJob.deadline ?? null,
       collaborators: insertJob.collaborators ?? [],
       moderatorFeedback: insertJob.moderatorFeedback ?? null,
+      expiresAt: null,
+      approvedAt: null,
+      submittedAt: null,
+      autoCompleteAt: null,
+      maxFreelancers: insertJob.maxFreelancers ?? 1,
+      isLocked: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1483,6 +1589,315 @@ export class MemStorage implements IStorage {
     if (!recommendation) return undefined;
     const updated = { ...recommendation, ...updates, updatedAt: new Date() };
     this.jobRecommendations.set(id, updated);
+    return updated;
+  }
+
+  // ============================================================
+  // NEW OPERATIONS FROM SPEC - Escrow, Disputes, Job Lifecycle
+  // ============================================================
+
+  // Escrow operations
+  async getEscrow(id: string): Promise<Escrow | undefined> {
+    return this.escrowRecords.get(id);
+  }
+
+  async getEscrowByJob(jobId: string): Promise<Escrow | undefined> {
+    return Array.from(this.escrowRecords.values()).find(e => e.jobId === jobId);
+  }
+
+  async createEscrow(insertEscrow: InsertEscrow): Promise<Escrow> {
+    const id = randomUUID();
+    const escrowRecord: Escrow = {
+      id,
+      jobId: insertEscrow.jobId,
+      customerId: insertEscrow.customerId,
+      totalAmount: insertEscrow.totalAmount,
+      status: insertEscrow.status ?? EscrowStatus.HELD,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.escrowRecords.set(id, escrowRecord);
+    return escrowRecord;
+  }
+
+  async updateEscrow(id: string, updates: Partial<Escrow>): Promise<Escrow | undefined> {
+    const escrowRecord = this.escrowRecords.get(id);
+    if (!escrowRecord) return undefined;
+    const updated = { ...escrowRecord, ...updates, updatedAt: new Date() };
+    this.escrowRecords.set(id, updated);
+    return updated;
+  }
+
+  // Job Freelancer operations
+  async getJobFreelancers(jobId: string): Promise<JobFreelancer[]> {
+    return Array.from(this.jobFreelancersMap.values())
+      .filter(jf => jf.jobId === jobId);
+  }
+
+  async getJobFreelancersByFreelancer(freelancerId: string): Promise<JobFreelancer[]> {
+    return Array.from(this.jobFreelancersMap.values())
+      .filter(jf => jf.freelancerId === freelancerId);
+  }
+
+  async createJobFreelancer(insertJF: InsertJobFreelancer): Promise<JobFreelancer> {
+    const id = randomUUID();
+    const jf: JobFreelancer = {
+      id,
+      jobId: insertJF.jobId,
+      freelancerId: insertJF.freelancerId,
+      shareAmount: insertJF.shareAmount,
+      levelAtTime: insertJF.levelAtTime,
+      payoutAmount: insertJF.payoutAmount ?? null,
+      status: insertJF.status ?? JobFreelancerStatus.ACCEPTED,
+      createdAt: new Date(),
+    };
+    this.jobFreelancersMap.set(id, jf);
+    return jf;
+  }
+
+  async updateJobFreelancer(id: string, updates: Partial<JobFreelancer>): Promise<JobFreelancer | undefined> {
+    const jf = this.jobFreelancersMap.get(id);
+    if (!jf) return undefined;
+    const updated = { ...jf, ...updates };
+    this.jobFreelancersMap.set(id, updated);
+    return updated;
+  }
+
+  // Job Submission operations
+  async getJobSubmission(id: string): Promise<JobSubmission | undefined> {
+    return this.jobSubmissionsMap.get(id);
+  }
+
+  async getJobSubmissions(jobId: string): Promise<JobSubmission[]> {
+    return Array.from(this.jobSubmissionsMap.values())
+      .filter(s => s.jobId === jobId)
+      .sort((a, b) => new Date(b.submittedAt!).getTime() - new Date(a.submittedAt!).getTime());
+  }
+
+  async createJobSubmission(insertSub: InsertJobSubmission): Promise<JobSubmission> {
+    const id = randomUUID();
+    const submission: JobSubmission = {
+      id,
+      jobId: insertSub.jobId,
+      freelancerId: insertSub.freelancerId,
+      proofFiles: insertSub.proofFiles ?? [],
+      proofLinks: insertSub.proofLinks ?? [],
+      notes: insertSub.notes ?? null,
+      status: insertSub.status ?? JobSubmissionStatus.SUBMITTED,
+      submittedAt: new Date(),
+    };
+    this.jobSubmissionsMap.set(id, submission);
+    return submission;
+  }
+
+  async updateJobSubmission(id: string, updates: Partial<JobSubmission>): Promise<JobSubmission | undefined> {
+    const submission = this.jobSubmissionsMap.get(id);
+    if (!submission) return undefined;
+    const updated = { ...submission, ...updates };
+    this.jobSubmissionsMap.set(id, updated);
+    return updated;
+  }
+
+  // Dispute operations
+  async getDispute(id: string): Promise<Dispute | undefined> {
+    return this.disputesMap.get(id);
+  }
+
+  async getDisputeByJob(jobId: string): Promise<Dispute | undefined> {
+    return Array.from(this.disputesMap.values()).find(d => d.jobId === jobId);
+  }
+
+  async getDisputes(filters?: { status?: string; moderatorId?: string }): Promise<Dispute[]> {
+    return Array.from(this.disputesMap.values())
+      .filter(d => {
+        if (filters?.status && d.status !== filters.status) return false;
+        if (filters?.moderatorId && d.moderatorId !== filters.moderatorId) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createDispute(insertDispute: InsertDispute): Promise<Dispute> {
+    const id = randomUUID();
+    const dispute: Dispute = {
+      id,
+      jobId: insertDispute.jobId,
+      openedByUserId: insertDispute.openedByUserId,
+      reason: insertDispute.reason,
+      status: DisputeStatus.OPEN,
+      moderatorId: null,
+      resolutionNotes: null,
+      freelancerAmount: null,
+      customerRefund: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.disputesMap.set(id, dispute);
+    return dispute;
+  }
+
+  async updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined> {
+    const dispute = this.disputesMap.get(id);
+    if (!dispute) return undefined;
+    const updated = { ...dispute, ...updates, updatedAt: new Date() };
+    this.disputesMap.set(id, updated);
+    return updated;
+  }
+
+  // Moderation Log operations
+  async getModerationLogs(filters?: { moderatorId?: string; jobId?: string }): Promise<ModerationLog[]> {
+    return Array.from(this.moderationLogsMap.values())
+      .filter(log => {
+        if (filters?.moderatorId && log.moderatorId !== filters.moderatorId) return false;
+        if (filters?.jobId && log.jobId !== filters.jobId) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createModerationLog(insertLog: InsertModerationLog): Promise<ModerationLog> {
+    const id = randomUUID();
+    const log: ModerationLog = {
+      id,
+      moderatorId: insertLog.moderatorId,
+      actionType: insertLog.actionType,
+      targetUserId: insertLog.targetUserId ?? null,
+      jobId: insertLog.jobId ?? null,
+      disputeId: insertLog.disputeId ?? null,
+      notes: insertLog.notes ?? null,
+      createdAt: new Date(),
+    };
+    this.moderationLogsMap.set(id, log);
+    return log;
+  }
+
+  // Scheduled Task operations
+  async getScheduledTask(id: string): Promise<ScheduledTask | undefined> {
+    return this.scheduledTasksMap.get(id);
+  }
+
+  async getScheduledTasks(filters?: { jobId?: string; status?: string; taskType?: string }): Promise<ScheduledTask[]> {
+    return Array.from(this.scheduledTasksMap.values())
+      .filter(task => {
+        if (filters?.jobId && task.jobId !== filters.jobId) return false;
+        if (filters?.status && task.status !== filters.status) return false;
+        if (filters?.taskType && task.taskType !== filters.taskType) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime());
+  }
+
+  async getPendingScheduledTasks(beforeDate: Date): Promise<ScheduledTask[]> {
+    return Array.from(this.scheduledTasksMap.values())
+      .filter(task => task.status === ScheduledTaskStatus.PENDING && new Date(task.runAt) <= beforeDate)
+      .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime());
+  }
+
+  async createScheduledTask(insertTask: InsertScheduledTask): Promise<ScheduledTask> {
+    const id = randomUUID();
+    const task: ScheduledTask = {
+      id,
+      jobId: insertTask.jobId ?? null,
+      taskType: insertTask.taskType,
+      runAt: insertTask.runAt,
+      status: insertTask.status ?? ScheduledTaskStatus.PENDING,
+      metadata: insertTask.metadata ?? {},
+      createdAt: new Date(),
+    };
+    this.scheduledTasksMap.set(id, task);
+    return task;
+  }
+
+  async updateScheduledTask(id: string, updates: Partial<ScheduledTask>): Promise<ScheduledTask | undefined> {
+    const task = this.scheduledTasksMap.get(id);
+    if (!task) return undefined;
+    const updated = { ...task, ...updates };
+    this.scheduledTasksMap.set(id, updated);
+    return updated;
+  }
+
+  // User Ban operations
+  async getUserBan(userId: string): Promise<UserBan | undefined> {
+    return Array.from(this.userBansMap.values()).find(b => b.userId === userId);
+  }
+
+  async getUserBans(): Promise<UserBan[]> {
+    return Array.from(this.userBansMap.values())
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createUserBan(insertBan: InsertUserBan): Promise<UserBan> {
+    const id = randomUUID();
+    const ban: UserBan = {
+      id,
+      userId: insertBan.userId,
+      reason: insertBan.reason,
+      bannedById: insertBan.bannedById,
+      fundsWithheld: insertBan.fundsWithheld ?? false,
+      withheldAmount: insertBan.withheldAmount ?? null,
+      createdAt: new Date(),
+    };
+    this.userBansMap.set(id, ban);
+    return ban;
+  }
+
+  // Customer Review operations
+  async getCustomerReview(id: string): Promise<CustomerReview | undefined> {
+    return this.customerReviewsMap.get(id);
+  }
+
+  async getCustomerReviewBySubmission(submissionId: string): Promise<CustomerReview | undefined> {
+    return Array.from(this.customerReviewsMap.values()).find(r => r.submissionId === submissionId);
+  }
+
+  async createCustomerReview(insertReview: InsertCustomerReview): Promise<CustomerReview> {
+    const id = randomUUID();
+    const review: CustomerReview = {
+      id,
+      jobId: insertReview.jobId,
+      submissionId: insertReview.submissionId,
+      customerId: insertReview.customerId,
+      accepted: insertReview.accepted,
+      rejectionReason: insertReview.rejectionReason ?? null,
+      createdAt: new Date(),
+    };
+    this.customerReviewsMap.set(id, review);
+    return review;
+  }
+
+  // Cancellation Negotiation operations
+  async getCancellationNegotiation(id: string): Promise<CancellationNegotiation | undefined> {
+    return this.cancellationNegotiationsMap.get(id);
+  }
+
+  async getCancellationNegotiationByJob(jobId: string): Promise<CancellationNegotiation | undefined> {
+    return Array.from(this.cancellationNegotiationsMap.values()).find(n => n.jobId === jobId);
+  }
+
+  async createCancellationNegotiation(insertNeg: InsertCancellationNegotiation): Promise<CancellationNegotiation> {
+    const id = randomUUID();
+    const negotiation: CancellationNegotiation = {
+      id,
+      jobId: insertNeg.jobId,
+      initiatedById: insertNeg.initiatedById,
+      proposedFreelancerAmount: insertNeg.proposedFreelancerAmount ?? null,
+      proposedCustomerRefund: insertNeg.proposedCustomerRefund ?? null,
+      agreedByCustomer: insertNeg.agreedByCustomer ?? false,
+      agreedByFreelancer: insertNeg.agreedByFreelancer ?? false,
+      expiresAt: insertNeg.expiresAt,
+      status: insertNeg.status ?? "negotiating",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.cancellationNegotiationsMap.set(id, negotiation);
+    return negotiation;
+  }
+
+  async updateCancellationNegotiation(id: string, updates: Partial<CancellationNegotiation>): Promise<CancellationNegotiation | undefined> {
+    const negotiation = this.cancellationNegotiationsMap.get(id);
+    if (!negotiation) return undefined;
+    const updated = { ...negotiation, ...updates, updatedAt: new Date() };
+    this.cancellationNegotiationsMap.set(id, updated);
     return updated;
   }
 }

@@ -63,6 +63,7 @@ app.use((req, res, next) => {
 import { seedData } from "./lib/seed-data";
 import { MongoStorage } from "./lib/mongo-storage";
 import { setStorage } from "./storage";
+import { startScheduledTaskRunner } from "./lib/scheduled-tasks";
 
 (async () => {
   // Initialize storage
@@ -120,5 +121,8 @@ import { setStorage } from "./storage";
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    
+    // Start the scheduled task runner (runs every minute)
+    startScheduledTaskRunner(60000);
   });
 })();

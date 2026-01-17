@@ -59,6 +59,35 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Report System: Users can report jobs, users, or messages via ReportDialog component. Reports are stored with sanitized content and checked for high-severity inappropriate content.
     - Moderation Queue: Reports tab in moderation page for moderators to review, resolve, mark reviewed, or dismiss reports with optional review notes.
     - Content filtering applied to job creation and report submissions to prevent malicious content.
+- **Job Lifecycle State Machine (NEW - Jan 2026):**
+    - States: DRAFT → PENDING_APPROVAL → PENDING_ACCEPTANCE → IN_PROGRESS → AWAITING_CUSTOMER → COMPLETED
+    - Alternative paths: CANCELLED, DISPUTE, EXPIRED
+    - Customer creates job as DRAFT, submits for approval
+    - Moderator approves (funds locked in escrow) or rejects
+    - Freelancer accepts job, starts work
+    - Freelancer submits work with proof (files, links, notes)
+    - Customer has 4 days to review (auto-complete if no response)
+    - 8-hour reminder notification sent to customer
+- **Escrow Payment System (NEW):**
+    - Funds held at job approval (pendingUsdtBalance increases)
+    - Released on completion or dispute resolution
+    - Level-based freelancer payouts: Level 1=60%, Level 2=70%, Level 3=75%, Level 4=80%, Level 5=85%
+    - Platform retains difference as fee
+    - Multi-freelancer jobs split payment equally, then apply level percentage
+- **Dispute Resolution (NEW):**
+    - Either party can open dispute for active jobs
+    - Job locked during dispute
+    - Moderator claims and resolves with split decision
+    - Funds distributed per moderator decision (freelancer amount + customer refund)
+- **Cancellation System (NEW):**
+    - Before freelancer acceptance: full refund to customer
+    - After acceptance: 7-day negotiation period
+    - If no agreement, auto-escalates to dispute
+- **Scheduled Tasks (NEW):**
+    - Auto-completion after 4 days with no customer response
+    - Job expiration after 2 months with no freelancer acceptance
+    - Customer review reminders at 8 hours
+    - Cancellation escalation after 7-day negotiation
 
 **System Design Choices:**
 - **Client-Side:** React with TypeScript, Wouter for routing, TanStack Query for data fetching.

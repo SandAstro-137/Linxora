@@ -15,27 +15,106 @@ export const UserRole = {
 
 export type UserRoleType = typeof UserRole[keyof typeof UserRole];
 
-// Job status enum
+// Job status enum - matches spec state machine
 export const JobStatus = {
+  DRAFT: "draft",
+  PENDING_APPROVAL: "pending_approval",
+  PENDING_ACCEPTANCE: "pending_acceptance",
+  IN_PROGRESS: "in_progress",
+  SUBMITTED: "submitted",
+  AWAITING_CUSTOMER: "awaiting_customer",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled",
+  DISPUTE: "dispute",
+  EXPIRED: "expired",
+  // Legacy statuses for backward compatibility
   PENDING: "pending",
   ACTIVE: "active",
   FREELANCER_REQUESTED: "freelancer_requested",
   CLAIMED: "claimed",
-  IN_PROGRESS: "in_progress",
-  COMPLETED: "completed",
   REJECTED: "rejected",
   CHANGES_REQUESTED: "changes_requested"
 } as const;
 
 export type JobStatusType = typeof JobStatus[keyof typeof JobStatus];
 
-// Transaction types
+// Transaction types - expanded per spec
 export const TransactionType = {
   DEPOSIT: "deposit",
-  WITHDRAWAL: "withdrawal"
+  WITHDRAWAL: "withdrawal",
+  ESCROW_HOLD: "escrow_hold",
+  ESCROW_RELEASE: "escrow_release",
+  REFUND: "refund",
+  FEE: "fee",
+  ADJUSTMENT: "adjustment"
 } as const;
 
 export type TransactionTypeEnum = typeof TransactionType[keyof typeof TransactionType];
+
+// Escrow status enum
+export const EscrowStatus = {
+  HELD: "held",
+  RELEASED: "released",
+  REFUNDED: "refunded",
+  PARTIAL_REFUND: "partial_refund"
+} as const;
+
+export type EscrowStatusType = typeof EscrowStatus[keyof typeof EscrowStatus];
+
+// Job Freelancer status
+export const JobFreelancerStatus = {
+  ACCEPTED: "accepted",
+  REMOVED: "removed",
+  COMPLETED: "completed"
+} as const;
+
+export type JobFreelancerStatusType = typeof JobFreelancerStatus[keyof typeof JobFreelancerStatus];
+
+// Job Submission status
+export const JobSubmissionStatus = {
+  SUBMITTED: "submitted",
+  REVISED: "revised",
+  FINAL: "final"
+} as const;
+
+export type JobSubmissionStatusType = typeof JobSubmissionStatus[keyof typeof JobSubmissionStatus];
+
+// Dispute status
+export const DisputeStatus = {
+  OPEN: "open",
+  UNDER_REVIEW: "under_review",
+  RESOLVED: "resolved"
+} as const;
+
+export type DisputeStatusType = typeof DisputeStatus[keyof typeof DisputeStatus];
+
+// Scheduled Task types
+export const ScheduledTaskType = {
+  AUTO_COMPLETE: "auto_complete",
+  EXPIRE_JOB: "expire_job",
+  DEADLINE_OVERRUN: "deadline_overrun",
+  REMINDER: "reminder"
+} as const;
+
+export type ScheduledTaskTypeEnum = typeof ScheduledTaskType[keyof typeof ScheduledTaskType];
+
+// Scheduled Task status
+export const ScheduledTaskStatus = {
+  PENDING: "pending",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled"
+} as const;
+
+export type ScheduledTaskStatusType = typeof ScheduledTaskStatus[keyof typeof ScheduledTaskStatus];
+
+// User account status
+export const UserAccountStatus = {
+  ACTIVE: "active",
+  SUSPENDED: "suspended",
+  BANNED: "banned"
+} as const;
+
+export type UserAccountStatusType = typeof UserAccountStatus[keyof typeof UserAccountStatus];
 
 // PTO status
 export const PTOStatus = {
@@ -117,7 +196,7 @@ export const workingHoursSchema = z.object({
 
 export type WorkingHours = z.infer<typeof workingHoursSchema>;
 
-// Jobs table
+// Jobs table - updated per spec
 export const jobs = pgTable("jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull(),
@@ -127,10 +206,17 @@ export const jobs = pgTable("jobs", {
   budget: decimal("budget", { precision: 10, scale: 2 }).notNull(),
   requirements: text("requirements"),
   deadline: timestamp("deadline"),
-  status: text("status").notNull().default(JobStatus.PENDING),
+  status: text("status").notNull().default(JobStatus.DRAFT),
   freelancerId: varchar("freelancer_id"),
   collaborators: text("collaborators").array().default(sql`ARRAY[]::text[]`),
   moderatorFeedback: text("moderator_feedback"),
+  // New fields per spec
+  expiresAt: timestamp("expires_at"), // For job expiration (2 months after approval)
+  approvedAt: timestamp("approved_at"), // When job was approved
+  submittedAt: timestamp("submitted_at"), // When work was submitted
+  autoCompleteAt: timestamp("auto_complete_at"), // When auto-complete will trigger (4 days after submission)
+  maxFreelancers: integer("max_freelancers").default(1), // For multi-freelancer jobs
+  isLocked: boolean("is_locked").default(false), // Lock job during dispute
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -905,3 +991,197 @@ export const insertJobRecommendationSchema = createInsertSchema(jobRecommendatio
 
 export type InsertJobRecommendation = z.infer<typeof insertJobRecommendationSchema>;
 export type JobRecommendation = typeof jobRecommendations.$inferSelect;
+
+// ============================================================
+// NEW TABLES FROM SPEC - Escrow, Disputes, Job Lifecycle
+// ============================================================
+
+// Escrow table - holds funds for jobs
+export const escrow = pgTable("escrow", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
+  status: text("status").notNull().default(EscrowStatus.HELD),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertEscrowSchema = createInsertSchema(escrow).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertEscrow = z.infer<typeof insertEscrowSchema>;
+export type Escrow = typeof escrow.$inferSelect;
+
+// Job Freelancers table - tracks freelancers assigned to jobs (supports multi-freelancer)
+export const jobFreelancers = pgTable("job_freelancers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  shareAmount: decimal("share_amount", { precision: 12, scale: 2 }).notNull(),
+  levelAtTime: integer("level_at_time").notNull(),
+  payoutAmount: decimal("payout_amount", { precision: 12, scale: 2 }),
+  status: text("status").notNull().default(JobFreelancerStatus.ACCEPTED),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertJobFreelancerSchema = createInsertSchema(jobFreelancers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertJobFreelancer = z.infer<typeof insertJobFreelancerSchema>;
+export type JobFreelancer = typeof jobFreelancers.$inferSelect;
+
+// Job Submissions table - tracks work submissions with proof
+export const jobSubmissions = pgTable("job_submissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  proofFiles: jsonb("proof_files").default(sql`'[]'::jsonb`), // Array of file URLs
+  proofLinks: jsonb("proof_links").default(sql`'[]'::jsonb`), // Array of external links
+  notes: text("notes"),
+  status: text("status").notNull().default(JobSubmissionStatus.SUBMITTED),
+  submittedAt: timestamp("submitted_at").defaultNow(),
+});
+
+export const insertJobSubmissionSchema = createInsertSchema(jobSubmissions).omit({
+  id: true,
+  submittedAt: true,
+});
+
+export type InsertJobSubmission = z.infer<typeof insertJobSubmissionSchema>;
+export type JobSubmission = typeof jobSubmissions.$inferSelect;
+
+// Disputes table - tracks job disputes
+export const disputes = pgTable("disputes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  openedByUserId: varchar("opened_by_user_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default(DisputeStatus.OPEN),
+  moderatorId: varchar("moderator_id"),
+  resolutionNotes: text("resolution_notes"),
+  freelancerAmount: decimal("freelancer_amount", { precision: 12, scale: 2 }),
+  customerRefund: decimal("customer_refund", { precision: 12, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDisputeSchema = createInsertSchema(disputes).omit({
+  id: true,
+  status: true,
+  moderatorId: true,
+  resolutionNotes: true,
+  freelancerAmount: true,
+  customerRefund: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertDispute = z.infer<typeof insertDisputeSchema>;
+export type Dispute = typeof disputes.$inferSelect;
+
+// Moderation Logs table - tracks all moderator actions
+export const moderationLogs = pgTable("moderation_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  moderatorId: varchar("moderator_id").notNull(),
+  actionType: text("action_type").notNull(),
+  targetUserId: varchar("target_user_id"),
+  jobId: varchar("job_id"),
+  disputeId: varchar("dispute_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertModerationLogSchema = createInsertSchema(moderationLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertModerationLog = z.infer<typeof insertModerationLogSchema>;
+export type ModerationLog = typeof moderationLogs.$inferSelect;
+
+// Scheduled Tasks table - for CRON jobs (auto-complete, expiration, etc.)
+export const scheduledTasks = pgTable("scheduled_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id"),
+  taskType: text("task_type").notNull(),
+  runAt: timestamp("run_at").notNull(),
+  status: text("status").notNull().default(ScheduledTaskStatus.PENDING),
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`), // Additional data for the task
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertScheduledTaskSchema = createInsertSchema(scheduledTasks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertScheduledTask = z.infer<typeof insertScheduledTaskSchema>;
+export type ScheduledTask = typeof scheduledTasks.$inferSelect;
+
+// User Bans table - tracks user bans
+export const userBans = pgTable("user_bans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  reason: text("reason").notNull(),
+  bannedById: varchar("banned_by_id").notNull(),
+  fundsWithheld: boolean("funds_withheld").default(false), // Rare, manual only
+  withheldAmount: decimal("withheld_amount", { precision: 12, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertUserBanSchema = createInsertSchema(userBans).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertUserBan = z.infer<typeof insertUserBanSchema>;
+export type UserBan = typeof userBans.$inferSelect;
+
+// Customer Review Response table - tracks customer acceptance/rejection of work
+export const customerReviews = pgTable("customer_reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  submissionId: varchar("submission_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  accepted: boolean("accepted").notNull(),
+  rejectionReason: text("rejection_reason"), // Required if rejected
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustomerReviewSchema = createInsertSchema(customerReviews).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertCustomerReview = z.infer<typeof insertCustomerReviewSchema>;
+export type CustomerReview = typeof customerReviews.$inferSelect;
+
+// Cancellation Negotiations table - for 7-day negotiation period after acceptance
+export const cancellationNegotiations = pgTable("cancellation_negotiations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  initiatedById: varchar("initiated_by_id").notNull(),
+  proposedFreelancerAmount: decimal("proposed_freelancer_amount", { precision: 12, scale: 2 }),
+  proposedCustomerRefund: decimal("proposed_customer_refund", { precision: 12, scale: 2 }),
+  agreedByCustomer: boolean("agreed_by_customer").default(false),
+  agreedByFreelancer: boolean("agreed_by_freelancer").default(false),
+  expiresAt: timestamp("expires_at").notNull(), // 7 days from creation
+  status: text("status").notNull().default("negotiating"), // negotiating, agreed, escalated
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCancellationNegotiationSchema = createInsertSchema(cancellationNegotiations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertCancellationNegotiation = z.infer<typeof insertCancellationNegotiationSchema>;
+export type CancellationNegotiation = typeof cancellationNegotiations.$inferSelect;

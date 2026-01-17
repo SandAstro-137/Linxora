@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -1167,6 +1167,1249 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================
+  // NEW JOB LIFECYCLE ROUTES (From Spec)
+  // ============================================================
+
+  // Submit job for approval (Customer submits DRAFT -> PENDING_APPROVAL)
+  app.post("/api/jobs/:id/submit-for-approval", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can submit for approval" });
+      }
+
+      // Only draft, changes_requested, or rejected jobs can be submitted
+      if (![JobStatus.DRAFT, "changes_requested", "rejected"].includes(job.status)) {
+        return res.status(400).json({ error: "Only draft jobs can be submitted for approval" });
+      }
+
+      // Validate wallet balance covers budget
+      const wallet = await storage.getWallet(job.customerId);
+      if (!wallet) {
+        return res.status(400).json({ error: "Wallet not found" });
+      }
+
+      const budget = parseFloat(job.budget);
+      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
+
+      if (budget > availableBalance) {
+        return res.status(400).json({ 
+          error: "Insufficient available balance to fund this job. Please deposit more funds." 
+        });
+      }
+
+      // Update job status to pending approval
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: JobStatus.PENDING_APPROVAL,
+        moderatorFeedback: null,
+      });
+
+      // Notify moderators
+      const moderators = await storage.getUsers();
+      const modRoles = ["staff", "moderator", "head_of_moderation", "founder"];
+      for (const mod of moderators.filter(u => modRoles.includes(u.role))) {
+        await storage.createNotification({
+          userId: mod.id,
+          type: "moderation",
+          title: "New job pending approval",
+          message: `Job "${job.title}" is waiting for moderation review.`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error submitting job for approval:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator approves job (PENDING_APPROVAL -> PENDING_ACCEPTANCE)
+  app.post("/api/jobs/:id/approve", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== JobStatus.PENDING_APPROVAL && job.status !== "pending") {
+        return res.status(400).json({ error: "Job is not pending approval" });
+      }
+
+      // Lock customer funds in escrow
+      const wallet = await storage.getWallet(job.customerId);
+      if (!wallet) {
+        return res.status(400).json({ error: "Customer wallet not found" });
+      }
+
+      const budget = parseFloat(job.budget);
+      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
+
+      if (budget > availableBalance) {
+        return res.status(400).json({ 
+          error: "Customer has insufficient funds to cover job budget" 
+        });
+      }
+
+      // Put funds on hold (pending balance)
+      await storage.adjustPendingBalance(job.customerId, budget);
+
+      // Create escrow record
+      await storage.createEscrow({
+        jobId: job.id,
+        customerId: job.customerId,
+        totalAmount: job.budget,
+        status: EscrowStatus.HELD,
+      });
+
+      // Set job expiration (2 months from approval)
+      const twoMonthsFromNow = new Date();
+      twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
+
+      // Update job status
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: JobStatus.PENDING_ACCEPTANCE,
+        approvedAt: new Date(),
+        expiresAt: twoMonthsFromNow,
+        moderatorFeedback: null,
+      });
+
+      // Schedule expiration task
+      await storage.createScheduledTask({
+        jobId: job.id,
+        taskType: "job_expiration",
+        runAt: twoMonthsFromNow,
+        status: ScheduledTaskStatus.PENDING,
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "job_approved",
+        jobId: job.id,
+      });
+
+      // Notify customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_approved",
+        title: "Job approved!",
+        message: `Your job "${job.title}" has been approved and is now live.`,
+        relatedId: job.id,
+      });
+
+      // Post to Discord webhook
+      try {
+        await postToDiscordWebhook(
+          `New job approved: "${job.title}" | Budget: $${job.budget} | Category: ${job.category}`
+        );
+      } catch (e) {
+        console.error("Discord webhook error:", e);
+      }
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error approving job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator rejects job
+  app.post("/api/jobs/:id/reject", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== JobStatus.PENDING_APPROVAL && job.status !== "pending") {
+        return res.status(400).json({ error: "Job is not pending approval" });
+      }
+
+      const { feedback } = req.body;
+      if (!feedback || typeof feedback !== "string" || feedback.trim().length < 10) {
+        return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
+      }
+
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: "rejected",
+        moderatorFeedback: feedback.trim(),
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "job_rejected",
+        jobId: job.id,
+        notes: feedback,
+      });
+
+      // Notify customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_rejected",
+        title: "Job needs changes",
+        message: `Your job "${job.title}" was not approved. Please review the feedback.`,
+        relatedId: job.id,
+      });
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error rejecting job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Request changes to job (PENDING_APPROVAL -> changes_requested)
+  app.post("/api/jobs/:id/request-changes", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== JobStatus.PENDING_APPROVAL && job.status !== "pending") {
+        return res.status(400).json({ error: "Job is not pending approval" });
+      }
+
+      const { feedback } = req.body;
+      if (!feedback || typeof feedback !== "string" || feedback.trim().length < 10) {
+        return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
+      }
+
+      const updatedJob = await storage.updateJob(req.params.id, {
+        status: "changes_requested",
+        moderatorFeedback: feedback.trim(),
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "job_changes_requested",
+        jobId: job.id,
+        notes: feedback,
+      });
+
+      // Notify customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_changes_requested",
+        title: "Job changes requested",
+        message: `A moderator has requested changes to your job "${job.title}".`,
+        relatedId: job.id,
+      });
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error requesting changes:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer submits work (creates submission with proof)
+  app.post("/api/jobs/:id/submit-work", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Check if user is assigned to this job
+      const user = await storage.getUser(req.session.userId!);
+      if (!user || user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can submit work" });
+      }
+
+      // Check if this freelancer is assigned (primary or via jobFreelancers)
+      const isAssigned = job.freelancerId === req.session.userId ||
+        (await storage.getJobFreelancers(job.id)).some(jf => jf.freelancerId === req.session.userId);
+
+      if (!isAssigned) {
+        return res.status(403).json({ error: "You are not assigned to this job" });
+      }
+
+      // Job must be in progress (legacy: claimed, in_progress or new: IN_PROGRESS)
+      const inProgressStatuses = ["claimed", "in_progress", JobStatus.IN_PROGRESS];
+      if (!inProgressStatuses.includes(job.status)) {
+        return res.status(400).json({ error: "Job must be in progress to submit work" });
+      }
+
+      const { proofFiles, proofLinks, notes } = req.body;
+
+      // Require at least some proof
+      const hasProof = (proofFiles && proofFiles.length > 0) || (proofLinks && proofLinks.length > 0) || notes;
+      if (!hasProof) {
+        return res.status(400).json({ error: "Please provide proof of work (files, links, or notes)" });
+      }
+
+      // Create job submission
+      const submission = await storage.createJobSubmission({
+        jobId: job.id,
+        freelancerId: req.session.userId!,
+        proofFiles: proofFiles || [],
+        proofLinks: proofLinks || [],
+        notes: notes || null,
+        status: JobSubmissionStatus.SUBMITTED,
+      });
+
+      // Set 4-day auto-complete timer
+      const autoCompleteDate = new Date();
+      autoCompleteDate.setDate(autoCompleteDate.getDate() + 4);
+
+      // Update job status
+      await storage.updateJob(job.id, {
+        status: JobStatus.AWAITING_CUSTOMER,
+        submittedAt: new Date(),
+        autoCompleteAt: autoCompleteDate,
+      });
+
+      // Schedule auto-complete task
+      await storage.createScheduledTask({
+        jobId: job.id,
+        taskType: "auto_complete",
+        runAt: autoCompleteDate,
+        status: ScheduledTaskStatus.PENDING,
+        metadata: { submissionId: submission.id },
+      });
+
+      // Schedule 8-hour reminder
+      const reminderDate = new Date();
+      reminderDate.setHours(reminderDate.getHours() + 8);
+      await storage.createScheduledTask({
+        jobId: job.id,
+        taskType: "customer_reminder",
+        runAt: reminderDate,
+        status: ScheduledTaskStatus.PENDING,
+      });
+
+      // Notify customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "work_submitted",
+        title: "Work submitted for review",
+        message: `Freelancer has submitted work for "${job.title}". Please review within 4 days.`,
+        relatedId: job.id,
+      });
+
+      res.json(submission);
+    } catch (error) {
+      console.error("Error submitting work:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get job submissions
+  app.get("/api/jobs/:id/submissions", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only job owner, assigned freelancer, or moderators can see submissions
+      const user = await storage.getUser(req.session.userId!);
+      const isAssigned = job.freelancerId === req.session.userId ||
+        job.customerId === req.session.userId ||
+        ["staff", "moderator", "head_of_moderation", "founder"].includes(user?.role || "");
+
+      if (!isAssigned) {
+        return res.status(403).json({ error: "Not authorized to view submissions" });
+      }
+
+      const submissions = await storage.getJobSubmissions(job.id);
+      res.json(submissions);
+    } catch (error) {
+      console.error("Error getting submissions:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer accepts work (AWAITING_CUSTOMER -> COMPLETED)
+  app.post("/api/jobs/:id/accept-work", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can accept work" });
+      }
+
+      if (job.status !== JobStatus.AWAITING_CUSTOMER) {
+        return res.status(400).json({ error: "Job is not awaiting customer review" });
+      }
+
+      // Get latest submission
+      const submissions = await storage.getJobSubmissions(job.id);
+      if (submissions.length === 0) {
+        return res.status(400).json({ error: "No submission found" });
+      }
+
+      const latestSubmission = submissions[0];
+
+      // Create customer review record
+      await storage.createCustomerReview({
+        jobId: job.id,
+        submissionId: latestSubmission.id,
+        customerId: req.session.userId!,
+        accepted: true,
+      });
+
+      // Update submission status
+      await storage.updateJobSubmission(latestSubmission.id, {
+        status: "accepted",
+      });
+
+      // Cancel scheduled auto-complete task
+      const scheduledTasks = await storage.getScheduledTasks({ jobId: job.id, taskType: "auto_complete" });
+      for (const task of scheduledTasks) {
+        await storage.updateScheduledTask(task.id, { status: "cancelled" });
+      }
+
+      // Release escrow and pay freelancers
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow) {
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
+      }
+
+      // Get all freelancers on this job
+      const jobFreelancers = await storage.getJobFreelancers(job.id);
+      const allFreelancerIds = jobFreelancers.length > 0 
+        ? jobFreelancers.map(jf => jf.freelancerId)
+        : job.freelancerId ? [job.freelancerId] : [];
+
+      const budget = parseFloat(job.budget);
+      const numFreelancers = allFreelancerIds.length;
+      const sharePerFreelancer = numFreelancers > 0 ? budget / numFreelancers : 0;
+
+      // Release pending funds from customer
+      await storage.adjustPendingBalance(job.customerId, -budget);
+
+      // Deduct from customer wallet
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (customerBalance - budget).toFixed(8),
+        });
+
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "escrow_release",
+          currency: "USDT",
+          amount: budget.toFixed(8),
+          usdAmount: budget.toFixed(2),
+          status: "completed",
+          transactionHash: `escrow-release-${job.id}`,
+        });
+      }
+
+      // Pay each freelancer based on their level
+      for (const freelancerId of allFreelancerIds) {
+        const freelancer = await storage.getUser(freelancerId);
+        if (!freelancer) continue;
+
+        const level = freelancer.level || 1;
+        const levelPayout = getLevelPayout(level); // Returns 0.60 to 0.85
+        const payoutAmount = sharePerFreelancer * levelPayout;
+        const platformFee = sharePerFreelancer - payoutAmount;
+
+        const freelancerWallet = await storage.getWallet(freelancerId);
+        if (freelancerWallet) {
+          const freelancerBalance = parseFloat(freelancerWallet.usdtBalance || "0");
+          await storage.updateWallet(freelancerId, {
+            usdtBalance: (freelancerBalance + payoutAmount).toFixed(8),
+          });
+
+          await storage.createTransaction({
+            walletId: freelancerWallet.id,
+            type: "deposit",
+            currency: "USDT",
+            amount: payoutAmount.toFixed(8),
+            usdAmount: payoutAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `job-payment-${job.id}-${freelancerId}`,
+          });
+        }
+
+        // Update job freelancer record if exists
+        const jfRecords = await storage.getJobFreelancers(job.id);
+        const jfRecord = jfRecords.find(jf => jf.freelancerId === freelancerId);
+        if (jfRecord) {
+          await storage.updateJobFreelancer(jfRecord.id, {
+            payoutAmount: payoutAmount.toFixed(2),
+            status: "paid",
+          });
+        }
+
+        // Notify freelancer
+        await storage.createNotification({
+          userId: freelancerId,
+          type: "job_completed",
+          title: "Payment received!",
+          message: `You received $${payoutAmount.toFixed(2)} for completing "${job.title}".`,
+          relatedId: job.id,
+        });
+
+        // Update freelancer stats
+        await updateFreelancerStats(freelancerId);
+      }
+
+      // Mark job as completed
+      const updatedJob = await storage.updateJob(job.id, {
+        status: JobStatus.COMPLETED,
+      });
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error accepting work:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer rejects work (AWAITING_CUSTOMER -> SUBMITTED with rejection)
+  app.post("/api/jobs/:id/reject-work", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can reject work" });
+      }
+
+      if (job.status !== JobStatus.AWAITING_CUSTOMER) {
+        return res.status(400).json({ error: "Job is not awaiting customer review" });
+      }
+
+      const { reason } = req.body;
+      if (!reason || typeof reason !== "string" || reason.trim().length < 10) {
+        return res.status(400).json({ error: "Please provide a reason for rejection (at least 10 characters)" });
+      }
+
+      // Get latest submission
+      const submissions = await storage.getJobSubmissions(job.id);
+      if (submissions.length === 0) {
+        return res.status(400).json({ error: "No submission found" });
+      }
+
+      const latestSubmission = submissions[0];
+
+      // Create customer review record
+      await storage.createCustomerReview({
+        jobId: job.id,
+        submissionId: latestSubmission.id,
+        customerId: req.session.userId!,
+        accepted: false,
+        rejectionReason: reason.trim(),
+      });
+
+      // Update submission status
+      await storage.updateJobSubmission(latestSubmission.id, {
+        status: "rejected",
+      });
+
+      // Cancel scheduled auto-complete task
+      const scheduledTasks = await storage.getScheduledTasks({ jobId: job.id, taskType: "auto_complete" });
+      for (const task of scheduledTasks) {
+        await storage.updateScheduledTask(task.id, { status: "cancelled" });
+      }
+
+      // Update job back to in_progress
+      await storage.updateJob(job.id, {
+        status: "in_progress",
+        autoCompleteAt: null,
+      });
+
+      // Notify freelancer
+      if (job.freelancerId) {
+        await storage.createNotification({
+          userId: job.freelancerId,
+          type: "work_rejected",
+          title: "Work not accepted",
+          message: `Your work for "${job.title}" was not accepted. Reason: ${reason.trim().substring(0, 100)}`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json({ success: true, message: "Work rejected. Freelancer can resubmit." });
+    } catch (error) {
+      console.error("Error rejecting work:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Helper function to update freelancer stats
+  async function updateFreelancerStats(freelancerId: string) {
+    const freelancer = await storage.getUser(freelancerId);
+    if (!freelancer) return;
+
+    const allJobs = await storage.getJobs();
+    const assignedJobsMap = new Map();
+
+    for (const j of allJobs) {
+      if (j.freelancerId === freelancerId || j.collaborators?.includes(freelancerId)) {
+        if (["claimed", "in_progress", "completed"].includes(j.status)) {
+          assignedJobsMap.set(j.id, j);
+        }
+      }
+    }
+
+    const assignedJobs = Array.from(assignedJobsMap.values());
+    const completedJobs = assignedJobs.filter(j => j.status === "completed").length;
+    const totalJobs = assignedJobs.length;
+    const completionPercentage = totalJobs > 0 ? ((completedJobs / totalJobs) * 100).toFixed(2) : "0.00";
+
+    let newLevel = 1;
+    if (completedJobs >= 50) newLevel = 5;
+    else if (completedJobs >= 30) newLevel = 4;
+    else if (completedJobs >= 15) newLevel = 3;
+    else if (completedJobs >= 5) newLevel = 2;
+
+    await storage.updateUser(freelancerId, {
+      completedJobs,
+      completionPercentage,
+      level: newLevel,
+    });
+  }
+
+  // ============================================================
+  // DISPUTE ROUTES
+  // ============================================================
+
+  // Open a dispute
+  app.post("/api/jobs/:id/dispute", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only customer or assigned freelancer can open dispute
+      const isAuthorized = job.customerId === req.session.userId || 
+        job.freelancerId === req.session.userId;
+      
+      if (!isAuthorized) {
+        return res.status(403).json({ error: "Only job participants can open disputes" });
+      }
+
+      // Job must be in an active state
+      const activeStatuses = ["claimed", "in_progress", JobStatus.AWAITING_CUSTOMER, JobStatus.SUBMITTED];
+      if (!activeStatuses.includes(job.status)) {
+        return res.status(400).json({ error: "Cannot open dispute for job in current state" });
+      }
+
+      // Check if dispute already exists
+      const existingDispute = await storage.getDisputeByJob(job.id);
+      if (existingDispute && existingDispute.status !== DisputeStatus.RESOLVED) {
+        return res.status(400).json({ error: "A dispute is already open for this job" });
+      }
+
+      const { reason } = req.body;
+      if (!reason || typeof reason !== "string" || reason.trim().length < 20) {
+        return res.status(400).json({ error: "Please provide a detailed reason for the dispute (at least 20 characters)" });
+      }
+
+      // Create dispute
+      const dispute = await storage.createDispute({
+        jobId: job.id,
+        openedByUserId: req.session.userId!,
+        reason: reason.trim(),
+      });
+
+      // Lock the job
+      await storage.updateJob(job.id, {
+        status: JobStatus.DISPUTE,
+        isLocked: true,
+      });
+
+      // Cancel any pending scheduled tasks
+      const scheduledTasks = await storage.getScheduledTasks({ jobId: job.id });
+      for (const task of scheduledTasks) {
+        if (task.status === ScheduledTaskStatus.PENDING) {
+          await storage.updateScheduledTask(task.id, { status: "cancelled" });
+        }
+      }
+
+      // Notify the other party
+      const otherPartyId = job.customerId === req.session.userId ? job.freelancerId : job.customerId;
+      if (otherPartyId) {
+        await storage.createNotification({
+          userId: otherPartyId,
+          type: "dispute_opened",
+          title: "Dispute opened",
+          message: `A dispute has been opened for "${job.title}". A moderator will review.`,
+          relatedId: job.id,
+        });
+      }
+
+      // Notify moderators
+      const moderators = await storage.getUsers();
+      const modRoles = ["staff", "moderator", "head_of_moderation", "founder"];
+      for (const mod of moderators.filter(u => modRoles.includes(u.role))) {
+        await storage.createNotification({
+          userId: mod.id,
+          type: "dispute_opened",
+          title: "New dispute requires attention",
+          message: `A dispute has been opened for job "${job.title}".`,
+          relatedId: dispute.id,
+        });
+      }
+
+      res.json(dispute);
+    } catch (error) {
+      console.error("Error opening dispute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get disputes (for moderators)
+  app.get("/api/disputes", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { status } = req.query;
+      const disputes = await storage.getDisputes(status ? { status: status as string } : undefined);
+
+      // Enrich with job and user data
+      const enrichedDisputes = await Promise.all(
+        disputes.map(async (dispute) => {
+          const job = await storage.getJob(dispute.jobId);
+          const openedBy = await storage.getUser(dispute.openedByUserId);
+          const moderator = dispute.moderatorId ? await storage.getUser(dispute.moderatorId) : null;
+
+          return {
+            ...dispute,
+            job: job ? { id: job.id, title: job.title, budget: job.budget, customerId: job.customerId, freelancerId: job.freelancerId } : null,
+            openedBy: openedBy ? { id: openedBy.id, username: openedBy.username, role: openedBy.role } : null,
+            moderator: moderator ? { id: moderator.id, username: moderator.username } : null,
+          };
+        })
+      );
+
+      res.json(enrichedDisputes);
+    } catch (error) {
+      console.error("Error getting disputes:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Claim dispute (moderator takes ownership)
+  app.post("/api/disputes/:id/claim", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ error: "Dispute not found" });
+      }
+
+      if (dispute.status !== DisputeStatus.OPEN) {
+        return res.status(400).json({ error: "Dispute is not open" });
+      }
+
+      if (dispute.moderatorId) {
+        return res.status(400).json({ error: "Dispute already claimed by another moderator" });
+      }
+
+      const updatedDispute = await storage.updateDispute(req.params.id, {
+        moderatorId: req.session.userId!,
+        status: DisputeStatus.UNDER_REVIEW,
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "dispute_claimed",
+        disputeId: dispute.id,
+        jobId: dispute.jobId,
+      });
+
+      res.json(updatedDispute);
+    } catch (error) {
+      console.error("Error claiming dispute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Resolve dispute
+  app.post("/api/disputes/:id/resolve", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ error: "Dispute not found" });
+      }
+
+      if (dispute.status === DisputeStatus.RESOLVED) {
+        return res.status(400).json({ error: "Dispute already resolved" });
+      }
+
+      const { freelancerAmount, customerRefund, resolutionNotes } = req.body;
+
+      if (typeof freelancerAmount !== "number" || typeof customerRefund !== "number") {
+        return res.status(400).json({ error: "Please specify freelancer and customer amounts" });
+      }
+
+      if (!resolutionNotes || typeof resolutionNotes !== "string" || resolutionNotes.trim().length < 10) {
+        return res.status(400).json({ error: "Please provide resolution notes (at least 10 characters)" });
+      }
+
+      const job = await storage.getJob(dispute.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const budget = parseFloat(job.budget);
+
+      // Validate amounts don't exceed budget
+      if (freelancerAmount + customerRefund > budget) {
+        return res.status(400).json({ error: "Total distribution cannot exceed job budget" });
+      }
+
+      // Get escrow
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (!escrow) {
+        return res.status(400).json({ error: "Escrow not found" });
+      }
+
+      // Update dispute
+      const updatedDispute = await storage.updateDispute(req.params.id, {
+        status: DisputeStatus.RESOLVED,
+        freelancerAmount: freelancerAmount.toFixed(2),
+        customerRefund: customerRefund.toFixed(2),
+        resolutionNotes: resolutionNotes.trim(),
+      });
+
+      // Release pending balance from customer
+      await storage.adjustPendingBalance(job.customerId, -budget);
+
+      // Process payouts
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+        
+        // Deduct budget, refund customerRefund amount
+        const netDeduction = budget - customerRefund;
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (customerBalance - netDeduction).toFixed(8),
+        });
+
+        if (customerRefund > 0) {
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: customerRefund.toFixed(8),
+            usdAmount: customerRefund.toFixed(2),
+            status: "completed",
+            transactionHash: `dispute-refund-${dispute.id}`,
+          });
+        }
+      }
+
+      // Pay freelancer if they get anything
+      if (job.freelancerId && freelancerAmount > 0) {
+        const freelancerWallet = await storage.getWallet(job.freelancerId);
+        if (freelancerWallet) {
+          const freelancerBalance = parseFloat(freelancerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.freelancerId, {
+            usdtBalance: (freelancerBalance + freelancerAmount).toFixed(8),
+          });
+
+          await storage.createTransaction({
+            walletId: freelancerWallet.id,
+            type: "deposit",
+            currency: "USDT",
+            amount: freelancerAmount.toFixed(8),
+            usdAmount: freelancerAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `dispute-payout-${dispute.id}`,
+          });
+        }
+      }
+
+      // Update escrow
+      await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
+
+      // Update job status
+      await storage.updateJob(job.id, {
+        status: JobStatus.CANCELLED,
+        isLocked: false,
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "dispute_resolved",
+        disputeId: dispute.id,
+        jobId: job.id,
+        notes: `Freelancer: $${freelancerAmount}, Customer refund: $${customerRefund}`,
+      });
+
+      // Notify both parties
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "dispute_resolved",
+        title: "Dispute resolved",
+        message: `The dispute for "${job.title}" has been resolved. You received a refund of $${customerRefund}.`,
+        relatedId: job.id,
+      });
+
+      if (job.freelancerId) {
+        await storage.createNotification({
+          userId: job.freelancerId,
+          type: "dispute_resolved",
+          title: "Dispute resolved",
+          message: `The dispute for "${job.title}" has been resolved. You received $${freelancerAmount}.`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(updatedDispute);
+    } catch (error) {
+      console.error("Error resolving dispute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============================================================
+  // CANCELLATION ROUTES
+  // ============================================================
+
+  // Cancel job before freelancer acceptance (full refund)
+  app.post("/api/jobs/:id/cancel-before-acceptance", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can cancel" });
+      }
+
+      // Can only cancel before freelancer accepts (PENDING_ACCEPTANCE, or old "active" status)
+      if (job.status !== JobStatus.PENDING_ACCEPTANCE && job.status !== "active") {
+        return res.status(400).json({ error: "Job can only be cancelled before a freelancer accepts" });
+      }
+
+      // Refund escrow
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow) {
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+
+      // Release pending balance
+      const budget = parseFloat(job.budget);
+      await storage.adjustPendingBalance(job.customerId, -budget);
+
+      // Create refund transaction
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "refund",
+          currency: "USDT",
+          amount: budget.toFixed(8),
+          usdAmount: budget.toFixed(2),
+          status: "completed",
+          transactionHash: `job-cancel-refund-${job.id}`,
+        });
+      }
+
+      // Cancel any pending scheduled tasks
+      const scheduledTasks = await storage.getScheduledTasks({ jobId: job.id });
+      for (const task of scheduledTasks) {
+        if (task.status === ScheduledTaskStatus.PENDING) {
+          await storage.updateScheduledTask(task.id, { status: "cancelled" });
+        }
+      }
+
+      // Update job status
+      const updatedJob = await storage.updateJob(job.id, {
+        status: JobStatus.CANCELLED,
+      });
+
+      // Notify customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_cancelled",
+        title: "Job cancelled",
+        message: `Your job "${job.title}" has been cancelled. Full refund of $${budget} processed.`,
+        relatedId: job.id,
+      });
+
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error cancelling job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Initiate cancellation after freelancer acceptance (starts 7-day negotiation)
+  app.post("/api/jobs/:id/initiate-cancellation", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only customer or freelancer can initiate
+      const isParticipant = job.customerId === req.session.userId || job.freelancerId === req.session.userId;
+      if (!isParticipant) {
+        return res.status(403).json({ error: "Only job participants can initiate cancellation" });
+      }
+
+      // Must be after acceptance (claimed or in_progress)
+      if (job.status !== "claimed" && job.status !== "in_progress") {
+        return res.status(400).json({ error: "Job must be in progress to initiate cancellation" });
+      }
+
+      // Check for existing negotiation
+      const existing = await storage.getCancellationNegotiationByJob(job.id);
+      if (existing && existing.status === "negotiating") {
+        return res.status(400).json({ error: "Cancellation negotiation already in progress" });
+      }
+
+      const { proposedFreelancerAmount, proposedCustomerRefund } = req.body;
+      const budget = parseFloat(job.budget);
+
+      // Validate amounts
+      if (typeof proposedFreelancerAmount !== "number" || typeof proposedCustomerRefund !== "number") {
+        return res.status(400).json({ error: "Please specify proposed amounts" });
+      }
+
+      if (proposedFreelancerAmount + proposedCustomerRefund > budget) {
+        return res.status(400).json({ error: "Total amounts cannot exceed job budget" });
+      }
+
+      // Create negotiation with 7-day expiry
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      const initiatorIsCustomer = job.customerId === req.session.userId;
+
+      const negotiation = await storage.createCancellationNegotiation({
+        jobId: job.id,
+        initiatedById: req.session.userId!,
+        proposedFreelancerAmount: proposedFreelancerAmount.toFixed(2),
+        proposedCustomerRefund: proposedCustomerRefund.toFixed(2),
+        agreedByCustomer: initiatorIsCustomer,
+        agreedByFreelancer: !initiatorIsCustomer,
+        expiresAt,
+        status: "negotiating",
+      });
+
+      // Schedule escalation task
+      await storage.createScheduledTask({
+        jobId: job.id,
+        taskType: "cancellation_escalation",
+        runAt: expiresAt,
+        status: ScheduledTaskStatus.PENDING,
+        metadata: { negotiationId: negotiation.id },
+      });
+
+      // Notify other party
+      const otherPartyId = initiatorIsCustomer ? job.freelancerId : job.customerId;
+      if (otherPartyId) {
+        await storage.createNotification({
+          userId: otherPartyId,
+          type: "cancellation_proposed",
+          title: "Cancellation proposed",
+          message: `A cancellation has been proposed for "${job.title}". You have 7 days to agree or negotiate.`,
+          relatedId: job.id,
+        });
+      }
+
+      res.json(negotiation);
+    } catch (error) {
+      console.error("Error initiating cancellation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Agree to cancellation proposal
+  app.post("/api/jobs/:id/agree-cancellation", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const negotiation = await storage.getCancellationNegotiationByJob(job.id);
+      if (!negotiation || negotiation.status !== "negotiating") {
+        return res.status(400).json({ error: "No active cancellation negotiation" });
+      }
+
+      const isCustomer = job.customerId === req.session.userId;
+      const isFreelancer = job.freelancerId === req.session.userId;
+
+      if (!isCustomer && !isFreelancer) {
+        return res.status(403).json({ error: "Only job participants can agree to cancellation" });
+      }
+
+      // Update agreement
+      const updates: any = {
+        agreedByCustomer: negotiation.agreedByCustomer || isCustomer,
+        agreedByFreelancer: negotiation.agreedByFreelancer || isFreelancer,
+      };
+
+      // Check if both parties agree
+      if (updates.agreedByCustomer && updates.agreedByFreelancer) {
+        updates.status = "agreed";
+
+        // Process the cancellation
+        const freelancerAmount = parseFloat(negotiation.proposedFreelancerAmount || "0");
+        const customerRefund = parseFloat(negotiation.proposedCustomerRefund || "0");
+        const budget = parseFloat(job.budget);
+
+        // Release pending balance
+        await storage.adjustPendingBalance(job.customerId, -budget);
+
+        // Update escrow
+        const escrow = await storage.getEscrowByJob(job.id);
+        if (escrow) {
+          await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
+        }
+
+        // Process payments
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet && customerRefund > 0) {
+          const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (customerBalance - budget + customerRefund).toFixed(8),
+          });
+
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: customerRefund.toFixed(8),
+            usdAmount: customerRefund.toFixed(2),
+            status: "completed",
+            transactionHash: `cancel-refund-${job.id}`,
+          });
+        } else if (customerWallet) {
+          const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (customerBalance - budget).toFixed(8),
+          });
+        }
+
+        if (job.freelancerId && freelancerAmount > 0) {
+          const freelancerWallet = await storage.getWallet(job.freelancerId);
+          if (freelancerWallet) {
+            const freelancerBalance = parseFloat(freelancerWallet.usdtBalance || "0");
+            await storage.updateWallet(job.freelancerId, {
+              usdtBalance: (freelancerBalance + freelancerAmount).toFixed(8),
+            });
+
+            await storage.createTransaction({
+              walletId: freelancerWallet.id,
+              type: "deposit",
+              currency: "USDT",
+              amount: freelancerAmount.toFixed(8),
+              usdAmount: freelancerAmount.toFixed(2),
+              status: "completed",
+              transactionHash: `cancel-payout-${job.id}`,
+            });
+          }
+        }
+
+        // Cancel scheduled tasks
+        const scheduledTasks = await storage.getScheduledTasks({ jobId: job.id });
+        for (const task of scheduledTasks) {
+          if (task.status === ScheduledTaskStatus.PENDING) {
+            await storage.updateScheduledTask(task.id, { status: "cancelled" });
+          }
+        }
+
+        // Update job
+        await storage.updateJob(job.id, {
+          status: JobStatus.CANCELLED,
+        });
+
+        // Notify both parties
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "job_cancelled",
+          title: "Job cancelled by agreement",
+          message: `"${job.title}" has been cancelled. You received $${customerRefund}.`,
+          relatedId: job.id,
+        });
+
+        if (job.freelancerId) {
+          await storage.createNotification({
+            userId: job.freelancerId,
+            type: "job_cancelled",
+            title: "Job cancelled by agreement",
+            message: `"${job.title}" has been cancelled. You received $${freelancerAmount}.`,
+            relatedId: job.id,
+          });
+        }
+      }
+
+      const updatedNegotiation = await storage.updateCancellationNegotiation(negotiation.id, updates);
+      res.json(updatedNegotiation);
+    } catch (error) {
+      console.error("Error agreeing to cancellation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get cancellation negotiation for a job
+  app.get("/api/jobs/:id/cancellation-negotiation", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only participants or moderators can view
+      const user = await storage.getUser(req.session.userId!);
+      const isParticipant = job.customerId === req.session.userId || job.freelancerId === req.session.userId;
+      const isModerator = ["staff", "moderator", "head_of_moderation", "founder"].includes(user?.role || "");
+
+      if (!isParticipant && !isModerator) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const negotiation = await storage.getCancellationNegotiationByJob(job.id);
+      res.json(negotiation || null);
+    } catch (error) {
+      console.error("Error getting cancellation negotiation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get escrow for a job
+  app.get("/api/jobs/:id/escrow", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only participants or moderators can view escrow
+      const user = await storage.getUser(req.session.userId!);
+      const isParticipant = job.customerId === req.session.userId || job.freelancerId === req.session.userId;
+      const isModerator = ["staff", "moderator", "head_of_moderation", "founder"].includes(user?.role || "");
+
+      if (!isParticipant && !isModerator) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const escrow = await storage.getEscrowByJob(job.id);
+      res.json(escrow || null);
+    } catch (error) {
+      console.error("Error getting escrow:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Team collaboration routes - Team Notes
   app.get("/api/team-notes/:jobId", requireAuth, async (req, res) => {
     try {
@@ -1886,8 +3129,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Calculate available balance
       const totalBalance = parseFloat(wallet.usdtBalance || "0");
-      const pendingBalance = parseFloat(wallet.pendingUsdtBalance || "0");
-      const availableBalance = totalBalance - pendingBalance;
+      const pendingUsdtBalance = parseFloat(wallet.pendingUsdtBalance || "0");
+      const availableBalance = totalBalance - pendingUsdtBalance;
       
       // Return wallet with calculated available balance
       res.json({
@@ -1964,13 +3207,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // For USDT, check available balance (total - pending)
       if (currency.toUpperCase() === "USDT") {
-        const pendingBalance = parseFloat(wallet.pendingUsdtBalance || "0");
-        const availableBalance = currentBalance - pendingBalance;
+        const pendingUsdtBalance = parseFloat(wallet.pendingUsdtBalance || "0");
+        const availableBalance = currentBalance - pendingUsdtBalance;
         
         if (availableBalance < withdrawAmount) {
           return res.status(400).json({ 
             error: "Insufficient available balance",
-            details: `You have ${availableBalance.toFixed(2)} USDT available (${pendingBalance.toFixed(2)} USDT locked in active jobs)`
+            details: `You have ${availableBalance.toFixed(2)} USDT available (${pendingUsdtBalance.toFixed(2)} USDT locked in active jobs)`
           });
         }
       } else if (currentBalance < withdrawAmount) {
