@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { insertJobSchema, Job } from "@shared/schema";
+import { insertJobSchema, Job, JobStatus } from "@shared/schema";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,12 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Save, Send, AlertCircle, Wallet } from "lucide-react";
 
 const formSchema = insertJobSchema.extend({
   budget: z.string().min(1, "Budget is required"),
@@ -32,6 +34,12 @@ const categories = [
   "Other",
 ];
 
+interface WalletData {
+  id: string;
+  usdtBalance: string;
+  pendingUsdtBalance: string;
+}
+
 export default function CreateJobPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -39,6 +47,11 @@ export default function CreateJobPage() {
   const searchParams = useSearch();
   const editJobId = new URLSearchParams(searchParams).get("edit");
   const isEditMode = !!editJobId;
+  const [submitAction, setSubmitAction] = useState<"draft" | "submit">("submit");
+
+  const { data: wallet } = useQuery<WalletData>({
+    queryKey: ["/api/wallet"],
+  });
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -50,9 +63,15 @@ export default function CreateJobPage() {
       requirements: "",
       deadline: "",
       customerId: user?.id || "",
-      status: "pending",
+      status: JobStatus.DRAFT,
     },
   });
+
+  const budgetValue = parseFloat(form.watch("budget") || "0");
+  const availableBalance = wallet 
+    ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
+    : 0;
+  const hasSufficientFunds = availableBalance >= budgetValue;
 
   // Fetch job data when in edit mode
   const { data: existingJob, isLoading: isLoadingJob } = useQuery<Job>({
@@ -77,42 +96,74 @@ export default function CreateJobPage() {
   }, [existingJob, isEditMode, form]);
 
   const createJobMutation = useMutation({
-    mutationFn: (data: z.infer<typeof formSchema>) => {
+    mutationFn: async (data: z.infer<typeof formSchema> & { action?: "draft" | "submit" }) => {
+      const { action, ...formData } = data;
       const jobData = {
-        ...data,
-        budget: data.budget,
-        deadline: data.deadline ? new Date(data.deadline).toISOString() : undefined,
+        ...formData,
+        budget: formData.budget,
+        deadline: formData.deadline ? new Date(formData.deadline).toISOString() : undefined,
+        status: JobStatus.DRAFT,
       };
       
+      let result;
       if (isEditMode && editJobId) {
-        return apiRequest("PUT", `/api/jobs/${editJobId}`, jobData);
+        result = await apiRequest("PUT", `/api/jobs/${editJobId}`, jobData);
+      } else {
+        result = await apiRequest("POST", "/api/jobs", jobData);
       }
-      return apiRequest("POST", "/api/jobs", jobData);
+      
+      return { result, action };
     },
-    onSuccess: () => {
+    onSuccess: async ({ result, action }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
       
-      toast({
-        title: isEditMode ? "Job updated successfully!" : "Job posted successfully!",
-        description: isEditMode 
-          ? "Your job has been resubmitted for review."
-          : "Your job is now in the moderation queue.",
-      });
-      setLocation("/my-jobs");
+      if (action === "draft") {
+        toast({
+          title: "Job saved as draft",
+          description: "You can submit it for approval when ready.",
+        });
+        setLocation("/my-jobs");
+      } else if (action === "submit") {
+        const jobId = (result as any)?.id || editJobId;
+        if (jobId) {
+          submitForApprovalMutation.mutate(jobId);
+        }
+      }
     },
     onError: (error: any) => {
       toast({
-        title: isEditMode ? "Failed to update job" : "Failed to post job",
+        title: isEditMode ? "Failed to update job" : "Failed to save job",
         description: error.message || "Please try again later.",
         variant: "destructive",
       });
     },
   });
 
+  const submitForApprovalMutation = useMutation({
+    mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/submit-for-approval`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      toast({
+        title: "Submitted for approval!",
+        description: "Your job has been submitted for moderator review. Funds have been reserved.",
+      });
+      setLocation("/my-jobs");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to submit for approval",
+        description: error.message || "Please check your wallet balance and try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   function onSubmit(values: z.infer<typeof formSchema>) {
-    createJobMutation.mutate(values);
+    createJobMutation.mutate({ ...values, action: submitAction });
   }
 
   if (isEditMode && isLoadingJob) {
@@ -274,7 +325,47 @@ export default function CreateJobPage() {
                 )}
               />
 
-              <div className="flex gap-4 justify-end">
+              {budgetValue > 0 && (
+                <Card className={hasSufficientFunds ? "border-green-500/50 bg-green-500/5" : "border-destructive/50 bg-destructive/5"}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-3">
+                      <Wallet className={`w-5 h-5 ${hasSufficientFunds ? "text-green-500" : "text-destructive"}`} />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">
+                          {hasSufficientFunds ? "Funds available" : "Insufficient funds"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Available: ${availableBalance.toFixed(2)} | Required: ${budgetValue.toFixed(2)}
+                        </p>
+                      </div>
+                      {!hasSufficientFunds && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setLocation("/wallet")}
+                          data-testid="button-add-funds"
+                        >
+                          Add Funds
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {!hasSufficientFunds && budgetValue > 0 && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Funds Required</AlertTitle>
+                  <AlertDescription>
+                    You need ${(budgetValue - availableBalance).toFixed(2)} more to submit this job for approval. 
+                    The full budget amount will be held in escrow when the job is approved.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex gap-4 justify-end flex-wrap">
                 <Button
                   type="button"
                   variant="outline"
@@ -283,10 +374,26 @@ export default function CreateJobPage() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createJobMutation.isPending} data-testid="button-submit-job">
-                  {createJobMutation.isPending 
-                    ? (isEditMode ? "Updating..." : "Submitting...") 
-                    : (isEditMode ? "Update & Resubmit" : "Submit for Review")}
+                <Button 
+                  type="submit" 
+                  variant="secondary"
+                  disabled={createJobMutation.isPending}
+                  onClick={() => setSubmitAction("draft")}
+                  data-testid="button-save-draft"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {createJobMutation.isPending && submitAction === "draft" ? "Saving..." : "Save as Draft"}
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && budgetValue > 0)}
+                  onClick={() => setSubmitAction("submit")}
+                  data-testid="button-submit-job"
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  {(createJobMutation.isPending || submitForApprovalMutation.isPending) && submitAction === "submit"
+                    ? (submitForApprovalMutation.isPending ? "Submitting for review..." : "Saving...") 
+                    : (isEditMode ? "Update & Submit" : "Submit for Review")}
                 </Button>
               </div>
             </form>

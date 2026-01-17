@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase, Send, Link, AlertTriangle, CheckCircle2, Gavel } from "lucide-react";
 import { ReportDialog } from "@/components/ReportDialog";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
@@ -36,6 +36,8 @@ interface EnrichedJob {
   status: string;
   freelancerId: string | null;
   collaborators: string[] | null;
+  isLocked?: boolean;
+  autoCompleteAt?: Date | null;
   customerUsername?: string;
   customerDiscordId?: string;
   collaboratorData?: Array<{
@@ -826,6 +828,17 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
   );
 }
 
+interface JobSubmission {
+  id: string;
+  jobId: string;
+  freelancerId: string;
+  proofFiles: string[];
+  proofLinks: string[];
+  notes: string | null;
+  status: string;
+  createdAt: Date;
+}
+
 export default function JobDetailPage() {
   const [, params] = useRoute("/jobs/:id");
   const [, setLocation] = useLocation();
@@ -840,6 +853,11 @@ export default function JobDetailPage() {
   const [ratingScore, setRatingScore] = useState(0);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [ratingReview, setRatingReview] = useState("");
+  const [isSubmitWorkDialogOpen, setIsSubmitWorkDialogOpen] = useState(false);
+  const [workProofLinks, setWorkProofLinks] = useState<string[]>([""]);
+  const [workNotes, setWorkNotes] = useState("");
+  const [isDisputeDialogOpen, setIsDisputeDialogOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
 
   const cancellationFormSchema = z.object({
     reason: z.string().min(10, "Reason must be at least 10 characters"),
@@ -873,6 +891,100 @@ export default function JobDetailPage() {
       return response.json();
     },
     enabled: !!jobId && job?.status === "completed",
+  });
+
+  const { data: submissions = [] } = useQuery<JobSubmission[]>({
+    queryKey: ["/api/jobs", jobId, "submissions"],
+    enabled: !!jobId && (job?.status === "awaiting_customer" || job?.status === "AWAITING_CUSTOMER"),
+  });
+
+  const submitWorkMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/submit-work`, {
+      proofFiles: [],
+      proofLinks: workProofLinks.filter(link => link.trim()),
+      notes: workNotes || null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "submissions"] });
+      setIsSubmitWorkDialogOpen(false);
+      setWorkProofLinks([""]);
+      setWorkNotes("");
+      toast({
+        title: "Work submitted!",
+        description: "The customer has been notified to review your work.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to submit work",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const acceptWorkMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/accept-work`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "submissions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      toast({
+        title: "Work accepted!",
+        description: "The job is now complete and payment has been released.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to accept work",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectWorkMutation = useMutation({
+    mutationFn: (feedback: string) => apiRequest("POST", `/api/jobs/${jobId}/reject-work`, { feedback }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "submissions"] });
+      toast({
+        title: "Work returned for revision",
+        description: "The freelancer has been notified of your feedback.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to reject work",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const openDisputeMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/dispute`, { reason: disputeReason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      setIsDisputeDialogOpen(false);
+      setDisputeReason("");
+      toast({
+        title: "Dispute opened",
+        description: "A moderator will review your dispute and contact both parties.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to open dispute",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
   });
 
   const submitRatingMutation = useMutation({
@@ -1036,21 +1148,54 @@ export default function JobDetailPage() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    const statusLower = status.toLowerCase();
+    switch (statusLower) {
+      case "draft":
+        return "bg-gray-500/10 text-gray-700 dark:text-gray-400";
       case "pending":
+      case "pending_approval":
         return "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400";
       case "active":
+      case "pending_acceptance":
         return "bg-green-500/10 text-green-700 dark:text-green-400";
       case "claimed":
-        return "bg-blue-500/10 text-blue-700 dark:text-blue-400";
       case "in_progress":
+        return "bg-blue-500/10 text-blue-700 dark:text-blue-400";
+      case "awaiting_customer":
         return "bg-purple-500/10 text-purple-700 dark:text-purple-400";
       case "completed":
+        return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+      case "dispute":
+        return "bg-red-500/10 text-red-700 dark:text-red-400";
+      case "cancelled":
+      case "expired":
         return "bg-gray-500/10 text-gray-700 dark:text-gray-400";
       default:
         return "bg-gray-500/10 text-gray-700 dark:text-gray-400";
     }
   };
+
+  const getStatusLabel = (status: string) => {
+    const statusLower = status.toLowerCase();
+    switch (statusLower) {
+      case "draft": return "Draft";
+      case "pending": case "pending_approval": return "Pending Approval";
+      case "active": case "pending_acceptance": return "Open for Applications";
+      case "claimed": case "in_progress": return "In Progress";
+      case "awaiting_customer": return "Awaiting Review";
+      case "completed": return "Completed";
+      case "dispute": return "In Dispute";
+      case "cancelled": return "Cancelled";
+      case "expired": return "Expired";
+      default: return status;
+    }
+  };
+
+  const isAwaitingCustomer = job.status.toLowerCase() === "awaiting_customer";
+  const canSubmitWork = isFreelancerOnJob && !isAwaitingCustomer;
+  const canReviewWork = isCustomer && isAwaitingCustomer;
+  const canOpenDispute = (isCustomer || isFreelancerOwner) && 
+    ["claimed", "in_progress", "awaiting_customer"].includes(job.status.toLowerCase());
 
   return (
     <div className="space-y-6">
@@ -1069,9 +1214,12 @@ export default function JobDetailPage() {
           </h1>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <Badge className={getStatusColor(job.status)} variant="secondary">
-              {job.status}
+              {getStatusLabel(job.status)}
             </Badge>
             <Badge variant="outline">{job.category}</Badge>
+            {job.isLocked && (
+              <Badge variant="destructive">Locked</Badge>
+            )}
           </div>
         </div>
         <Button
@@ -1375,6 +1523,224 @@ export default function JobDetailPage() {
                   </DialogContent>
                 </Dialog>
               )}
+              {/* Submit Work Button for Freelancers */}
+              {canSubmitWork && (
+                <Dialog open={isSubmitWorkDialogOpen} onOpenChange={setIsSubmitWorkDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="w-full" data-testid="button-submit-work">
+                      <Send className="w-4 h-4 mr-2" />
+                      Submit Work
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Submit Your Work</DialogTitle>
+                      <DialogDescription>
+                        Provide proof of your completed work. The customer will have 4 days to review.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Proof Links</Label>
+                        {workProofLinks.map((link, index) => (
+                          <div key={index} className="flex gap-2">
+                            <Input
+                              placeholder="https://example.com/proof"
+                              value={link}
+                              onChange={(e) => {
+                                const newLinks = [...workProofLinks];
+                                newLinks[index] = e.target.value;
+                                setWorkProofLinks(newLinks);
+                              }}
+                              data-testid={`input-proof-link-${index}`}
+                            />
+                            {workProofLinks.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setWorkProofLinks(workProofLinks.filter((_, i) => i !== index))}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setWorkProofLinks([...workProofLinks, ""])}
+                          data-testid="button-add-proof-link"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Add Another Link
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Notes (Optional)</Label>
+                        <Textarea
+                          placeholder="Describe what you've completed, any special instructions..."
+                          value={workNotes}
+                          onChange={(e) => setWorkNotes(e.target.value)}
+                          className="min-h-24"
+                          data-testid="textarea-work-notes"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsSubmitWorkDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => submitWorkMutation.mutate()}
+                        disabled={submitWorkMutation.isPending || !workProofLinks.some(l => l.trim())}
+                        data-testid="button-confirm-submit-work"
+                      >
+                        {submitWorkMutation.isPending ? "Submitting..." : "Submit Work"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {/* Customer Review Section */}
+              {canReviewWork && submissions.length > 0 && (
+                <Card className="border-purple-500/50 bg-purple-500/5">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <CheckSquare className="w-4 h-4 text-purple-500" />
+                      Work Submitted for Review
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {submissions[0]?.proofLinks?.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Proof Links:</p>
+                        <div className="space-y-1">
+                          {submissions[0].proofLinks.map((link: string, i: number) => (
+                            <a
+                              key={i}
+                              href={link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-primary hover:underline flex items-center gap-1"
+                              data-testid={`link-proof-${i}`}
+                            >
+                              <Link className="w-3 h-3" />
+                              {link}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {submissions[0]?.notes && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Notes:</p>
+                        <p className="text-sm text-muted-foreground">{submissions[0].notes}</p>
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        className="flex-1"
+                        onClick={() => acceptWorkMutation.mutate()}
+                        disabled={acceptWorkMutation.isPending}
+                        data-testid="button-accept-work"
+                      >
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        {acceptWorkMutation.isPending ? "Accepting..." : "Accept & Pay"}
+                      </Button>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" className="flex-1" data-testid="button-request-revision">
+                            Request Revision
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Request Revision</DialogTitle>
+                            <DialogDescription>
+                              Explain what needs to be revised. The freelancer will be notified.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <Textarea
+                            placeholder="Please describe what needs to be changed..."
+                            className="min-h-24"
+                            id="revision-feedback"
+                            data-testid="textarea-revision-feedback"
+                          />
+                          <DialogFooter>
+                            <Button
+                              onClick={() => {
+                                const feedback = (document.getElementById("revision-feedback") as HTMLTextAreaElement)?.value;
+                                if (feedback) rejectWorkMutation.mutate(feedback);
+                              }}
+                              disabled={rejectWorkMutation.isPending}
+                              data-testid="button-confirm-revision"
+                            >
+                              {rejectWorkMutation.isPending ? "Sending..." : "Send Feedback"}
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Open Dispute Button */}
+              {canOpenDispute && (
+                <Dialog open={isDisputeDialogOpen} onOpenChange={setIsDisputeDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="w-full" variant="outline" data-testid="button-open-dispute">
+                      <Gavel className="w-4 h-4 mr-2" />
+                      Open Dispute
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-destructive" />
+                        Open a Dispute
+                      </DialogTitle>
+                      <DialogDescription>
+                        A moderator will review your dispute and contact both parties to resolve the issue.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <Textarea
+                        placeholder="Describe the issue in detail..."
+                        value={disputeReason}
+                        onChange={(e) => setDisputeReason(e.target.value)}
+                        className="min-h-32"
+                        data-testid="textarea-dispute-reason"
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsDisputeDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={() => openDisputeMutation.mutate()}
+                        disabled={openDisputeMutation.isPending || disputeReason.length < 10}
+                        data-testid="button-confirm-dispute"
+                      >
+                        {openDisputeMutation.isPending ? "Opening..." : "Open Dispute"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+
               {isCustomer && (job.status === "claimed" || job.status === "in_progress") && (
                 <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
                   <DialogTrigger asChild>
