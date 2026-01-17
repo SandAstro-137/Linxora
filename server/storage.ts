@@ -251,6 +251,7 @@ export interface IStorage {
   getIncomingFriendRequests(userId: string): Promise<FriendRequest[]>;
   getFriendRequestBetweenUsers(userId1: string, userId2: string): Promise<FriendRequest | undefined>;
   areFriends(userId1: string, userId2: string): Promise<boolean>;
+  areUsersConnected(userId1: string, userId2: string): Promise<boolean>;
   createFriendRequest(request: InsertFriendRequest): Promise<FriendRequest>;
   updateFriendRequest(id: string, updates: Partial<FriendRequest>): Promise<FriendRequest | undefined>;
   createFriendship(userId: string, friendId: string): Promise<void>;
@@ -837,6 +838,8 @@ export class MemStorage implements IStorage {
       id,
       relatedId: insertNotification.relatedId ?? null,
       read: insertNotification.read ?? false,
+      sourceType: insertNotification.sourceType ?? null,
+      sourceId: insertNotification.sourceId ?? null,
       createdAt: new Date(),
     };
     this.notifications.set(id, notification);
@@ -879,6 +882,7 @@ export class MemStorage implements IStorage {
       deleteConfirmationEnabled: prefs.deleteConfirmationEnabled ?? true,
       showOnlineStatus: prefs.showOnlineStatus ?? true,
       allowDirectMessages: prefs.allowDirectMessages ?? true,
+      allowMessagesFromUnknown: prefs.allowMessagesFromUnknown ?? true,
       accountDeactivated: prefs.accountDeactivated ?? false,
       deactivatedAt: null,
       createdAt: new Date(),
@@ -1497,6 +1501,38 @@ export class MemStorage implements IStorage {
         (f.userId === userId1 && f.friendId === userId2) ||
         (f.userId === userId2 && f.friendId === userId1)
       );
+  }
+
+  async areUsersConnected(userId1: string, userId2: string): Promise<boolean> {
+    if (userId1 === userId2) return true;
+
+    if (await this.areFriends(userId1, userId2)) {
+      return true;
+    }
+
+    const jobs = Array.from(this.jobs.values());
+    for (const job of jobs) {
+      const isUser1Involved = job.customerId === userId1 || 
+                              job.freelancerId === userId1 || 
+                              job.collaborators?.includes(userId1);
+      const isUser2Involved = job.customerId === userId2 || 
+                              job.freelancerId === userId2 || 
+                              job.collaborators?.includes(userId2);
+      if (isUser1Involved && isUser2Involved) {
+        return true;
+      }
+    }
+
+    const existingMessages = Array.from(this.directMessages.values())
+      .some(msg => 
+        (msg.senderId === userId1 && msg.receiverId === userId2) ||
+        (msg.senderId === userId2 && msg.receiverId === userId1)
+      );
+    if (existingMessages) {
+      return true;
+    }
+
+    return false;
   }
 
   async createFriendRequest(request: InsertFriendRequest): Promise<FriendRequest> {

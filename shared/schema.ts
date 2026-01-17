@@ -823,6 +823,7 @@ export const userPreferences = pgTable("user_preferences", {
   // Privacy settings
   showOnlineStatus: boolean("show_online_status").default(true),
   allowDirectMessages: boolean("allow_direct_messages").default(true),
+  allowMessagesFromUnknown: boolean("allow_messages_from_unknown").default(true),
   // Account status
   accountDeactivated: boolean("account_deactivated").default(false),
   deactivatedAt: timestamp("deactivated_at"),

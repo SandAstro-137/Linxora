@@ -6450,6 +6450,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Recipient not found" });
       }
 
+      // Check receiver's privacy settings
+      const receiverPrefs = await storage.getUserPreferences(receiverId);
+      if (receiverPrefs && receiverPrefs.allowMessagesFromUnknown === false) {
+        const areConnected = await storage.areUsersConnected(senderId, receiverId);
+        if (!areConnected) {
+          return res.status(403).json({ error: "This user is not accepting messages from unknown users." });
+        }
+      }
+
       // Content filtering
       const contentResult = filterContent(message);
       if (!contentResult.isClean || isSpamLike(message)) {

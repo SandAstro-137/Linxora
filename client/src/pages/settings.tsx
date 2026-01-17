@@ -593,6 +593,19 @@ export default function SettingsPage() {
               data-testid="switch-allow-dms"
             />
           </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="allow-unknown-messages">Allow Messages from Unknown Users</Label>
+              <p className="text-sm text-muted-foreground">When off, only people you've worked with, messaged before, or added as friends can contact you</p>
+            </div>
+            <Switch
+              id="allow-unknown-messages"
+              checked={settings?.allowMessagesFromUnknown ?? true}
+              onCheckedChange={(checked) => toggleSetting("allowMessagesFromUnknown", checked)}
+              data-testid="switch-allow-unknown-messages"
+            />
+          </div>
         </CardContent>
       </Card>
 
