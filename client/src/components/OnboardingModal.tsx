@@ -217,15 +217,153 @@ const customerSteps: OnboardingStep[] = [
   },
 ];
 
+const headOfModerationSteps: OnboardingStep[] = [
+  {
+    title: "Welcome, Head of Moderation!",
+    description: "You lead the moderation team and oversee platform quality.",
+    content: (
+      <div className="space-y-4">
+        <p>Your leadership responsibilities:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Oversee all moderation activities across the platform</li>
+          <li>Manage and support your moderator team</li>
+          <li>Set and enforce content quality standards</li>
+          <li>Handle escalated disputes and complex cases</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Team Management",
+    description: "Access Team Management to coordinate your moderators.",
+    content: (
+      <div className="space-y-4">
+        <p>In Team Management you can:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>View all moderators and their workload</li>
+          <li>Assign tasks to individual moderators</li>
+          <li>Schedule team meetings and check-ins</li>
+          <li>Monitor performance and response times</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Meeting Scheduling",
+    description: "Organize meetings with your moderation team.",
+    content: (
+      <div className="space-y-4">
+        <p>Schedule meetings effectively:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Create individual or team-wide meetings</li>
+          <li>Set date, time, and duration</li>
+          <li>Track RSVP responses from moderators</li>
+          <li>All times displayed in Eastern Time (ET)</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Team Room",
+    description: "Collaborate in real-time with your moderation team.",
+    content: (
+      <div className="space-y-4">
+        <p>The Team Room offers:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Persistent team chat for quick discussions</li>
+          <li>Voice calls for important conversations</li>
+          <li>Online presence and typing indicators</li>
+          <li>Content-filtered messaging for safety</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Moderation Vault",
+    description: "Manage team compensation from the vault.",
+    content: (
+      <div className="space-y-4">
+        <p>The Moderation Vault allows you to:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>View available funds from Founder deposits</li>
+          <li>Distribute payments to moderators</li>
+          <li>Track all vault transactions</li>
+          <li>Ensure fair compensation for team work</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Reports & Escalations",
+    description: "Handle user reports and role upgrade requests.",
+    content: (
+      <div className="space-y-4">
+        <p>Your moderation duties include:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Review and resolve user reports promptly</li>
+          <li>Process role upgrade applications</li>
+          <li>Approve freelancer-to-moderator promotions</li>
+          <li>Escalate serious issues to the Founder when needed</li>
+        </ul>
+      </div>
+    ),
+  },
+];
+
+const founderSteps: OnboardingStep[] = [
+  {
+    title: "Welcome, Founder!",
+    description: "You have full administrative access to Linxora.",
+    content: (
+      <div className="space-y-4">
+        <p>As the Founder, you can:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Access all platform features and data</li>
+          <li>Manage the moderation vault</li>
+          <li>Oversee all users, jobs, and transactions</li>
+          <li>Make critical platform decisions</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Platform Overview",
+    description: "Monitor the health of the entire platform.",
+    content: (
+      <div className="space-y-4">
+        <p>Your dashboard shows:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Total users, jobs, and transaction volume</li>
+          <li>Pending moderation queue status</li>
+          <li>Active disputes and escalations</li>
+          <li>Platform revenue and growth metrics</li>
+        </ul>
+      </div>
+    ),
+  },
+];
+
+function getStepsForRole(role: string): OnboardingStep[] {
+  switch (role) {
+    case "founder":
+      return founderSteps;
+    case "head_of_moderation":
+      return headOfModerationSteps;
+    case "moderator":
+    case "staff":
+      return moderatorSteps;
+    case "customer":
+      return customerSteps;
+    case "freelancer":
+    default:
+      return freelancerSteps;
+  }
+}
+
 export function OnboardingModal({ user, open, onComplete }: OnboardingModalProps) {
   const [currentStep, setCurrentStep] = useState(0);
 
-  const steps =
-    user.role === "moderator" || user.role === "staff"
-      ? moderatorSteps
-      : user.role === "customer"
-        ? customerSteps
-        : freelancerSteps;
+  const steps = getStepsForRole(user.role);
 
   const progress = ((currentStep + 1) / steps.length) * 100;
 
