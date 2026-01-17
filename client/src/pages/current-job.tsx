@@ -41,11 +41,17 @@ export default function CurrentJobPage() {
     queryKey: ["/api/freelancer/jobs"],
   });
 
+  // Active job statuses - jobs that are currently being worked on
+  const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
+
   // Find the current active job
+  // Also include jobs with "active" status if the user is already assigned as freelancer
+  // (handles edge case where status transition didn't complete)
   const currentJob = freelancerJobs.find(
     (job) =>
       (job.freelancerId === user?.id || job.collaborators?.includes(user?.id || "")) &&
-      (job.status === "claimed" || job.status === "in_progress")
+      (activeJobStatuses.includes(job.status) || 
+       (job.status === "active" && job.freelancerId === user?.id))
   );
 
   // Get enriched job details

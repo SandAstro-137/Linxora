@@ -122,6 +122,8 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       toast({
         title: "Freelancer approved!",
         description: "The freelancer has been assigned to your job.",

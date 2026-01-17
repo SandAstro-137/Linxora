@@ -56,6 +56,8 @@ export default function JobInvitationsPage() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/invitations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     },
     onError: (error: Error) => {
       toast({

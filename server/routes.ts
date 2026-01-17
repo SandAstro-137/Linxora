@@ -285,12 +285,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats: any = {};
 
       if (user.role === "freelancer") {
-        const activeJobs = await storage.getJobs({ freelancerId: user.id, status: "in_progress" });
-        stats.activeJobs = activeJobs.length;
+        // Active job statuses for freelancers - jobs currently being worked on
+        const activeStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
+        const allFreelancerJobs = await storage.getJobs({ freelancerId: user.id });
+        stats.activeJobs = allFreelancerJobs.filter(j => activeStatuses.includes(j.status)).length;
       } else if (user.role === "customer") {
         const allJobs = await storage.getJobs({ customerId: user.id });
         stats.postedJobs = allJobs.length;
-        stats.activeJobs = allJobs.filter(j => j.status === "active" || j.status === "in_progress").length;
+        // Customer's active jobs include: open for applications, claimed, and in progress
+        stats.activeJobs = allJobs.filter(j => 
+          ["active", "claimed", "in_progress", "submitted", "awaiting_customer"].includes(j.status)
+        ).length;
         stats.pendingJobs = allJobs.filter(j => j.status === "pending").length;
         stats.totalSpent = allJobs.reduce((sum, j) => sum + parseFloat(j.budget), 0).toFixed(2);
       } else if (user.role === "staff" || user.role === "moderator") {
@@ -6209,11 +6214,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (accept) {
         // Check if freelancer already has an active job
-        const activeJobs = await storage.getJobs({ 
-          freelancerId: user.id, 
-          status: "in_progress" 
-        });
-        if (activeJobs.length > 0) {
+        const activeJobs = await storage.getJobs({ freelancerId: user.id });
+        const hasActiveJob = activeJobs.some(j => 
+          j.status === "claimed" || j.status === "in_progress" || 
+          j.status === "submitted" || j.status === "awaiting_customer"
+        );
+        if (hasActiveJob) {
           return res.status(400).json({ error: "You already have a job in progress" });
         }
 
