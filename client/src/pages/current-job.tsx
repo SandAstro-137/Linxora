@@ -37,7 +37,7 @@ export default function CurrentJobPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
-  const { data: freelancerJobs = [] } = useQuery<Job[]>({
+  const { data: freelancerJobs = [], isLoading: isLoadingJobs } = useQuery<Job[]>({
     queryKey: ["/api/freelancer/jobs"],
   });
 
@@ -113,6 +113,25 @@ export default function CurrentJobPage() {
     if (!message.trim()) return;
     sendMessageMutation.mutate(message.trim());
   };
+
+  // Show loading state while fetching jobs
+  if (isLoadingJobs) {
+    return (
+      <div className="container mx-auto p-6 max-w-4xl">
+        <Card data-testid="card-loading">
+          <CardHeader>
+            <CardTitle>Current Job</CardTitle>
+            <CardDescription>Loading your current job...</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!currentJob) {
     return (
