@@ -53,6 +53,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Auto-Leveling & Statistics:** Automatic update of freelancer statistics (completion percentage, level based on completed jobs) displayed on profile pages.
 - **Role Upgrade System:** Customers can apply to become Freelancers, and Freelancers can apply for Moderator status (requires 5+ completed jobs). Moderators review and approve/reject applications. Automatic role updates upon approval with full notification system.
 - **Friends System:** Global user search by unique user ID, friend requests with accept/decline functionality, friends list management, and quick message access. Available at /friends for all roles.
+- **Message Privacy System:** Users can control who can message them via "Allow messages from unknown users" setting in Privacy Settings. When disabled, only "known users" (friends, prior chat partners, or job collaborators) can send direct messages. Unknown senders see a clear error message.
 - **Tutorial System:** Slide-based walkthrough with role-specific content (6 slides for freelancers, 5 for customers, 4 for moderators), accessible via help button in header.
 - **Safety & Moderation:**
     - Content Filter: Server-side library (server/lib/content-filter.ts) with inappropriate/suspicious pattern detection, XSS sanitization via sanitizeText(), and spam detection via isSpamLike().
