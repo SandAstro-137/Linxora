@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Bell, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +28,7 @@ import type { Notification, UserPreferences } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
 export function NotificationCenter() {
+  const [, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [notificationToDelete, setNotificationToDelete] = useState<string | null>(null);
@@ -94,7 +96,35 @@ export function NotificationCenter() {
     if (!notification.read) {
       markAsReadMutation.mutate(notification.id);
     }
-    if (notification.relatedId) {
+    
+    setOpen(false);
+    
+    const sourceType = notification.sourceType;
+    const sourceId = notification.sourceId;
+    
+    if (sourceType && sourceId) {
+      switch (sourceType) {
+        case "job":
+          setLocation(`/jobs/${sourceId}`);
+          break;
+        case "user":
+          setLocation(`/user/${sourceId}`);
+          break;
+        case "dispute":
+          setLocation(`/moderation`);
+          break;
+        case "system":
+          setLocation(`/notifications`);
+          break;
+        default:
+          if (notification.relatedId) {
+            setLocation(`/jobs/${notification.relatedId}`);
+          } else {
+            setLocation(`/notifications`);
+          }
+      }
+    } else if (notification.relatedId) {
+      setLocation(`/jobs/${notification.relatedId}`);
     }
   };
 

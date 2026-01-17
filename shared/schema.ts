@@ -422,6 +422,15 @@ export const NotificationType = {
 
 export type NotificationTypeEnum = typeof NotificationType[keyof typeof NotificationType];
 
+export const SourceType = {
+  JOB: "job",
+  USER: "user",
+  DISPUTE: "dispute",
+  SYSTEM: "system",
+} as const;
+
+export type SourceTypeEnum = typeof SourceType[keyof typeof SourceType];
+
 export const notifications = pgTable("notifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull(),
@@ -429,6 +438,8 @@ export const notifications = pgTable("notifications", {
   title: text("title").notNull(),
   message: text("message").notNull(),
   relatedId: varchar("related_id"),
+  sourceType: text("source_type"),
+  sourceId: varchar("source_id"),
   read: boolean("read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });

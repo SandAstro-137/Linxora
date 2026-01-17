@@ -124,6 +124,8 @@ async function handleAutoComplete(jobId: string) {
       title: "Job auto-completed!",
       message: `"${job.title}" was auto-completed after 4 days. You received $${payoutAmount.toFixed(2)}.`,
       relatedId: job.id,
+      sourceType: "job",
+      sourceId: job.id,
     });
 
     await updateFreelancerStats(freelancerId);
@@ -139,6 +141,8 @@ async function handleAutoComplete(jobId: string) {
     title: "Job auto-completed",
     message: `"${job.title}" was automatically completed after 4 days with no response.`,
     relatedId: job.id,
+    sourceType: "job",
+    sourceId: job.id,
   });
 }
 
@@ -183,6 +187,8 @@ async function handleJobExpiration(jobId: string) {
     title: "Job expired",
     message: `"${job.title}" expired after 2 months with no acceptance. Funds refunded.`,
     relatedId: job.id,
+    sourceType: "job",
+    sourceId: job.id,
   });
 }
 
@@ -200,6 +206,8 @@ async function handleCustomerReminder(jobId: string) {
     title: "Review pending work",
     message: `Work has been submitted for "${job.title}". Please review it soon or it will be auto-accepted.`,
     relatedId: job.id,
+    sourceType: "system",
+    sourceId: job.id,
   });
 }
 
@@ -236,6 +244,8 @@ async function handleCancellationEscalation(jobId: string, metadata: { negotiati
       title: "Cancellation escalated to dispute",
       message: `Cancellation negotiation for "${job.title}" failed. Now in dispute.`,
       relatedId: job.id,
+      sourceType: "dispute",
+      sourceId: job.id,
     });
   }
 
@@ -245,6 +255,8 @@ async function handleCancellationEscalation(jobId: string, metadata: { negotiati
     title: "Cancellation escalated",
     message: `Negotiation timed out for "${job.title}". A moderator will now review.`,
     relatedId: job.id,
+    sourceType: "dispute",
+    sourceId: job.id,
   });
 
   if (job.freelancerId) {
@@ -254,6 +266,8 @@ async function handleCancellationEscalation(jobId: string, metadata: { negotiati
       title: "Cancellation escalated",
       message: `Negotiation timed out for "${job.title}". A moderator will now review.`,
       relatedId: job.id,
+      sourceType: "dispute",
+      sourceId: job.id,
     });
   }
 }

@@ -850,6 +850,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "New job application",
         message: `${user.username} has applied to work on your job: ${job.title}`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json({ success: true, request: jobRequest });
@@ -965,6 +967,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             title: "Application not selected",
             message: `Another freelancer was selected for "${job.title}".`,
             relatedId: job.id,
+            sourceType: "job",
+            sourceId: job.id,
           });
         }
       }
@@ -979,6 +983,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Application accepted!",
         message: `Your application for "${job.title}" has been accepted. You can now start working!`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(updatedJob);
@@ -1026,6 +1032,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Application declined",
         message: `Your application for "${job.title}" was not selected.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json({ success: true });
@@ -1158,6 +1166,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job completed!",
         message: `The job "${job.title}" has been completed and payment of $${jobBudget} USDT has been transferred to your wallet.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(updatedJob);
@@ -1219,6 +1229,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "New job pending approval",
           message: `Job "${job.title}" is waiting for moderation review.`,
           relatedId: job.id,
+          sourceType: "system",
+          sourceId: job.id,
         });
       }
 
@@ -1301,6 +1313,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job approved!",
         message: `Your job "${job.title}" has been approved and is now live.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       // Post to Discord webhook
@@ -1356,6 +1370,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job needs changes",
         message: `Your job "${job.title}" was not approved. Please review the feedback.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(updatedJob);
@@ -1402,6 +1418,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job changes requested",
         message: `A moderator has requested changes to your job "${job.title}".`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(updatedJob);
@@ -1494,6 +1512,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Work submitted for review",
         message: `Freelancer has submitted work for "${job.title}". Please review within 4 days.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(submission);
@@ -1655,6 +1675,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Payment received!",
           message: `You received $${payoutAmount.toFixed(2)} for completing "${job.title}".`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
 
         // Update freelancer stats
@@ -1736,6 +1758,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Work not accepted",
           message: `Your work for "${job.title}" was not accepted. Reason: ${reason.trim().substring(0, 100)}`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
       }
 
@@ -1847,6 +1871,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Dispute opened",
           message: `A dispute has been opened for "${job.title}". A moderator will review.`,
           relatedId: job.id,
+          sourceType: "dispute",
+          sourceId: dispute.id,
         });
       }
 
@@ -1860,6 +1886,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "New dispute requires attention",
           message: `A dispute has been opened for job "${job.title}".`,
           relatedId: dispute.id,
+          sourceType: "dispute",
+          sourceId: dispute.id,
         });
       }
 
@@ -2056,6 +2084,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Dispute resolved",
         message: `The dispute for "${job.title}" has been resolved. You received a refund of $${customerRefund}.`,
         relatedId: job.id,
+        sourceType: "dispute",
+        sourceId: dispute.id,
       });
 
       if (job.freelancerId) {
@@ -2065,6 +2095,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Dispute resolved",
           message: `The dispute for "${job.title}" has been resolved. You received $${freelancerAmount}.`,
           relatedId: job.id,
+          sourceType: "dispute",
+          sourceId: dispute.id,
         });
       }
 
@@ -2140,6 +2172,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job cancelled",
         message: `Your job "${job.title}" has been cancelled. Full refund of $${budget} processed.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(updatedJob);
@@ -2221,6 +2255,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Cancellation proposed",
           message: `A cancellation has been proposed for "${job.title}". You have 7 days to agree or negotiate.`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
       }
 
@@ -2339,6 +2375,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Job cancelled by agreement",
           message: `"${job.title}" has been cancelled. You received $${customerRefund}.`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
 
         if (job.freelancerId) {
@@ -2348,6 +2386,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             title: "Job cancelled by agreement",
             message: `"${job.title}" has been cancelled. You received $${freelancerAmount}.`,
             relatedId: job.id,
+            sourceType: "job",
+            sourceId: job.id,
           });
         }
       }
@@ -2833,6 +2873,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job approved!",
         message: `Your job "${job.title}" has been approved and is now live on the marketplace.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       // Post to Discord webhook
@@ -2860,6 +2902,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Job rejected",
         message: `Your job "${job.title}" was not approved. Please review our guidelines and try again.`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(job);
@@ -2895,6 +2939,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Changes requested for your job",
           message: `Your job "${job.title}" requires the following changes:\n\n${feedback}`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
       }
 
@@ -3003,6 +3049,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Job cancelled",
           message: `Your job "${job.title}" has been cancelled`,
           relatedId: jobId,
+          sourceType: "job",
+          sourceId: jobId,
         });
       }
 
@@ -3369,6 +3417,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Vault Deposit",
           message: `The Founder deposited $${depositAmount.toFixed(2)} to the moderation vault.`,
           relatedId: transaction.id,
+          sourceType: "system",
+          sourceId: transaction.id,
         });
       }
       
@@ -3436,6 +3486,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Funds Received",
         message: `You received $${distributeAmount.toFixed(2)} from the moderation vault${note ? `: ${note}` : ""}.`,
         relatedId: transaction.id,
+        sourceType: "system",
+        sourceId: transaction.id,
       });
       
       res.json(transaction);
@@ -3567,6 +3619,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Friend Request",
         message: `${sender?.username || "Someone"} sent you a friend request.`,
         relatedId: request.id,
+        sourceType: "user",
+        sourceId: req.session.userId!,
       });
       
       res.json(request);
@@ -3605,6 +3659,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Friend Request Accepted",
         message: `${accepter?.username || "Someone"} accepted your friend request.`,
         relatedId: request.id,
+        sourceType: "user",
+        sourceId: req.session.userId!,
       });
       
       res.json({ success: true });
@@ -3892,6 +3948,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "New PTO Request",
           message: `${user?.username || "A freelancer"} has requested PTO from ${validated.startDate} to ${validated.endDate}`,
           relatedId: request.id,
+          sourceType: "system",
+          sourceId: request.id,
         });
       }
 
@@ -3932,6 +3990,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Team invitation",
         message: `${sender?.username} has invited you to collaborate on "${job.title}". Check your invitations to respond.`,
         relatedId: invitation.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       // Send Discord notification
@@ -3985,6 +4045,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Invitation accepted",
         message: `${accepter?.username} accepted your invitation to collaborate on "${job?.title}".`,
         relatedId: invitation.jobId,
+        sourceType: "job",
+        sourceId: job?.id || null,
       });
 
       res.json(invitation);
@@ -4012,6 +4074,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Invitation declined",
         message: `${rejecter?.username} declined your invitation to collaborate on "${job?.title}".`,
         relatedId: invitation.jobId,
+        sourceType: "job",
+        sourceId: job?.id || null,
       });
 
       res.json(invitation);
@@ -4174,6 +4238,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: "system",
         title: "Email verified",
         message: `Your email has been successfully changed to ${verificationToken.newEmail}`,
+        sourceType: "system",
+        sourceId: null,
       });
       
       res.json({ 
@@ -4493,6 +4559,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "New message",
         message: `${sender?.username} sent you a message`,
         relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json(chatMessage);
@@ -4865,6 +4933,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "New Role Upgrade Request",
           message: `${user.username} has requested to become a ${validatedData.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER ? 'freelancer' : 'moderator'}`,
           relatedId: request.id,
+          sourceType: "user",
+          sourceId: user.id,
         });
       }
 
@@ -4933,6 +5003,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Role Upgrade Approved!",
           message: `Congratulations! Your request to become a ${newRole} has been approved.`,
           relatedId: request.id,
+          sourceType: "user",
+          sourceId: request.userId,
         });
       } else {
         // Notify the user of rejection
@@ -4942,6 +5014,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Role Upgrade Request Declined",
           message: `Your role upgrade request was declined. ${reviewNotes ? `Reason: ${reviewNotes}` : 'Please contact support for more information.'}`,
           relatedId: request.id,
+          sourceType: "user",
+          sourceId: request.userId,
         });
       }
 
@@ -4992,6 +5066,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "New Report Submitted",
           message: `A new ${validatedData.reportType} report has been submitted and requires review.`,
           relatedId: report.id,
+          sourceType: "system",
+          sourceId: report.id,
         });
       }
 
@@ -5066,6 +5142,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Report Updated",
         message: `Your report has been ${status}. ${sanitizedNotes ? `Notes: ${sanitizedNotes}` : ''}`,
         relatedId: report.id,
+        sourceType: "system",
+        sourceId: report.id,
       });
 
       res.json(updatedReport);
@@ -5132,6 +5210,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "New Task Assigned",
         message: `You have been assigned a new ${taskType === "team" ? "team" : "personal"} task: ${title}`,
         relatedId: task.id,
+        sourceType: "system",
+        sourceId: task.id,
       });
 
       res.status(201).json(task);
@@ -5356,6 +5436,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Meeting Scheduled",
           message: `You have been invited to a meeting: ${title}`,
           relatedId: meeting.id,
+          sourceType: "system",
+          sourceId: meeting.id,
         });
       }
 
@@ -5412,6 +5494,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Meeting RSVP",
         message: `${user?.username || "A moderator"} has ${status} the meeting: ${meeting.title}`,
         relatedId: meeting.id,
+        sourceType: "system",
+        sourceId: meeting.id,
       });
 
       res.json(rsvp);
@@ -5556,6 +5640,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Meeting Exemption Request",
           message: `${requester?.username || "A moderator"} has requested an exemption from "${meeting.title}"`,
           relatedId: exemption.id,
+          sourceType: "system",
+          sourceId: exemption.id,
         });
       }
 
@@ -5602,6 +5688,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? `Your exemption request for "${meeting?.title || "a meeting"}" has been approved`
           : `Your exemption request for "${meeting?.title || "a meeting"}" has been denied${note ? `: ${note}` : ""}`,
         relatedId: exemption.id,
+        sourceType: "system",
+        sourceId: exemption.id,
       });
 
       res.json(updatedExemption);
@@ -5662,6 +5750,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Promoted to Head of Moderation",
         message: "Congratulations! You have been promoted to Head of Moderation by the Founder.",
         relatedId: userId,
+        sourceType: "user",
+        sourceId: userId,
       });
       
       const updatedUser = await storage.getUser(userId);
@@ -5694,6 +5784,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Role Changed",
         message: "Your role has been changed from Head of Moderation to Moderator by the Founder.",
         relatedId: userId,
+        sourceType: "user",
+        sourceId: userId,
       });
       
       const updatedUser = await storage.getUser(userId);
@@ -5897,6 +5989,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "Freelancer Recommendation",
         message: `${recommender.username} recommends ${recommendedFreelancer.username} for your job: ${job.title}`,
         relatedId: recommendation.id,
+        sourceType: "job",
+        sourceId: job.id,
       });
 
       res.json({ success: true, recommendation });
@@ -6043,6 +6137,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Job Invitation",
           message: `${user.username} has invited you to work on: ${job?.title || "a job"} (recommended by ${recommender?.username || "a friend"})`,
           relatedId: recommendation.id,
+          sourceType: "job",
+          sourceId: job?.id || null,
         });
 
         // Notify the recommender that their recommendation was accepted
@@ -6052,6 +6148,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Recommendation Accepted",
           message: `Your recommendation was accepted! ${user.username} has invited your friend to work on: ${job?.title || "a job"}`,
           relatedId: recommendation.id,
+          sourceType: "job",
+          sourceId: job?.id || null,
         });
 
         res.json({ success: true, message: "Invitation sent to freelancer" });
@@ -6070,6 +6168,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Recommendation Declined",
           message: `Your recommendation for ${job?.title || "a job"} was declined by the customer`,
           relatedId: recommendation.id,
+          sourceType: "job",
+          sourceId: job?.id || null,
         });
 
         res.json({ success: true, message: "Recommendation declined" });
@@ -6147,6 +6247,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Invitation Accepted",
           message: `${user.username} has accepted your job invitation for: ${job.title}`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
 
         // Notify recommender
@@ -6156,6 +6258,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Recommendation Successful",
           message: `Your friend ${user.username} accepted the job: ${job.title}`,
           relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
         });
 
         res.json({ success: true, message: "You have been assigned to the job" });
@@ -6172,6 +6276,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Invitation Declined",
           message: `${user.username} has declined your job invitation for: ${job?.title || "a job"}`,
           relatedId: recommendation.id,
+          sourceType: "job",
+          sourceId: job?.id || null,
         });
 
         // Notify recommender
@@ -6181,6 +6287,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: "Invitation Declined",
           message: `Your friend ${user.username} declined the job invitation for: ${job?.title || "a job"}`,
           relatedId: recommendation.id,
+          sourceType: "job",
+          sourceId: job?.id || null,
         });
 
         res.json({ success: true, message: "Invitation declined" });
@@ -6362,6 +6470,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: "New Message",
         message: `${sender?.username || "Someone"} sent you a message`,
         relatedId: senderId,
+        sourceType: "user",
+        sourceId: senderId,
       });
 
       res.json({
