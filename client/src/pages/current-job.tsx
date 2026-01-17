@@ -37,8 +37,17 @@ export default function CurrentJobPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
-  const { data: freelancerJobs = [], isLoading: isLoadingJobs } = useQuery<Job[]>({
+  const { data: freelancerJobs = [], isLoading: isLoadingJobs, isError, error } = useQuery<Job[]>({
     queryKey: ["/api/freelancer/jobs"],
+  });
+
+  // Debug logging
+  console.log("CurrentJobPage render:", { 
+    isLoadingJobs, 
+    isError, 
+    error: error?.message,
+    freelancerJobsCount: freelancerJobs.length,
+    userId: user?.id 
   });
 
   // Active job statuses - jobs that are currently being worked on
@@ -127,6 +136,25 @@ export default function CurrentJobPage() {
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show error state if query failed
+  if (isError) {
+    return (
+      <div className="container mx-auto p-6 max-w-4xl">
+        <Card data-testid="card-error">
+          <CardHeader>
+            <CardTitle>Current Job</CardTitle>
+            <CardDescription>Failed to load job data</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground">
+              There was an error loading your current job. Please try again later.
+            </p>
           </CardContent>
         </Card>
       </div>
