@@ -4400,6 +4400,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/profile/bio", requireAuth, async (req, res) => {
+    try {
+      const { bio } = req.body;
+      
+      if (bio !== undefined && typeof bio !== "string") {
+        return res.status(400).json({ error: "Invalid bio format" });
+      }
+
+      const trimmed = bio ? bio.trim() : "";
+      
+      if (trimmed.length > 500) {
+        return res.status(400).json({ error: "Bio must be 500 characters or less" });
+      }
+
+      const user = await storage.updateUser(req.session.userId!, { bio: trimmed || null });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ bio: user.bio });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/profile/stats", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
