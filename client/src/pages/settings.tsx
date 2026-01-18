@@ -246,8 +246,11 @@ export default function SettingsPage() {
   });
 
   const updateBioMutation = useMutation({
-    mutationFn: (bio: string) => apiRequest("PUT", "/api/profile/bio", { bio }),
-    onSuccess: async (data: { bio: string | null }) => {
+    mutationFn: async (bio: string) => {
+      const res = await apiRequest("PUT", "/api/profile/bio", { bio });
+      return res.json() as Promise<{ bio: string | null }>;
+    },
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       await refetchUser();
       setBio(data.bio || "");
