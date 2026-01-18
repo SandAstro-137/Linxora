@@ -10,7 +10,8 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
@@ -158,12 +159,14 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState(user?.username || "");
+  const [bio, setBio] = useState(user?.bio || "");
   const [newEmail, setNewEmail] = useState("");
   const [isDeactivating, setIsDeactivating] = useState(false);
 
   useEffect(() => {
     if (user) {
       setUsername(user.username || "");
+      setBio(user.bio || "");
     }
   }, [user]);
 
@@ -239,6 +242,23 @@ export default function SettingsPage() {
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to update profile picture.", variant: "destructive" });
+    },
+  });
+
+  const updateBioMutation = useMutation({
+    mutationFn: (bio: string) => apiRequest("PUT", "/api/profile/bio", { bio }),
+    onSuccess: async (data: { bio: string | null }) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      await refetchUser();
+      setBio(data.bio || "");
+      toast({ title: "Bio updated", description: "Your bio has been saved." });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to update bio.", 
+        variant: "destructive" 
+      });
     },
   });
 
@@ -425,6 +445,37 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-muted-foreground" />
+              <Label htmlFor="bio">About Me</Label>
+            </div>
+            <Textarea
+              id="bio"
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              placeholder="Tell others about yourself, your skills, and what you can do..."
+              className="min-h-[120px] resize-none"
+              maxLength={500}
+              data-testid="input-bio"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                {bio.length}/500 characters
+              </span>
+              <Button
+                onClick={() => updateBioMutation.mutate(bio)}
+                disabled={updateBioMutation.isPending || bio === (user?.bio || "")}
+                data-testid="button-save-bio"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                Save Bio
+              </Button>
             </div>
           </div>
         </CardContent>

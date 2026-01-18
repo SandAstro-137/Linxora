@@ -4409,12 +4409,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const trimmed = bio ? bio.trim() : "";
+      const sanitized = sanitizeText(trimmed);
       
-      if (trimmed.length > 500) {
+      if (sanitized.length > 500) {
         return res.status(400).json({ error: "Bio must be 500 characters or less" });
       }
 
-      const user = await storage.updateUser(req.session.userId!, { bio: trimmed || null });
+      const user = await storage.updateUser(req.session.userId!, { bio: sanitized || null });
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
