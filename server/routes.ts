@@ -5983,14 +5983,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "You cannot recommend yourself" });
       }
 
-      // Verify the job exists and is active
+      // Verify the job exists and is in a working state
       const job = await storage.getJob(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      if (job.status !== "active") {
+      // Job must be in a working state (claimed, in_progress, or awaiting_customer)
+      const validStatuses = ["claimed", "in_progress", "awaiting_customer"];
+      if (!validStatuses.includes(job.status)) {
         return res.status(400).json({ error: "This job is not available for recommendations" });
+      }
+
+      // Verify the recommender is assigned to this job
+      const freelancerAssignments = await storage.getJobFreelancersByFreelancer(recommender.id);
+      const isAssignedViaTable = freelancerAssignments.some(jf => jf.jobId === jobId);
+      if (job.freelancerId !== recommender.id && !isAssignedViaTable) {
+        return res.status(403).json({ error: "You can only recommend for jobs you are working on" });
       }
 
       // Check if this recommendation already exists
