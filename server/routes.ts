@@ -2776,11 +2776,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Check if user is part of the team (customer, freelancer, or collaborator)
+      // Check if user is part of the team (customer, freelancer, collaborator, or jobFreelancers member)
+      const jobFreelancerRecords = await storage.getJobFreelancers(req.params.id);
+      const isJobFreelancerMember = jobFreelancerRecords.some(jf => jf.freelancerId === req.session.userId);
+      
       const isPartOfTeam = 
         job.customerId === req.session.userId ||
         job.freelancerId === req.session.userId ||
-        job.collaborators?.includes(req.session.userId!);
+        job.collaborators?.includes(req.session.userId!) ||
+        isJobFreelancerMember;
 
       if (!isPartOfTeam) {
         return res.status(403).json({ error: "You are not part of this job's team" });
@@ -2809,11 +2813,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Check if user is part of the team
+      // Check if user is part of the team (including jobFreelancers members)
+      const jobFreelancerRecords = await storage.getJobFreelancers(req.params.id);
+      const isJobFreelancerMember = jobFreelancerRecords.some(jf => jf.freelancerId === req.session.userId);
+      
       const isPartOfTeam = 
         job.customerId === req.session.userId ||
         job.freelancerId === req.session.userId ||
-        job.collaborators?.includes(req.session.userId!);
+        job.collaborators?.includes(req.session.userId!) ||
+        isJobFreelancerMember;
 
       if (!isPartOfTeam) {
         return res.status(403).json({ error: "You are not part of this job's team" });
