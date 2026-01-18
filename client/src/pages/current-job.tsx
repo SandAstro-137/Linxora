@@ -7,10 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, Send, Calendar, DollarSign, User, Briefcase } from "lucide-react";
-import type { Job, ChatMessage } from "@shared/schema";
+import { MessageCircle, Send, Calendar, DollarSign, User, Briefcase, Users } from "lucide-react";
+import type { Job, ChatMessage, TeamMessage } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
 type EnrichedJob = Job & {
@@ -34,7 +35,10 @@ export default function CurrentJobPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [message, setMessage] = useState("");
+  const [teamMessage, setTeamMessage] = useState("");
+  const [activeTab, setActiveTab] = useState("customer");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const teamMessagesEndRef = useRef<HTMLDivElement>(null);
 
   // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
   const { data: freelancerJobs = [], isLoading: isLoadingJobs, isError, error } = useQuery<Job[]>({
@@ -105,14 +109,48 @@ export default function CurrentJobPage() {
     },
   });
 
+  // Get team messages for freelancer-to-freelancer chat
+  const { data: teamMessages = [] } = useQuery<TeamMessage[]>({
+    queryKey: ["/api/jobs", currentJob?.id, "team-messages"],
+    enabled: !!currentJob?.id,
+    refetchInterval: 3000,
+  });
+
+  const sendTeamMessageMutation = useMutation({
+    mutationFn: (text: string) =>
+      apiRequest("POST", `/api/jobs/${currentJob?.id}/team-messages`, { 
+        content: text 
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", currentJob?.id, "team-messages"] });
+      setTeamMessage("");
+    },
+    onError: () => {
+      toast({
+        title: "Failed to send message",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    teamMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [teamMessages]);
+
   const handleSendMessage = () => {
     if (!message.trim()) return;
     sendMessageMutation.mutate(message.trim());
+  };
+
+  const handleSendTeamMessage = () => {
+    if (!teamMessage.trim()) return;
+    sendTeamMessageMutation.mutate(teamMessage.trim());
   };
 
   // Show loading state while fetching jobs
@@ -262,69 +300,149 @@ export default function CurrentJobPage() {
             </CardContent>
           </Card>
 
-          {/* Chat Interface */}
+          {/* Chat Interface with Tabs */}
           <Card data-testid="card-chat-interface">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2">
                 <MessageCircle className="w-5 h-5" />
-                Chat with Customer
+                Communications
               </CardTitle>
-              <CardDescription>
-                {enrichedJob?.customerUsername && `Chatting with ${enrichedJob.customerUsername}`}
-              </CardDescription>
             </CardHeader>
             <CardContent>
-              {/* Messages */}
-              <div className="space-y-4 mb-4 max-h-96 overflow-y-auto" data-testid="chat-messages-container">
-                {messages.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    No messages yet. Start the conversation!
-                  </p>
-                ) : (
-                  messages.map((msg) => {
-                    const isSender = msg.senderId === user?.id;
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex ${isSender ? "justify-end" : "justify-start"}`}
-                        data-testid={`message-${msg.id}`}
-                      >
-                        <div
-                          className={`max-w-[70%] rounded-lg p-3 ${
-                            isSender
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted"
-                          }`}
-                        >
-                          <p className="text-sm">{msg.message}</p>
-                          <p className="text-xs opacity-70 mt-1">
-                            {formatDistanceToNow(new Date(msg.createdAt!), { addSuffix: true })}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="customer" className="flex items-center gap-2" data-testid="tab-customer-chat">
+                    <User className="w-4 h-4" />
+                    Customer Chat
+                  </TabsTrigger>
+                  <TabsTrigger value="team" className="flex items-center gap-2" data-testid="tab-team-chat">
+                    <Users className="w-4 h-4" />
+                    Team Discussion
+                  </TabsTrigger>
+                </TabsList>
 
-              {/* Message Input */}
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Type your message..."
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                  data-testid="input-chat-message"
-                />
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={!message.trim() || sendMessageMutation.isPending}
-                  data-testid="button-send-message"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </div>
+                {/* Customer Chat Tab */}
+                <TabsContent value="customer" className="mt-0">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {enrichedJob?.customerUsername && `Chatting with ${enrichedJob.customerUsername}`}
+                  </p>
+                  <div className="space-y-4 mb-4 max-h-80 overflow-y-auto" data-testid="chat-messages-container">
+                    {messages.length === 0 ? (
+                      <p className="text-center text-muted-foreground py-8">
+                        No messages yet. Start the conversation!
+                      </p>
+                    ) : (
+                      messages.map((msg) => {
+                        const isSender = msg.senderId === user?.id;
+                        return (
+                          <div
+                            key={msg.id}
+                            className={`flex ${isSender ? "justify-end" : "justify-start"}`}
+                            data-testid={`message-${msg.id}`}
+                          >
+                            <div
+                              className={`max-w-[70%] rounded-lg p-3 ${
+                                isSender
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted"
+                              }`}
+                            >
+                              <p className="text-sm">{msg.message}</p>
+                              <p className="text-xs opacity-70 mt-1">
+                                {formatDistanceToNow(new Date(msg.createdAt!), { addSuffix: true })}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Type your message..."
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                      data-testid="input-chat-message"
+                    />
+                    <Button
+                      onClick={handleSendMessage}
+                      disabled={!message.trim() || sendMessageMutation.isPending}
+                      data-testid="button-send-message"
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </TabsContent>
+
+                {/* Team Discussion Tab */}
+                <TabsContent value="team" className="mt-0">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Private discussion between team members working on this job
+                  </p>
+                  <div className="space-y-4 mb-4 max-h-80 overflow-y-auto" data-testid="team-messages-container">
+                    {teamMessages.length === 0 ? (
+                      <p className="text-center text-muted-foreground py-8">
+                        No team messages yet. Start coordinating with your team!
+                      </p>
+                    ) : (
+                      teamMessages.map((msg) => {
+                        const isSender = msg.senderId === user?.id;
+                        const senderInfo = enrichedJob?.collaboratorData?.find(c => c.id === msg.senderId);
+                        return (
+                          <div
+                            key={msg.id}
+                            className={`flex ${isSender ? "justify-end" : "justify-start"}`}
+                            data-testid={`team-message-${msg.id}`}
+                          >
+                            <div className={`max-w-[70%] ${isSender ? "" : "flex gap-2"}`}>
+                              {!isSender && (
+                                <Avatar className="w-8 h-8 flex-shrink-0">
+                                  <AvatarImage src={senderInfo?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.senderId}`} />
+                                  <AvatarFallback>{senderInfo?.username?.[0]?.toUpperCase() || "T"}</AvatarFallback>
+                                </Avatar>
+                              )}
+                              <div
+                                className={`rounded-lg p-3 ${
+                                  isSender
+                                    ? "bg-primary text-primary-foreground"
+                                    : "bg-muted"
+                                }`}
+                              >
+                                {!isSender && (
+                                  <p className="text-xs font-medium mb-1">{senderInfo?.username || "Team Member"}</p>
+                                )}
+                                <p className="text-sm">{msg.content}</p>
+                                <p className="text-xs opacity-70 mt-1">
+                                  {formatDistanceToNow(new Date(msg.createdAt!), { addSuffix: true })}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    <div ref={teamMessagesEndRef} />
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Message your team..."
+                      value={teamMessage}
+                      onChange={(e) => setTeamMessage(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && handleSendTeamMessage()}
+                      data-testid="input-team-message"
+                    />
+                    <Button
+                      onClick={handleSendTeamMessage}
+                      disabled={!teamMessage.trim() || sendTeamMessageMutation.isPending}
+                      data-testid="button-send-team-message"
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </div>
