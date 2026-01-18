@@ -990,7 +990,8 @@ export const jobRecommendations = pgTable("job_recommendations", {
   jobId: varchar("job_id").notNull(), // The job they're being recommended for
   customerId: varchar("customer_id").notNull(), // The customer/employer
   status: text("status").notNull().default(RecommendationStatus.PENDING),
-  recommenderMessage: text("recommender_message"), // Optional message from recommender
+  recommenderMessage: text("recommender_message"), // Message from recommender to customer
+  freelancerMessage: text("freelancer_message"), // Message from recommender to recommended freelancer
   customerNote: text("customer_note"), // Optional note from customer when accepting/declining
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

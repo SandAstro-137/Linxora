@@ -5966,7 +5966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can recommend other freelancers" });
       }
 
-      const { recommendedFreelancerId, jobId, message } = req.body;
+      const { recommendedFreelancerId, jobId, customerMessage, freelancerMessage } = req.body;
 
       if (!recommendedFreelancerId || !jobId) {
         return res.status(400).json({ error: "Freelancer ID and Job ID are required" });
@@ -6019,7 +6019,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recommendedFreelancerId,
         jobId,
         customerId: job.customerId,
-        recommenderMessage: message || null,
+        recommenderMessage: customerMessage || null,
+        freelancerMessage: freelancerMessage || null,
       });
 
       // Notify the customer
@@ -6288,26 +6289,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = await storage.getUser(recommendation.customerId);
 
       if (accept) {
-        // Check if freelancer already has an active job
+        // Check if freelancer already has an active job (as primary freelancer)
         const activeJobs = await storage.getJobs({ freelancerId: user.id });
         const hasActiveJob = activeJobs.some(j => 
           j.status === "claimed" || j.status === "in_progress" || 
           j.status === "submitted" || j.status === "awaiting_customer"
         );
-        if (hasActiveJob) {
+        
+        // Also check jobFreelancers table for multi-freelancer assignments
+        const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
+        let hasActiveAssignment = false;
+        for (const jf of freelancerAssignments) {
+          const assignedJob = await storage.getJob(jf.jobId);
+          if (assignedJob && ["claimed", "in_progress", "submitted", "awaiting_customer"].includes(assignedJob.status)) {
+            hasActiveAssignment = true;
+            break;
+          }
+        }
+        
+        if (hasActiveJob || hasActiveAssignment) {
           return res.status(400).json({ error: "You already have a job in progress" });
         }
 
-        // Check if job is still available
-        if (!job || job.status !== "active") {
+        // Check if job is still available - allow joining for active, claimed, or in_progress jobs
+        const acceptableStatuses = ["active", "claimed", "in_progress"];
+        if (!job || !acceptableStatuses.includes(job.status)) {
           return res.status(400).json({ error: "This job is no longer available" });
         }
 
-        // Assign the job to the freelancer
-        await storage.updateJob(job.id, {
-          freelancerId: user.id,
-          status: "claimed",
-        });
+        // Check if already assigned to this job
+        const existingAssignments = await storage.getJobFreelancers(job.id);
+        const alreadyAssigned = job.freelancerId === user.id || 
+                               existingAssignments.some(jf => jf.freelancerId === user.id);
+        if (alreadyAssigned) {
+          return res.status(400).json({ error: "You are already assigned to this job" });
+        }
+
+        // For multi-freelancer jobs, add to jobFreelancers table
+        // If job has no freelancer yet, assign directly
+        if (!job.freelancerId) {
+          await storage.updateJob(job.id, {
+            freelancerId: user.id,
+            status: "claimed",
+          });
+        } else {
+          // Add as additional team member
+          // Calculate equal share among existing team + new member
+          const existingFreelancerCount = existingAssignments.length + 1; // +1 for main freelancer
+          const newTeamSize = existingFreelancerCount + 1;
+          const sharePerMember = (parseFloat(job.budget) / newTeamSize).toFixed(2);
+          
+          await storage.createJobFreelancer({
+            jobId: job.id,
+            freelancerId: user.id,
+            shareAmount: sharePerMember,
+            levelAtTime: user.level || 1,
+            status: "active",
+          });
+        }
 
         await storage.updateJobRecommendation(recommendation.id, {
           status: "invitation_accepted",

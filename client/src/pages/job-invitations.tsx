@@ -22,6 +22,7 @@ interface JobInvitation {
   id: string;
   status: string;
   recommenderMessage: string | null;
+  freelancerMessage: string | null;
   customerNote: string | null;
   createdAt: string;
   recommender: {
@@ -184,13 +185,13 @@ export default function JobInvitationsPage() {
                   </div>
                 )}
 
-                {invitation.recommenderMessage && (
+                {invitation.freelancerMessage && (
                   <div className="bg-muted p-3 rounded-lg">
                     <p className="text-sm font-medium mb-1">
                       Message from {invitation.recommender?.username || "recommender"}:
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      "{invitation.recommenderMessage}"
+                      "{invitation.freelancerMessage}"
                     </p>
                   </div>
                 )}

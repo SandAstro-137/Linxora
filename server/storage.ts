@@ -1612,6 +1612,7 @@ export class MemStorage implements IStorage {
       ...recommendation,
       status: recommendation.status || "pending",
       recommenderMessage: recommendation.recommenderMessage ?? null,
+      freelancerMessage: recommendation.freelancerMessage ?? null,
       customerNote: recommendation.customerNote ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),

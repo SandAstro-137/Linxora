@@ -83,7 +83,8 @@ export default function UserProfilePage() {
   const { toast } = useToast();
   const [recommendDialogOpen, setRecommendDialogOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
-  const [recommendMessage, setRecommendMessage] = useState("");
+  const [customerMessage, setCustomerMessage] = useState("");
+  const [freelancerMessage, setFreelancerMessage] = useState("");
 
   const { data: currentUser } = useQuery<CurrentUser>({
     queryKey: ["/api/auth/me"],
@@ -108,7 +109,7 @@ export default function UserProfilePage() {
   });
 
   const recommendMutation = useMutation({
-    mutationFn: async (data: { recommendedFreelancerId: string; jobId: string; message?: string }) => {
+    mutationFn: async (data: { recommendedFreelancerId: string; jobId: string; customerMessage?: string; freelancerMessage?: string }) => {
       const res = await apiRequest("POST", "/api/recommendations", data);
       return res.json();
     },
@@ -119,7 +120,8 @@ export default function UserProfilePage() {
       });
       setRecommendDialogOpen(false);
       setSelectedJobId("");
-      setRecommendMessage("");
+      setCustomerMessage("");
+      setFreelancerMessage("");
     },
     onError: (error: Error) => {
       toast({
@@ -135,7 +137,8 @@ export default function UserProfilePage() {
     recommendMutation.mutate({
       recommendedFreelancerId: profile.id,
       jobId: selectedJobId,
-      message: recommendMessage || undefined,
+      customerMessage: customerMessage || undefined,
+      freelancerMessage: freelancerMessage || undefined,
     });
   };
 
@@ -262,12 +265,21 @@ export default function UserProfilePage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Message (optional)</label>
+                      <label className="text-sm font-medium">Message to Customer (optional)</label>
                       <Textarea
-                        placeholder="Why do you recommend this freelancer?"
-                        value={recommendMessage}
-                        onChange={(e) => setRecommendMessage(e.target.value)}
-                        data-testid="input-recommend-message"
+                        placeholder="Why should they accept this freelancer?"
+                        value={customerMessage}
+                        onChange={(e) => setCustomerMessage(e.target.value)}
+                        data-testid="input-customer-message"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Message to {profile?.username} (optional)</label>
+                      <Textarea
+                        placeholder="Let them know about the opportunity..."
+                        value={freelancerMessage}
+                        onChange={(e) => setFreelancerMessage(e.target.value)}
+                        data-testid="input-freelancer-message"
                       />
                     </div>
                     <Button
