@@ -6349,10 +6349,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const assignedJobIds = new Set(freelancerJobAssignments.map(jf => jf.jobId));
       
       // Filter for jobs where freelancer is assigned (via freelancerId or jobFreelancers table)
-      // and job is in an active/in-progress state
+      // and job is in a working state (claimed, in_progress, awaiting_customer)
       const myJobs = allJobs.filter(j => 
         (j.freelancerId === user.id || assignedJobIds.has(j.id)) &&
-        (j.status === "in_progress" || j.status === "active" || j.status === "awaiting_customer")
+        (j.status === "claimed" || j.status === "in_progress" || j.status === "awaiting_customer")
       );
 
       // Return basic job info
