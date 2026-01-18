@@ -6339,6 +6339,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "You are already assigned to this job" });
         }
 
+        // Check 5-person team limit
+        const currentTeamSize = job.freelancerId ? 1 + existingAssignments.length : existingAssignments.length;
+        if (currentTeamSize >= 5) {
+          return res.status(400).json({ error: "This job already has the maximum of 5 team members" });
+        }
+
         // For multi-freelancer jobs, add to jobFreelancers table
         // If job has no freelancer yet, assign directly
         if (!job.freelancerId) {

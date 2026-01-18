@@ -50,13 +50,10 @@ export default function CurrentJobPage() {
   const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
 
   // Find the current active job
-  // Also include jobs with "active" status if the user is already assigned as freelancer
-  // (handles edge case where status transition didn't complete)
+  // The API already returns only jobs assigned to this user (primary, collaborator, or team member)
+  // So we just need to find one with an active status
   const currentJob = freelancerJobs.find(
-    (job) =>
-      (job.freelancerId === user?.id || job.collaborators?.includes(user?.id || "")) &&
-      (activeJobStatuses.includes(job.status) || 
-       (job.status === "active" && job.freelancerId === user?.id))
+    (job) => activeJobStatuses.includes(job.status)
   );
 
   // Get enriched job details
