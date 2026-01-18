@@ -41,14 +41,6 @@ export default function CurrentJobPage() {
     queryKey: ["/api/freelancer/jobs"],
   });
 
-  // Debug logging
-  console.log("CurrentJobPage render:", { 
-    isLoadingJobs, 
-    isError, 
-    error: error?.message,
-    freelancerJobsCount: freelancerJobs.length,
-    userId: user?.id 
-  });
 
   // Active job statuses - jobs that are currently being worked on
   const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
@@ -126,7 +118,7 @@ export default function CurrentJobPage() {
   // Show loading state while fetching jobs
   if (isLoadingJobs) {
     return (
-      <div className="container mx-auto p-6 max-w-4xl">
+      <div className="container mx-auto p-6 max-w-4xl bg-background min-h-[50vh]">
         <Card data-testid="card-loading">
           <CardHeader>
             <CardTitle>Current Job</CardTitle>
@@ -145,7 +137,7 @@ export default function CurrentJobPage() {
   // Show error state if query failed
   if (isError) {
     return (
-      <div className="container mx-auto p-6 max-w-4xl">
+      <div className="container mx-auto p-6 max-w-4xl bg-background min-h-[50vh]">
         <Card data-testid="card-error">
           <CardHeader>
             <CardTitle>Current Job</CardTitle>
@@ -163,7 +155,7 @@ export default function CurrentJobPage() {
 
   if (!currentJob) {
     return (
-      <div className="container mx-auto p-6 max-w-4xl">
+      <div className="container mx-auto p-6 max-w-4xl bg-background min-h-[50vh]">
         <Card data-testid="card-no-current-job">
           <CardHeader>
             <CardTitle>Current Job</CardTitle>
