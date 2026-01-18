@@ -10,8 +10,9 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw } from "lucide-react";
+import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw, Plus, ChevronUp } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
@@ -154,13 +155,23 @@ function BlacklistSection() {
   );
 }
 
+const demoAccounts = [
+  { id: "demo-freelancer-1", username: "Alex Chen", role: "freelancer", avatar: null },
+  { id: "demo-freelancer-2", username: "Sarah Johnson", role: "freelancer", avatar: null },
+  { id: "demo-customer-1", username: "Tech Startup Inc", role: "customer", avatar: null },
+  { id: "demo-moderator-1", username: "Admin User", role: "moderator", avatar: null },
+  { id: "demo-founder-1", username: "Founder", role: "founder", avatar: null },
+];
+
 export default function SettingsPage() {
-  const { user, refetchUser, logout } = useAuth();
+  const { user, refetchUser, logout, login } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState(user?.username || "");
   const [bio, setBio] = useState(user?.bio || "");
   const [newEmail, setNewEmail] = useState("");
+  const [accountSheetOpen, setAccountSheetOpen] = useState(false);
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -324,9 +335,18 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSwapAccounts = () => {
-    logout();
-    window.location.href = "/";
+  const handleSwitchAccount = async (accountId: string) => {
+    setSwitchingTo(accountId);
+    try {
+      await logout();
+      await login(accountId);
+      setAccountSheetOpen(false);
+      toast({ title: "Account switched", description: "You are now logged in as a different account." });
+    } catch {
+      toast({ title: "Error", description: "Failed to switch account.", variant: "destructive" });
+    } finally {
+      setSwitchingTo(null);
+    }
   };
 
   const handleLogout = () => {
@@ -659,12 +679,81 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Swap Accounts</p>
-              <p className="text-sm text-muted-foreground">Sign out and log in with a different account</p>
+              <p className="text-sm text-muted-foreground">Switch to a different account</p>
             </div>
-            <Button variant="outline" onClick={handleSwapAccounts} data-testid="button-swap-accounts">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Swap
-            </Button>
+            <Sheet open={accountSheetOpen} onOpenChange={setAccountSheetOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" data-testid="button-swap-accounts">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Swap
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="rounded-t-2xl">
+                <div className="mx-auto w-12 h-1.5 flex-shrink-0 rounded-full bg-muted mb-4" />
+                <SheetHeader className="text-left">
+                  <SheetTitle className="flex items-center gap-2">
+                    <RefreshCw className="h-5 w-5" />
+                    Switch Account
+                  </SheetTitle>
+                  <SheetDescription>
+                    Select an account to switch to
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="mt-6 space-y-2 max-h-[50vh] overflow-y-auto">
+                  {demoAccounts.map((account) => {
+                    const isCurrentAccount = user?.discordId === account.id;
+                    return (
+                      <button
+                        key={account.id}
+                        onClick={() => !isCurrentAccount && handleSwitchAccount(account.id)}
+                        disabled={isCurrentAccount || switchingTo !== null}
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                          isCurrentAccount 
+                            ? "bg-primary/10 border-2 border-primary cursor-default" 
+                            : "hover-elevate border border-border"
+                        } ${switchingTo === account.id ? "opacity-50" : ""}`}
+                        data-testid={`account-switch-${account.id}`}
+                      >
+                        <Avatar className="h-12 w-12">
+                          <AvatarImage src={account.avatar || undefined} />
+                          <AvatarFallback className="text-lg">
+                            {account.username.charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 text-left">
+                          <p className="font-medium">{account.username}</p>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-xs capitalize">
+                              {account.role}
+                            </Badge>
+                            {isCurrentAccount && (
+                              <span className="text-xs text-primary font-medium">Current</span>
+                            )}
+                          </div>
+                        </div>
+                        {switchingTo === account.id && (
+                          <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                        {isCurrentAccount && (
+                          <Check className="h-5 w-5 text-primary" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 pt-4 border-t">
+                  <Button 
+                    variant="outline" 
+                    className="w-full" 
+                    onClick={handleLogout}
+                    data-testid="button-add-account"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Another Account
+                  </Button>
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
           <Separator />
           <div className="flex items-center justify-between">
