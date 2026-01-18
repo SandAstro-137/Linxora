@@ -71,7 +71,7 @@ const freelancerSlides: TutorialSlide[] = [
     tips: [
       "Complete 5 jobs to reach Level 2",
       "Higher levels unlock more opportunities",
-      "Apply to become a Moderator at 5+ completed jobs"
+      "Apply to become a Moderator at level 5 "
     ]
   }
 ];

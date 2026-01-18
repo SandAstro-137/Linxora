@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Bell, Shield, User, Camera, Save, Download, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText } from "lucide-react";
+import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
@@ -155,13 +155,12 @@ function BlacklistSection() {
 }
 
 export default function SettingsPage() {
-  const { user, refetchUser } = useAuth();
+  const { user, refetchUser, logout } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState(user?.username || "");
   const [bio, setBio] = useState(user?.bio || "");
   const [newEmail, setNewEmail] = useState("");
-  const [isDeactivating, setIsDeactivating] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -265,16 +264,6 @@ export default function SettingsPage() {
     },
   });
 
-  const deactivateAccountMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/settings/deactivate-account", {}),
-    onSuccess: () => {
-      window.location.href = "/";
-    },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to deactivate account.", variant: "destructive" });
-      setIsDeactivating(false);
-    },
-  });
 
   const resizeImage = (file: File, maxSize: number = 400): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -335,22 +324,13 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDownloadData = async () => {
-    try {
-      const response = await fetch("/api/settings/download-data", { credentials: "include" });
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `linxora-data-${user?.id}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      toast({ title: "Download started", description: "Your data export is downloading." });
-    } catch {
-      toast({ title: "Error", description: "Failed to download data.", variant: "destructive" });
-    }
+  const handleSwapAccounts = () => {
+    logout();
+    window.location.href = "/";
+  };
+
+  const handleLogout = () => {
+    logout();
   };
 
   const toggleSetting = (key: keyof UserPreferences, value: boolean) => {
@@ -678,49 +658,24 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Download Your Data</p>
-              <p className="text-sm text-muted-foreground">Get a copy of all your account data</p>
+              <p className="font-medium">Swap Accounts</p>
+              <p className="text-sm text-muted-foreground">Sign out and log in with a different account</p>
             </div>
-            <Button variant="outline" onClick={handleDownloadData} data-testid="button-download-data">
-              <Download className="h-4 w-4 mr-2" />
-              Download
+            <Button variant="outline" onClick={handleSwapAccounts} data-testid="button-swap-accounts">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Swap
             </Button>
           </div>
           <Separator />
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-destructive">Deactivate Account</p>
-              <p className="text-sm text-muted-foreground">Temporarily disable your account</p>
+              <p className="font-medium">Logout</p>
+              <p className="text-sm text-muted-foreground">Sign out of your account</p>
             </div>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" data-testid="button-deactivate-account">
-                  Deactivate
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Deactivate your account?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Your account will be temporarily disabled. You can reactivate it by logging in again.
-                    Your data will be preserved.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      setIsDeactivating(true);
-                      deactivateAccountMutation.mutate();
-                    }}
-                    disabled={isDeactivating}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  >
-                    {isDeactivating ? "Deactivating..." : "Deactivate Account"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button variant="outline" onClick={handleLogout} data-testid="button-logout-settings">
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
           </div>
         </CardContent>
       </Card>
