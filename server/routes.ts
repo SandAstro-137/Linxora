@@ -288,7 +288,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Active job statuses for freelancers - jobs currently being worked on
         const activeStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
         const allFreelancerJobs = await storage.getJobs({ freelancerId: user.id });
-        stats.activeJobs = allFreelancerJobs.filter(j => activeStatuses.includes(j.status)).length;
+        
+        // Also count jobs from jobFreelancers table (multi-freelancer assignments)
+        const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
+        const assignedJobIds = new Set(freelancerAssignments.map(jf => jf.jobId));
+        const allJobs = await storage.getJobs({});
+        const assignedJobs = allJobs.filter(j => assignedJobIds.has(j.id) && j.freelancerId !== user.id);
+        
+        // Combine primary jobs and assigned jobs, avoiding duplicates
+        const combinedJobs = [...allFreelancerJobs, ...assignedJobs];
+        stats.activeJobs = combinedJobs.filter(j => activeStatuses.includes(j.status)).length;
       } else if (user.role === "customer") {
         const allJobs = await storage.getJobs({ customerId: user.id });
         stats.postedJobs = allJobs.length;
@@ -497,9 +506,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all jobs where this user is the freelancer or a collaborator
       const allJobs = await storage.getJobs({});
       
+      // Also check jobFreelancers table for multi-freelancer assignments
+      const freelancerAssignments = await storage.getJobFreelancersByFreelancer(userId);
+      const assignedJobIds = new Set(freelancerAssignments.map(jf => jf.jobId));
+      
       const freelancerJobs = allJobs.filter(job => 
         job.freelancerId === userId || 
-        (job.collaborators && job.collaborators.includes(userId))
+        (job.collaborators && job.collaborators.includes(userId)) ||
+        assignedJobIds.has(job.id)
       );
       
       res.json(freelancerJobs);
