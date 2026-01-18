@@ -6331,7 +6331,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get jobs that a freelancer can recommend others for (customer's active jobs where freelancer has worked)
+  // Get jobs that a freelancer can recommend others for (only jobs where the freelancer is assigned)
   app.get("/api/recommendations/available-jobs", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
@@ -6343,12 +6343,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can view available jobs for recommendation" });
       }
 
-      // Get all active jobs (freelancers can recommend for any active job)
+      // Get all jobs and filter for ones where this freelancer is assigned
       const allJobs = await storage.getJobs();
-      const activeJobs = allJobs.filter(j => j.status === "active");
+      const freelancerJobAssignments = await storage.getJobFreelancersByFreelancer(user.id);
+      const assignedJobIds = new Set(freelancerJobAssignments.map(jf => jf.jobId));
+      
+      // Filter for jobs where freelancer is assigned (via freelancerId or jobFreelancers table)
+      // and job is in an active/in-progress state
+      const myJobs = allJobs.filter(j => 
+        (j.freelancerId === user.id || assignedJobIds.has(j.id)) &&
+        (j.status === "in_progress" || j.status === "active" || j.status === "awaiting_customer")
+      );
 
       // Return basic job info
-      const jobsWithCustomerInfo = await Promise.all(activeJobs.map(async (job) => {
+      const jobsWithCustomerInfo = await Promise.all(myJobs.map(async (job) => {
         const customer = await storage.getUser(job.customerId);
         return {
           id: job.id,
