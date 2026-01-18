@@ -251,7 +251,7 @@ export default function CurrentJobPage() {
                         >
                           <span className="font-medium">{split.username}</span>
                           <span className="text-sm">
-                            ${split.amount.toFixed(2)} ({split.percentage.toFixed(0)}%)
+                            ${Number(split.amount || 0).toFixed(2)} ({Number(split.percentage || 0).toFixed(0)}%)
                           </span>
                         </div>
                       ))}
