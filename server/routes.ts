@@ -532,11 +532,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Enrich job data with customer info
       const customer = await storage.getUser(job.customerId);
       
-      // Enrich with collaborator info
+      // Enrich with collaborator info - include jobFreelancers table for multi-freelancer jobs
       const collaboratorIds = job.collaborators || [];
-      const allMemberIds = job.freelancerId 
-        ? [job.freelancerId, ...collaboratorIds]
-        : collaboratorIds;
+      const jobFreelancerRecords = await storage.getJobFreelancers(job.id);
+      const jobFreelancerIds = jobFreelancerRecords.map(jf => jf.freelancerId);
+      
+      // Combine all member IDs (primary freelancer + collaborators + jobFreelancers), removing duplicates
+      const allMemberIdSet = new Set([
+        ...(job.freelancerId ? [job.freelancerId] : []),
+        ...collaboratorIds,
+        ...jobFreelancerIds
+      ]);
+      const allMemberIds = Array.from(allMemberIdSet);
       
       const collaboratorData = await Promise.all(
         allMemberIds.map(async (id) => {
@@ -4542,13 +4549,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Verify user is part of the job (freelancer, collaborator, or customer)
+      // Verify user is part of the job (freelancer, collaborator, team member, or customer)
       const userId = req.session.userId!;
       const isCustomer = job.customerId === userId;
       const isFreelancer = job.freelancerId === userId;
       const isCollaborator = job.collaborators?.includes(userId);
+      
+      // Also check jobFreelancers table for multi-freelancer team members
+      const jobFreelancerRecords = await storage.getJobFreelancers(req.params.jobId);
+      const isTeamMember = jobFreelancerRecords.some(jf => jf.freelancerId === userId);
 
-      if (!isCustomer && !isFreelancer && !isCollaborator) {
+      if (!isCustomer && !isFreelancer && !isCollaborator && !isTeamMember) {
         return res.status(403).json({ error: "Access denied" });
       }
 
@@ -4577,16 +4588,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Message is required" });
       }
 
-      // Verify user is part of the job
+      // Verify user is part of the job (including team members from jobFreelancers)
       const isCustomer = job.customerId === userId;
       const isFreelancer = job.freelancerId === userId;
       const isCollaborator = job.collaborators?.includes(userId);
+      
+      // Also check jobFreelancers table for multi-freelancer team members
+      const jobFreelancerRecords = await storage.getJobFreelancers(req.params.jobId);
+      const isTeamMember = jobFreelancerRecords.some(jf => jf.freelancerId === userId);
 
-      if (!isCustomer && !isFreelancer && !isCollaborator) {
+      if (!isCustomer && !isFreelancer && !isCollaborator && !isTeamMember) {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      // Determine receiver (customer if sender is freelancer/collaborator, freelancer if sender is customer)
+      // Determine receiver (customer if sender is freelancer/collaborator/team member, freelancer if sender is customer)
       const receiverId = isCustomer ? job.freelancerId! : job.customerId;
 
       const chatMessage = await storage.createChatMessage({
@@ -6155,10 +6170,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         // Calculate estimated split (budget divided by current team size + 1 for the invited person)
+        // Then apply level-based payout percentage
         const currentTeamSize = teamMembers.length;
         const estimatedSplitCount = currentTeamSize + 1;
         const jobBudget = job ? parseFloat(job.budget) : 0;
-        const estimatedShare = jobBudget / estimatedSplitCount;
+        const baseShare = jobBudget / estimatedSplitCount;
+        
+        // Apply the invited freelancer's level percentage
+        const invitedFreelancer = await storage.getUser(rec.recommendedFreelancerId);
+        const invitedLevel = invitedFreelancer?.level || 1;
+        const levelPayout = getLevelPayout(invitedLevel);
+        const estimatedShare = baseShare * levelPayout;
         
         return {
           ...rec,
