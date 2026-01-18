@@ -6103,11 +6103,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const recommendations = await storage.getJobRecommendationsForFreelancer(user.id);
       const invitations = recommendations.filter(r => r.status === "customer_accepted");
 
-      // Enrich with user and job data
+      // Enrich with user and job data, including team info
       const enriched = await Promise.all(invitations.map(async (rec) => {
         const recommender = await storage.getUser(rec.recommenderId);
         const customer = await storage.getUser(rec.customerId);
         const job = await storage.getJob(rec.jobId);
+        
+        // Get current team members for this job
+        let teamMembers: Array<{id: string; username: string; avatar: string | null; level: number}> = [];
+        if (job) {
+          // Check main freelancer assignment
+          if (job.freelancerId) {
+            const mainFreelancer = await storage.getUser(job.freelancerId);
+            if (mainFreelancer) {
+              teamMembers.push({
+                id: mainFreelancer.id,
+                username: mainFreelancer.username,
+                avatar: mainFreelancer.avatar,
+                level: mainFreelancer.level || 1,
+              });
+            }
+          }
+          // Check jobFreelancers table for multi-freelancer jobs
+          const jobFreelancers = await storage.getJobFreelancers(job.id);
+          for (const jf of jobFreelancers) {
+            const fl = await storage.getUser(jf.freelancerId);
+            if (fl && !teamMembers.find(tm => tm.id === fl.id)) {
+              teamMembers.push({
+                id: fl.id,
+                username: fl.username,
+                avatar: fl.avatar,
+                level: fl.level || 1,
+              });
+            }
+          }
+        }
+        
+        // Calculate estimated split (budget divided by current team size + 1 for the invited person)
+        const currentTeamSize = teamMembers.length;
+        const estimatedSplitCount = currentTeamSize + 1;
+        const jobBudget = job ? parseFloat(job.budget) : 0;
+        const estimatedShare = jobBudget / estimatedSplitCount;
+        
         return {
           ...rec,
           recommender: recommender ? { 
@@ -6128,6 +6165,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             category: job.category,
             deadline: job.deadline
           } : null,
+          teamMembers,
+          currentTeamSize,
+          estimatedShare: estimatedShare.toFixed(2),
         };
       }));
 

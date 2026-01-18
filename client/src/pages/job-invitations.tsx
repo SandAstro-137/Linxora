@@ -1,13 +1,22 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Briefcase, DollarSign, Calendar, User, Check, X } from "lucide-react";
+import { Mail, Briefcase, DollarSign, Calendar, User, Check, X, ChevronDown, ChevronUp, Users, Wallet } from "lucide-react";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+
+interface TeamMember {
+  id: string;
+  username: string;
+  avatar: string | null;
+  level: number;
+}
 
 interface JobInvitation {
   id: string;
@@ -33,10 +42,26 @@ interface JobInvitation {
     category: string;
     deadline: string | null;
   } | null;
+  teamMembers: TeamMember[];
+  currentTeamSize: number;
+  estimatedShare: string;
 }
 
 export default function JobInvitationsPage() {
   const { toast } = useToast();
+  const [expandedInvitations, setExpandedInvitations] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedInvitations(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   const { data: invitations = [], isLoading } = useQuery<JobInvitation[]>({
     queryKey: ["/api/recommendations/invitations"],
@@ -119,7 +144,15 @@ export default function JobInvitationsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <DollarSign className="w-4 h-4 text-muted-foreground" />
-                    <span>Budget: ${invitation.job?.budget || "N/A"}</span>
+                    <span>Total Budget: ${invitation.job?.budget || "N/A"}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-primary" />
+                    <span className="font-medium text-primary">Your Est. Share: ${invitation.estimatedShare}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    <span>Team Size: {invitation.currentTeamSize} member{invitation.currentTeamSize !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Briefcase className="w-4 h-4 text-muted-foreground" />
@@ -133,12 +166,21 @@ export default function JobInvitationsPage() {
                   )}
                 </div>
 
-                {invitation.job?.description && (
-                  <div>
-                    <h4 className="font-medium mb-1">Job Description</h4>
-                    <p className="text-sm text-muted-foreground line-clamp-3">
-                      {invitation.job.description}
-                    </p>
+                {invitation.teamMembers && invitation.teamMembers.length > 0 && (
+                  <div className="bg-muted/50 p-3 rounded-lg">
+                    <p className="text-sm font-medium mb-2">Current Team Members:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {invitation.teamMembers.map((member) => (
+                        <div key={member.id} className="flex items-center gap-2 bg-background p-2 rounded-md border">
+                          <Avatar className="h-6 w-6">
+                            <AvatarImage src={member.avatar || undefined} />
+                            <AvatarFallback className="text-xs">{member.username.charAt(0).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm">{member.username}</span>
+                          <Badge variant="outline" className="text-xs">Lvl {member.level}</Badge>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -152,6 +194,35 @@ export default function JobInvitationsPage() {
                     </p>
                   </div>
                 )}
+
+                <Collapsible open={expandedInvitations.has(invitation.id)}>
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="w-full justify-between"
+                      onClick={() => toggleExpanded(invitation.id)}
+                      data-testid={`button-view-details-${invitation.id}`}
+                    >
+                      <span>View Full Description</span>
+                      {expandedInvitations.has(invitation.id) ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    {invitation.job?.description && (
+                      <div className="bg-muted/30 p-4 rounded-lg border">
+                        <h4 className="font-medium mb-2">Full Job Description</h4>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                          {invitation.job.description}
+                        </p>
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
 
                 <div className="flex gap-2 pt-2">
                   <Button
