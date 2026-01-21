@@ -5878,6 +5878,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============ PUBLIC PROFILE API ============
 
+  // Helper function to calculate user status
+  async function calculateUserStatus(user: any) {
+    const now = new Date();
+    const lastActive = user.lastActive ? new Date(user.lastActive) : new Date(user.createdAt);
+    const timeSinceActive = now.getTime() - lastActive.getTime();
+    const oneMonth = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+    const fiveMinutes = 5 * 60 * 1000; // 5 minutes in ms
+    
+    // Online status: active within last 5 minutes
+    const isOnline = timeSinceActive < fiveMinutes;
+    const onlineStatus = isOnline ? "online" : "offline";
+    
+    // Inactive: no activity for over a month (applies to all roles)
+    if (timeSinceActive > oneMonth) {
+      return { 
+        onlineStatus: "offline", 
+        workStatus: "inactive",
+        displayStatus: "Inactive"
+      };
+    }
+    
+    // For non-freelancers, just return online/offline status
+    if (user.role !== "freelancer") {
+      return { 
+        onlineStatus, 
+        workStatus: null,
+        displayStatus: isOnline ? "Online" : "Offline"
+      };
+    }
+    
+    // Freelancer-specific status calculation
+    const jobs = await storage.getJobs();
+    
+    // Check if currently has an active job (in_progress or awaiting_customer)
+    const activeJobs = jobs.filter(j => 
+      (j.freelancerId === user.id || j.collaborators?.includes(user.id)) &&
+      (j.status === "in_progress" || j.status === "awaiting_customer")
+    );
+    
+    // Also check jobFreelancers table for team assignments
+    const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
+    const assignedActiveJobs = freelancerAssignments.filter(jf => {
+      const job = jobs.find(j => j.id === jf.jobId);
+      return job && (job.status === "in_progress" || job.status === "awaiting_customer");
+    });
+    
+    const hasActiveJob = activeJobs.length > 0 || assignedActiveJobs.length > 0;
+    
+    // Check if on PTO
+    const ptoRequests = await storage.getPTORequests(user.id);
+    const onPTO = ptoRequests.some(pto => {
+      if (pto.status !== "approved") return false;
+      const startDate = new Date(pto.startDate);
+      const endDate = new Date(pto.endDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      return now >= startDate && now <= endDate;
+    });
+    
+    // Check if outside working hours
+    let outsideWorkingHours = false;
+    const workingHours = user.workingHours as any;
+    if (workingHours && Object.keys(workingHours).length > 0) {
+      const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      const currentDay = dayNames[now.getDay()];
+      const daySchedule = workingHours[currentDay];
+      
+      if (daySchedule && daySchedule.start && daySchedule.end) {
+        const currentTime = now.getHours() * 60 + now.getMinutes();
+        const [startHour, startMin] = daySchedule.start.split(":").map(Number);
+        const [endHour, endMin] = daySchedule.end.split(":").map(Number);
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        
+        outsideWorkingHours = currentTime < startTime || currentTime > endTime;
+      }
+    }
+    
+    // Determine freelancer work status
+    let workStatus: string;
+    if (hasActiveJob) {
+      workStatus = "working";
+    } else if (onPTO || outsideWorkingHours) {
+      workStatus = "on-break";
+    } else {
+      workStatus = "unemployed";
+    }
+    
+    return { 
+      onlineStatus, 
+      workStatus,
+      displayStatus: isOnline ? "Online" : "Offline"
+    };
+  }
+
   // Get public profile of any user
   app.get("/api/users/:id/profile", requireAuth, async (req, res) => {
     try {
@@ -5885,6 +5980,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+
+      // Calculate user status
+      const status = await calculateUserStatus(user);
 
       // Return public profile info with safe defaults
       const ratingValue = parseFloat(user.rating?.toString() || "0");
@@ -5902,6 +6000,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         completedJobs: user.completedJobs || 0,
         createdAt: user.createdAt,
         specialization: user.specialization || null,
+        bio: user.bio || null,
+        status: status,
       };
 
       // For freelancers, include their completed job history
