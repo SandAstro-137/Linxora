@@ -99,9 +99,90 @@ export function NotificationCenter() {
     
     setOpen(false);
     
+    const notificationType = notification.type;
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
+    // Route based on notification type first for more specific handling
+    switch (notificationType) {
+      // Job invitations and recommendations
+      case "invitation":
+      case "recommendation_accepted":
+        setLocation("/job-invitations");
+        return;
+      
+      // Recommendation notifications for recommender
+      case "recommendation_declined":
+      case "recommendation_success":
+      case "invitation_accepted":
+      case "invitation_declined":
+        if (sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else {
+          setLocation("/current-job");
+        }
+        return;
+      
+      // Friend-related notifications
+      case "friend_request":
+      case "friend_accepted":
+        setLocation("/friends");
+        return;
+      
+      // Role upgrade notifications
+      case "role_upgrade":
+        setLocation("/profile");
+        return;
+      
+      // Moderation notifications
+      case "moderation":
+        setLocation("/moderation");
+        return;
+      
+      // Direct messages
+      case "direct_message":
+        if (sourceId) {
+          setLocation(`/messages/${sourceId}`);
+        } else {
+          setLocation("/messages");
+        }
+        return;
+      
+      // Chat messages (job-related)
+      case "chat_message":
+        if (sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else if (notification.relatedId) {
+          setLocation(`/jobs/${notification.relatedId}`);
+        } else {
+          setLocation("/current-job");
+        }
+        return;
+      
+      // Meeting notifications
+      case "meeting_invitation":
+      case "meeting_reminder":
+      case "meeting_rsvp":
+        setLocation("/meetings");
+        return;
+      
+      // Job status notifications
+      case "job_approved":
+      case "job_rejected":
+      case "job_request":
+      case "job_completed":
+      case "job_changes_requested":
+      case "work_submitted":
+      case "cancellation_request":
+        if (sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else if (notification.relatedId) {
+          setLocation(`/jobs/${notification.relatedId}`);
+        }
+        return;
+    }
+    
+    // Fallback to sourceType-based routing
     if (sourceType && sourceId) {
       switch (sourceType) {
         case "job":
@@ -114,13 +195,9 @@ export function NotificationCenter() {
           setLocation(`/moderation`);
           break;
         case "system":
-          setLocation(`/notifications`);
-          break;
         default:
           if (notification.relatedId) {
             setLocation(`/jobs/${notification.relatedId}`);
-          } else {
-            setLocation(`/notifications`);
           }
       }
     } else if (notification.relatedId) {
