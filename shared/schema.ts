@@ -170,6 +170,7 @@ export const users = pgTable("users", {
   totalRatings: integer("total_ratings").default(0),
   completionPercentage: decimal("completion_percentage", { precision: 5, scale: 2 }).default("0"),
   blacklistedFreelancers: text("blacklisted_freelancers").array().default(sql`'{}'::text[]`), // Customer's blacklisted freelancer IDs
+  lastActive: timestamp("last_active").defaultNow(), // Track last activity for online/inactive status
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
