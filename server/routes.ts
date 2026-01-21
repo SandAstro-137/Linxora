@@ -427,8 +427,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { search, category, minBudget, maxBudget } = req.query;
       
-      // Get all active jobs first
-      let jobs = await storage.getJobs({ status: "active" });
+      // Get jobs available for freelancers to apply (pending_acceptance or legacy "active" status)
+      const allJobs = await storage.getJobs({});
+      let jobs = allJobs.filter(j => 
+        j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active"
+      );
       
       // Apply category filter
       if (category && category !== "All Categories") {
@@ -482,7 +485,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/jobs/recent", requireAuth, async (req, res) => {
     try {
-      const jobs = await storage.getJobs({ status: "active" });
+      const allJobs = await storage.getJobs({});
+      const jobs = allJobs.filter(j => 
+        j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active"
+      );
       res.json(jobs.slice(0, 10));
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
