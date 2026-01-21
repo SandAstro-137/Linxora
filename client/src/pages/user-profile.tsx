@@ -350,9 +350,9 @@ export default function UserProfilePage() {
           {profile.bio && (
             <>
               <Separator />
-              <div data-testid="section-bio">
+              <div data-testid="section-bio" className="overflow-hidden">
                 <h3 className="font-semibold mb-2">About</h3>
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">{profile.bio}</p>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words overflow-wrap-anywhere max-w-full">{profile.bio}</p>
               </div>
             </>
           )}
