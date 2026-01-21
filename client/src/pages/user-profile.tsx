@@ -16,6 +16,12 @@ import { format } from "date-fns";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+interface UserStatus {
+  onlineStatus: "online" | "offline";
+  workStatus: "working" | "on-break" | "unemployed" | "inactive" | null;
+  displayStatus: string;
+}
+
 interface PublicProfile {
   id: string;
   userId: number;
@@ -28,6 +34,8 @@ interface PublicProfile {
   completedJobs: number;
   createdAt: string;
   specialization: string | null;
+  bio: string | null;
+  status: UserStatus;
   recentCompletedJobs?: {
     id: string;
     title: string;
@@ -74,6 +82,25 @@ function getRoleDisplay(role: string): string {
     case "freelancer": return "Freelancer";
     case "customer": return "Customer";
     default: return role;
+  }
+}
+
+function getOnlineStatusColor(status: string): string {
+  switch (status) {
+    case "online": return "bg-green-500";
+    case "offline": return "bg-gray-400";
+    default: return "bg-gray-400";
+  }
+}
+
+function getWorkStatusBadge(workStatus: string | null): { text: string; variant: "default" | "secondary" | "outline" | "destructive" } | null {
+  if (!workStatus) return null;
+  switch (workStatus) {
+    case "working": return { text: "Working", variant: "default" };
+    case "on-break": return { text: "On Break", variant: "secondary" };
+    case "unemployed": return { text: "Available", variant: "outline" };
+    case "inactive": return { text: "Inactive", variant: "destructive" };
+    default: return null;
   }
 }
 
@@ -187,12 +214,19 @@ export default function UserProfilePage() {
       <Card data-testid="card-user-profile">
         <CardHeader>
           <div className="flex items-start gap-4">
-            <Avatar className="h-20 w-20">
-              <AvatarImage src={profile.avatar || undefined} />
-              <AvatarFallback className="text-2xl">
-                {profile.username.charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
+            <div className="relative">
+              <Avatar className="h-20 w-20">
+                <AvatarImage src={profile.avatar || undefined} />
+                <AvatarFallback className="text-2xl">
+                  {profile.username.charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div 
+                className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-background ${getOnlineStatusColor(profile.status?.onlineStatus || "offline")}`}
+                title={profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
+                data-testid="indicator-online-status"
+              />
+            </div>
             <div className="flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-2xl" data-testid="text-username">
@@ -201,10 +235,27 @@ export default function UserProfilePage() {
                 <Badge variant={getRoleBadgeVariant(profile.role)} data-testid="badge-role">
                   {getRoleDisplay(profile.role)}
                 </Badge>
+                {profile.status?.workStatus && getWorkStatusBadge(profile.status.workStatus) && (
+                  <Badge 
+                    variant={getWorkStatusBadge(profile.status.workStatus)!.variant} 
+                    data-testid="badge-work-status"
+                  >
+                    {getWorkStatusBadge(profile.status.workStatus)!.text}
+                  </Badge>
+                )}
               </div>
-              <CardDescription className="mt-1">
-                User ID: {profile.userId}
-              </CardDescription>
+              <div className="flex items-center gap-2 mt-1">
+                <span 
+                  className={`text-sm ${profile.status?.onlineStatus === "online" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}
+                  data-testid="text-online-status"
+                >
+                  {profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
+                </span>
+                <span className="text-muted-foreground">|</span>
+                <CardDescription>
+                  User ID: {profile.userId}
+                </CardDescription>
+              </div>
               {profile.specialization && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {profile.specialization}
@@ -295,6 +346,16 @@ export default function UserProfilePage() {
               </Dialog>
             )}
           </div>
+
+          {profile.bio && (
+            <>
+              <Separator />
+              <div data-testid="section-bio">
+                <h3 className="font-semibold mb-2">About</h3>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap">{profile.bio}</p>
+              </div>
+            </>
+          )}
 
           <Separator />
 
