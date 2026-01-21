@@ -5911,17 +5911,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Freelancer-specific status calculation
     const jobs = await storage.getJobs();
     
-    // Check if currently has an active job (in_progress or awaiting_customer)
+    // Active job statuses include all states where work is ongoing or pending review
+    const activeJobStatuses = [
+      "in_progress", 
+      "awaiting_customer", 
+      "pending_acceptance",
+      "submitted",
+      "claimed",
+      "dispute"
+    ];
+    
+    // Check if currently has an active job
     const activeJobs = jobs.filter(j => 
       (j.freelancerId === user.id || j.collaborators?.includes(user.id)) &&
-      (j.status === "in_progress" || j.status === "awaiting_customer")
+      activeJobStatuses.includes(j.status)
     );
     
-    // Also check jobFreelancers table for team assignments
+    // Also check jobFreelancers table for team assignments (only accepted status)
     const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
     const assignedActiveJobs = freelancerAssignments.filter(jf => {
+      // Only count if freelancer is still active on the job (status = accepted)
+      if (jf.status && jf.status !== "accepted") return false;
       const job = jobs.find(j => j.id === jf.jobId);
-      return job && (job.status === "in_progress" || job.status === "awaiting_customer");
+      return job && activeJobStatuses.includes(job.status);
     });
     
     const hasActiveJob = activeJobs.length > 0 || assignedActiveJobs.length > 0;

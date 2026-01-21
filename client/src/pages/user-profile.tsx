@@ -87,9 +87,9 @@ function getRoleDisplay(role: string): string {
 
 function getOnlineStatusColor(status: string): string {
   switch (status) {
-    case "online": return "bg-green-500";
-    case "offline": return "bg-gray-400";
-    default: return "bg-gray-400";
+    case "online": return "bg-green-500 dark:bg-green-400";
+    case "offline": return "bg-gray-400 dark:bg-gray-500";
+    default: return "bg-gray-400 dark:bg-gray-500";
   }
 }
 
