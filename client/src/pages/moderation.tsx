@@ -1,14 +1,14 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Job, CancellationRequest, Report } from "@shared/schema";
+import { Job, CancellationRequest, Report, PTORequest } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,11 @@ interface EnrichedCancellationRequest extends CancellationRequest {
   freelancerUsername?: string;
 }
 
+interface EnrichedPTORequest extends PTORequest {
+  freelancerUsername?: string;
+  freelancerAvatar?: string | null;
+}
+
 export default function ModerationPage() {
   const { toast } = useToast();
   const [requestChangesDialogOpen, setRequestChangesDialogOpen] = useState(false);
@@ -43,6 +48,48 @@ export default function ModerationPage() {
 
   const { data: pendingReports, isLoading: reportsLoading } = useQuery<Report[]>({
     queryKey: ["/api/reports/pending"],
+  });
+
+  const { data: pendingPTORequests, isLoading: ptoLoading } = useQuery<EnrichedPTORequest[]>({
+    queryKey: ["/api/pto/pending"],
+  });
+
+  const approvePTOMutation = useMutation({
+    mutationFn: (ptoId: string) =>
+      apiRequest("POST", `/api/pto/${ptoId}/approve`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pto/pending"] });
+      toast({
+        title: "PTO approved",
+        description: "The freelancer has been notified.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to approve PTO",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectPTOMutation = useMutation({
+    mutationFn: (ptoId: string) =>
+      apiRequest("POST", `/api/pto/${ptoId}/reject`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pto/pending"] });
+      toast({
+        title: "PTO rejected",
+        description: "The freelancer has been notified.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to reject PTO",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
   });
 
   const approveMutation = useMutation({
@@ -233,6 +280,15 @@ export default function ModerationPage() {
             {pendingReportsCount > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {pendingReportsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="pto" data-testid="tab-pto">
+            <Calendar className="w-4 h-4 mr-1" />
+            PTO Requests
+            {pendingPTORequests && pendingPTORequests.length > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {pendingPTORequests.length}
               </Badge>
             )}
           </TabsTrigger>
@@ -601,6 +657,88 @@ export default function ModerationPage() {
                   <h3 className="text-lg font-semibold mb-2">No pending reports</h3>
                   <p className="text-muted-foreground">
                     All reports have been processed
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="pto">
+          {ptoLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-32 w-full" />
+              ))}
+            </div>
+          ) : pendingPTORequests && pendingPTORequests.length > 0 ? (
+            <div className="space-y-4">
+              {pendingPTORequests.map((request) => (
+                <Card key={request.id} className="border-2" data-testid={`card-pto-${request.id}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex-1">
+                        <CardTitle className="mb-2 flex items-center gap-2">
+                          <Calendar className="w-5 h-5" />
+                          PTO Request from {request.freelancerUsername || "Unknown Freelancer"}
+                        </CardTitle>
+                        <CardDescription>
+                          Submitted {formatDistanceToNow(new Date(request.createdAt!), { addSuffix: true })}
+                        </CardDescription>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => approvePTOMutation.mutate(request.id)}
+                          disabled={approvePTOMutation.isPending || rejectPTOMutation.isPending}
+                          data-testid={`button-approve-pto-${request.id}`}
+                        >
+                          <Check className="w-4 h-4 mr-1" />
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => rejectPTOMutation.mutate(request.id)}
+                          disabled={approvePTOMutation.isPending || rejectPTOMutation.isPending}
+                          data-testid={`button-reject-pto-${request.id}`}
+                        >
+                          <X className="w-4 h-4 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Start Date</p>
+                        <p className="text-sm">{format(new Date(request.startDate), "PPP")}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">End Date</p>
+                        <p className="text-sm">{format(new Date(request.endDate), "PPP")}</p>
+                      </div>
+                      {request.reason && (
+                        <div className="sm:col-span-2">
+                          <p className="text-sm font-medium text-muted-foreground">Reason</p>
+                          <p className="text-sm">{request.reason}</p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <Calendar className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No pending PTO requests</h3>
+                  <p className="text-muted-foreground">
+                    All PTO requests have been processed
                   </p>
                 </div>
               </CardContent>

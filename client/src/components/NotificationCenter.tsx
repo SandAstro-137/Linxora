@@ -166,6 +166,13 @@ export function NotificationCenter() {
         setLocation("/meetings");
         return;
       
+      // PTO notifications
+      case "pto_request":
+      case "pto_approved":
+      case "pto_rejected":
+        setLocation("/moderation");
+        return;
+      
       // Job status notifications
       case "job_approved":
       case "job_rejected":

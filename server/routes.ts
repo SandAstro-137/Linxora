@@ -3943,6 +3943,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all pending PTO requests for moderators
+  app.get("/api/pto/pending", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const allRequests = await storage.getAllPTORequests();
+      const pendingRequests = allRequests.filter(r => r.status === "pending");
+      
+      // Enrich with freelancer info
+      const enrichedRequests = await Promise.all(pendingRequests.map(async (request) => {
+        const freelancer = await storage.getUser(request.freelancerId);
+        return {
+          ...request,
+          freelancerUsername: freelancer?.username || "Unknown",
+          freelancerAvatar: freelancer?.avatar || null,
+        };
+      }));
+      
+      res.json(enrichedRequests);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Approve PTO request
+  app.post("/api/pto/:id/approve", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const request = await storage.updatePTORequest(req.params.id, { status: "approved" });
+      if (!request) {
+        return res.status(404).json({ error: "PTO request not found" });
+      }
+      
+      // Notify freelancer
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "pto_approved",
+        title: "PTO Request Approved",
+        message: `Your PTO request from ${request.startDate} to ${request.endDate} has been approved.`,
+        relatedId: request.id,
+        sourceType: "system",
+        sourceId: request.id,
+      });
+      
+      res.json(request);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Reject PTO request
+  app.post("/api/pto/:id/reject", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const request = await storage.updatePTORequest(req.params.id, { status: "rejected" });
+      if (!request) {
+        return res.status(404).json({ error: "PTO request not found" });
+      }
+      
+      // Notify freelancer
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "pto_rejected",
+        title: "PTO Request Rejected",
+        message: `Your PTO request from ${request.startDate} to ${request.endDate} has been rejected.`,
+        relatedId: request.id,
+        sourceType: "system",
+        sourceId: request.id,
+      });
+      
+      res.json(request);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/pto", requireAuth, async (req, res) => {
     try {
       const validated = insertPTORequestSchema.parse(req.body);

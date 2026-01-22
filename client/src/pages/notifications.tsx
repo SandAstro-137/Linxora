@@ -111,6 +111,12 @@ export default function NotificationsPage() {
         setLocation("/meetings");
         return;
       
+      case "pto_request":
+      case "pto_approved":
+      case "pto_rejected":
+        setLocation("/moderation");
+        return;
+      
       case "job_approved":
       case "job_rejected":
       case "job_request":

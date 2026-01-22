@@ -112,7 +112,7 @@ const freelancerSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Use search and filter to find jobs</li>
           <li>Click on jobs to see full details and budget</li>
-          <li>Click "Request to Take Job" if eligible</li>
+          <li>Click "Claim Job" if eligible</li>
           <li><strong>One job at a time:</strong> Finish your current job before claiming another</li>
           <li>Cancel jobs anytime but you'll need a good reason</li>
         </ul>
@@ -127,9 +127,9 @@ const freelancerSteps: OnboardingStep[] = [
         <p>If a job is already taken:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Click "Offer Team" to request to join</li>
-          <li>Or invite teammates to jobs you're working on</li>
-          <li>Profits split equally among all team members regardless or participation</li>
-          <li>Collaborate in the Team tab on job details</li>
+          <li>Or invite friends to jobs you're working on</li>
+          <li>Profits split equally among all team members regardless of participation</li>
+          <li>Collaborate in the Current Job tab on job details</li>
         </ul>
       </div>
     ),
