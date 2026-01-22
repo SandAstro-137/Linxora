@@ -1,4 +1,4 @@
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, Link as RouterLink } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1386,9 +1386,13 @@ export default function JobDetailPage() {
                 <User className="w-4 h-4" />
                 <div>
                   <p className="text-sm">Client</p>
-                  <p className="text-sm text-foreground" data-testid="text-customer">
+                  <RouterLink 
+                    href={`/user/${job.customerId}`}
+                    className="text-sm text-foreground hover:text-primary hover:underline cursor-pointer"
+                    data-testid="link-customer-profile"
+                  >
                     {job.customerUsername || "Unknown"}
-                  </p>
+                  </RouterLink>
                 </div>
               </div>
               {job.collaboratorData && job.collaboratorData.length > 0 && (
