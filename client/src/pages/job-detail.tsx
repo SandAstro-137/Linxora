@@ -889,6 +889,11 @@ export default function JobDetailPage() {
     memberSince: string;
   }>({
     queryKey: ["/api/users", job?.customerId, "customer-stats"],
+    queryFn: async () => {
+      const response = await fetch(`/api/users/${job?.customerId}/customer-stats`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch customer stats");
+      return response.json();
+    },
     enabled: !!job?.customerId,
   });
 
@@ -1434,13 +1439,17 @@ export default function JobDetailPage() {
                       </div>
                       <div>
                         <p className="text-muted-foreground">Credibility</p>
-                        <p className={`font-medium ${
-                          customerStats.credibility >= 80 ? "text-green-600 dark:text-green-400" :
-                          customerStats.credibility >= 50 ? "text-yellow-600 dark:text-yellow-400" :
-                          "text-red-600 dark:text-red-400"
-                        }`} data-testid="text-customer-credibility">
-                          {customerStats.credibility}%
-                        </p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-foreground font-medium" data-testid="text-customer-credibility">
+                            {customerStats.credibility}%
+                          </p>
+                          {customerStats.credibility >= 80 && (
+                            <CheckCircle2 className="w-3 h-3 text-muted-foreground" />
+                          )}
+                          {customerStats.credibility < 50 && (
+                            <AlertTriangle className="w-3 h-3 text-muted-foreground" />
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
