@@ -112,9 +112,12 @@ export default function NotificationsPage() {
         return;
       
       case "pto_request":
+        setLocation("/moderation");
+        return;
+      
       case "pto_approved":
       case "pto_rejected":
-        setLocation("/moderation");
+        setLocation("/pto");
         return;
       
       case "job_approved":

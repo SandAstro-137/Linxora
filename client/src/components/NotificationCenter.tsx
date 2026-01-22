@@ -166,11 +166,14 @@ export function NotificationCenter() {
         setLocation("/meetings");
         return;
       
-      // PTO notifications
+      // PTO notifications - moderators see requests, freelancers see their own
       case "pto_request":
+        setLocation("/moderation");
+        return;
+      
       case "pto_approved":
       case "pto_rejected":
-        setLocation("/moderation");
+        setLocation("/pto");
         return;
       
       // Job status notifications
