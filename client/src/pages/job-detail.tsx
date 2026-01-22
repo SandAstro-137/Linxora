@@ -879,6 +879,19 @@ export default function JobDetailPage() {
     enabled: !!jobId,
   });
 
+  // Fetch customer statistics
+  const { data: customerStats } = useQuery<{
+    totalPostedJobs: number;
+    completedJobs: number;
+    cancelledJobs: number;
+    inProgressJobs: number;
+    credibility: number;
+    memberSince: string;
+  }>({
+    queryKey: ["/api/users", job?.customerId, "customer-stats"],
+    enabled: !!job?.customerId,
+  });
+
   const { data: searchResults = [] } = useQuery<any[]>({
     queryKey: ["/api/users/search", searchQuery],
     enabled: searchQuery.length > 2,
@@ -1395,6 +1408,44 @@ export default function JobDetailPage() {
                   </RouterLink>
                 </div>
               </div>
+              {customerStats && (
+                <>
+                  <Separator />
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Employer Stats</p>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Total Jobs</p>
+                        <p className="text-foreground font-medium" data-testid="text-customer-total-jobs">
+                          {customerStats.totalPostedJobs}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Completed</p>
+                        <p className="text-foreground font-medium" data-testid="text-customer-completed-jobs">
+                          {customerStats.completedJobs}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Cancelled</p>
+                        <p className="text-foreground font-medium" data-testid="text-customer-cancelled-jobs">
+                          {customerStats.cancelledJobs}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Credibility</p>
+                        <p className={`font-medium ${
+                          customerStats.credibility >= 80 ? "text-green-600 dark:text-green-400" :
+                          customerStats.credibility >= 50 ? "text-yellow-600 dark:text-yellow-400" :
+                          "text-red-600 dark:text-red-400"
+                        }`} data-testid="text-customer-credibility">
+                          {customerStats.credibility}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
               {job.collaboratorData && job.collaboratorData.length > 0 && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Users className="w-4 h-4" />

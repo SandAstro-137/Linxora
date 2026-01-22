@@ -6114,6 +6114,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get customer statistics for job details page
+  app.get("/api/users/:id/customer-stats", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Get all jobs posted by this customer
+      const jobs = await storage.getJobs();
+      const customerJobs = jobs.filter(j => j.customerId === req.params.id);
+      
+      const totalPostedJobs = customerJobs.length;
+      const completedJobs = customerJobs.filter(j => 
+        j.status === "completed" || j.status === "COMPLETED"
+      ).length;
+      const cancelledJobs = customerJobs.filter(j => 
+        j.status === "cancelled" || j.status === "CANCELLED"
+      ).length;
+      const inProgressJobs = customerJobs.filter(j => 
+        ["in_progress", "IN_PROGRESS", "awaiting_customer", "AWAITING_CUSTOMER", "submitted", "SUBMITTED"].includes(j.status)
+      ).length;
+      
+      // Calculate credibility score (0-100)
+      // Based on: completion rate, low cancellation rate
+      let credibility = 100;
+      if (totalPostedJobs > 0) {
+        const completionRate = (completedJobs / totalPostedJobs) * 100;
+        const cancellationRate = (cancelledJobs / totalPostedJobs) * 100;
+        // Reduce credibility based on cancellation rate
+        credibility = Math.max(0, Math.min(100, completionRate - (cancellationRate * 2)));
+        // If no completed jobs yet but also no cancellations, give neutral score
+        if (completedJobs === 0 && cancelledJobs === 0) {
+          credibility = 50; // New customer, neutral credibility
+        }
+      } else {
+        credibility = 50; // New customer with no history
+      }
+
+      res.json({
+        totalPostedJobs,
+        completedJobs,
+        cancelledJobs,
+        inProgressJobs,
+        credibility: Math.round(credibility),
+        memberSince: user.createdAt,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Get freelancer recommendations
   app.get("/api/freelancers/recommendations", requireAuth, async (req, res) => {
     try {
