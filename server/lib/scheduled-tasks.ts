@@ -134,9 +134,9 @@ async function handleAutoComplete(jobId: string) {
     status: JobStatus.COMPLETED,
   });
 
-  // NOW update freelancer stats after job is marked completed
+  // NOW update freelancer stats after job is marked completed (increment completed count)
   for (const freelancerId of allFreelancerIds) {
-    await updateFreelancerStats(freelancerId);
+    await updateFreelancerStats(freelancerId, true);
   }
 
   await storage.createNotification({
@@ -276,10 +276,26 @@ async function handleCancellationEscalation(jobId: string, metadata: { negotiati
   }
 }
 
-async function updateFreelancerStats(freelancerId: string) {
+async function updateFreelancerStats(freelancerId: string, incrementCompleted: boolean = false) {
   const freelancer = await storage.getUser(freelancerId);
   if (!freelancer) return;
 
+  // Get current stats - preserve existing completedJobs count
+  let completedJobs = freelancer.completedJobs || 0;
+  
+  // If incrementing (job just completed), add 1 to existing count
+  if (incrementCompleted) {
+    completedJobs = completedJobs + 1;
+  }
+
+  // Calculate level based on completed jobs
+  let newLevel = 1;
+  if (completedJobs >= 50) newLevel = 5;
+  else if (completedJobs >= 30) newLevel = 4;
+  else if (completedJobs >= 15) newLevel = 3;
+  else if (completedJobs >= 5) newLevel = 2;
+
+  // Calculate completion percentage from actual job records for display
   const allJobs = await storage.getJobs();
   const assignedJobsMap = new Map();
 
@@ -292,15 +308,9 @@ async function updateFreelancerStats(freelancerId: string) {
   }
 
   const assignedJobs = Array.from(assignedJobsMap.values());
-  const completedJobs = assignedJobs.filter(j => j.status === "completed").length;
-  const totalJobs = assignedJobs.length;
-  const completionPercentage = totalJobs > 0 ? ((completedJobs / totalJobs) * 100).toFixed(2) : "0.00";
-
-  let newLevel = 1;
-  if (completedJobs >= 50) newLevel = 5;
-  else if (completedJobs >= 30) newLevel = 4;
-  else if (completedJobs >= 15) newLevel = 3;
-  else if (completedJobs >= 5) newLevel = 2;
+  const activeJobsCount = assignedJobs.length;
+  const completedInActiveJobs = assignedJobs.filter(j => j.status === "completed").length;
+  const completionPercentage = activeJobsCount > 0 ? ((completedInActiveJobs / activeJobsCount) * 100).toFixed(2) : "100.00";
 
   await storage.updateUser(freelancerId, {
     completedJobs,
