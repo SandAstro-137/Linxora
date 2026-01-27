@@ -847,21 +847,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can apply for jobs. Please upgrade your account to become a freelancer." });
       }
 
-      // Check if freelancer already has an active/claimed job
-      const activeJobs = await storage.getJobs({ 
-        freelancerId: req.session.userId!, 
-        status: "in_progress" 
-      });
-      const claimedJobs = await storage.getJobs({ 
-        freelancerId: req.session.userId!, 
-        status: "claimed" 
-      });
+      // Check if freelancer already has an active/claimed job (as primary or team member)
+      const allJobs = await storage.getJobs({});
+      const userId = req.session.userId!;
+      
+      const activeJobsAsPrimary = allJobs.filter(j => 
+        j.freelancerId === userId && j.status === "in_progress"
+      );
+      const activeJobsAsTeamMember = allJobs.filter(j => 
+        j.teamMembers?.includes(userId) && ["in_progress", "claimed", "awaiting_customer", "submitted"].includes(j.status)
+      );
+      const claimedJobsAsPrimary = allJobs.filter(j => 
+        j.freelancerId === userId && j.status === "claimed"
+      );
 
-      if (activeJobs.length > 0) {
-        return res.status(400).json({ error: "You already have a job in progress. Complete or cancel it before applying to new jobs." });
+      if (activeJobsAsPrimary.length > 0 || activeJobsAsTeamMember.length > 0) {
+        return res.status(400).json({ error: "You are already assigned to an active job. Complete it before applying to new jobs." });
       }
       
-      if (claimedJobs.length > 0) {
+      if (claimedJobsAsPrimary.length > 0) {
         return res.status(400).json({ error: "You already have a claimed job waiting to start. Complete or cancel it first." });
       }
 
