@@ -1988,6 +1988,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get disputes (for moderators)
+  // Get disputes claimed by the current moderator
+  app.get("/api/disputes/mine", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const allDisputes = await storage.getDisputes();
+      const myDisputes = allDisputes.filter(d => d.moderatorId === req.session.userId);
+
+      // Enrich with job and user data
+      const enrichedDisputes = await Promise.all(
+        myDisputes.map(async (dispute) => {
+          const job = await storage.getJob(dispute.jobId);
+          const openedBy = await storage.getUser(dispute.openedByUserId);
+          const customer = job ? await storage.getUser(job.customerId) : null;
+          const freelancer = job?.freelancerId ? await storage.getUser(job.freelancerId) : null;
+
+          return {
+            ...dispute,
+            jobTitle: job?.title,
+            jobBudget: job?.budget,
+            openedByUsername: openedBy?.username,
+            customerUsername: customer?.username,
+            customerId: job?.customerId,
+            freelancerUsername: freelancer?.username,
+            freelancerId: job?.freelancerId,
+          };
+        })
+      );
+
+      res.json(enrichedDisputes);
+    } catch (error) {
+      console.error("Error getting my disputes:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/disputes", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const { status } = req.query;

@@ -846,8 +846,9 @@ export default function JobDetailPage() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [userIdInput, setUserIdInput] = useState("");
   const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
@@ -897,9 +898,19 @@ export default function JobDetailPage() {
     enabled: !!job?.customerId,
   });
 
-  const { data: searchResults = [] } = useQuery<any[]>({
-    queryKey: ["/api/users/search", searchQuery],
-    enabled: searchQuery.length > 2,
+  const parsedUserId = parseInt(userIdInput);
+  const { data: lookupResult, isLoading: isLookingUp, error: lookupApiError } = useQuery<any[]>({
+    queryKey: ["/api/users/search", parsedUserId],
+    queryFn: async () => {
+      const res = await fetch(`/api/users/search?userId=${parsedUserId}`, { credentials: "include" });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: "User not found" }));
+        throw new Error(error.error || "User not found");
+      }
+      return res.json();
+    },
+    enabled: userIdInput.length > 0 && !isNaN(parsedUserId),
+    retry: false,
   });
 
   const { data: existingRating } = useQuery<any>({
@@ -1058,8 +1069,9 @@ export default function JobDetailPage() {
       apiRequest("POST", `/api/jobs/${jobId}/invite`, { userId }),
     onSuccess: () => {
       setIsInviteDialogOpen(false);
-      setSearchQuery("");
+      setUserIdInput("");
       setSelectedUser(null);
+      setLookupError(null);
       toast({
         title: "Team invitation sent!",
         description: "The freelancer will be notified of your offer.",
@@ -1523,54 +1535,80 @@ export default function JobDetailPage() {
                     <DialogHeader>
                       <DialogTitle>Invite Team Member</DialogTitle>
                       <DialogDescription>
-                        Search for a freelancer to invite to this job. Profits will be
+                        Enter the User ID of the freelancer you want to invite. Profits will be
                         split equally among all team members.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="search">Search Freelancers</Label>
-                        <Input
-                          id="search"
-                          placeholder="Search by username..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          data-testid="input-search-freelancer"
-                        />
+                        <Label htmlFor="userId">User ID</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="userId"
+                            type="number"
+                            placeholder="Enter User ID (e.g., 12345)"
+                            value={userIdInput}
+                            onChange={(e) => {
+                              setUserIdInput(e.target.value);
+                              setSelectedUser(null);
+                              setLookupError(null);
+                            }}
+                            data-testid="input-user-id"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              if (lookupApiError) {
+                                setLookupError(lookupApiError.message || "User not found");
+                                setSelectedUser(null);
+                              } else if (lookupResult && lookupResult.length > 0) {
+                                const foundUser = lookupResult.find(u => u.role === "freelancer");
+                                if (foundUser) {
+                                  setSelectedUser(foundUser);
+                                  setLookupError(null);
+                                } else {
+                                  setLookupError("User is not a freelancer");
+                                  setSelectedUser(null);
+                                }
+                              } else if (userIdInput && !isLookingUp) {
+                                setLookupError("User not found");
+                                setSelectedUser(null);
+                              }
+                            }}
+                            disabled={!userIdInput || isLookingUp}
+                            data-testid="button-lookup-user"
+                          >
+                            {isLookingUp ? "Looking up..." : "Look Up"}
+                          </Button>
+                        </div>
+                        {lookupError && (
+                          <p className="text-sm text-destructive">{lookupError}</p>
+                        )}
                       </div>
-                      {searchResults.length > 0 && (
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                          {searchResults.map((result) => (
-                            <div
-                              key={result.id}
-                              className={`flex items-center justify-between p-3 rounded-md border cursor-pointer hover-elevate ${
-                                selectedUser?.id === result.id
-                                  ? "bg-accent"
-                                  : ""
-                              }`}
-                              onClick={() => setSelectedUser(result)}
-                              data-testid={`freelancer-${result.id}`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <Avatar className="h-8 w-8">
-                                  <AvatarImage src={result.avatar || undefined} />
-                                  <AvatarFallback>
-                                    {result.username.charAt(0).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div>
-                                  <p className="font-medium text-sm">
-                                    {result.username}
-                                  </p>
-                                  {result.specialization && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {result.specialization}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
+                      {selectedUser && (
+                        <div className="p-4 rounded-md border bg-accent/50">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={selectedUser.avatar || undefined} />
+                              <AvatarFallback>
+                                {selectedUser.username.charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">
+                                {selectedUser.username}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                User ID: {selectedUser.userId || selectedUser.id}
+                              </p>
+                              {selectedUser.specialization && (
+                                <p className="text-xs text-muted-foreground">
+                                  {selectedUser.specialization}
+                                </p>
+                              )}
                             </div>
-                          ))}
+                          </div>
                         </div>
                       )}
                     </div>

@@ -87,6 +87,7 @@ import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
 import AdminPage from "@/pages/admin";
 import TeamManagementPage from "@/pages/team-management";
 import MeetingsPage from "@/pages/meetings";
+import MyDisputesPage from "@/pages/my-disputes";
 import TeamRoomPage from "@/pages/team-room";
 import MessagesPage from "@/pages/messages";
 import SettingsPage from "@/pages/settings";
@@ -220,6 +221,11 @@ function Router() {
       <Route path="/meetings">
         <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
           <MeetingsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/my-disputes">
+        <ProtectedRoute allowedRoles={["moderator", "staff", "head_of_moderation", "founder"]}>
+          <MyDisputesPage />
         </ProtectedRoute>
       </Route>
       <Route path="/team-room">
