@@ -847,26 +847,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can apply for jobs. Please upgrade your account to become a freelancer." });
       }
 
-      // Check if freelancer already has an active/claimed job (as primary or team member)
+      // Check if freelancer already has an active/claimed job (as primary, team member, or collaborator)
       const allJobs = await storage.getJobs({});
       const userId = req.session.userId!;
+      const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted"];
       
-      const activeJobsAsPrimary = allJobs.filter(j => 
-        j.freelancerId === userId && j.status === "in_progress"
-      );
-      const activeJobsAsTeamMember = allJobs.filter(j => 
-        j.teamMembers?.includes(userId) && ["in_progress", "claimed", "awaiting_customer", "submitted"].includes(j.status)
-      );
-      const claimedJobsAsPrimary = allJobs.filter(j => 
-        j.freelancerId === userId && j.status === "claimed"
-      );
+      // Check if user is assigned to any active job (as freelancerId, teamMembers, or collaborators)
+      const assignedActiveJobs = allJobs.filter(j => {
+        if (!activeStatuses.includes(j.status)) return false;
+        // Check primary freelancer
+        if (j.freelancerId === userId) return true;
+        // Check team members array
+        if (j.teamMembers?.includes(userId)) return true;
+        // Check collaborators array (from invitation acceptance)
+        if (j.collaborators?.includes(userId)) return true;
+        return false;
+      });
 
-      if (activeJobsAsPrimary.length > 0 || activeJobsAsTeamMember.length > 0) {
+      if (assignedActiveJobs.length > 0) {
         return res.status(400).json({ error: "You are already assigned to an active job. Complete it before applying to new jobs." });
-      }
-      
-      if (claimedJobsAsPrimary.length > 0) {
-        return res.status(400).json({ error: "You already have a claimed job waiting to start. Complete or cancel it first." });
       }
 
       // Check pending request limit (max 5)
@@ -4330,6 +4329,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/invitations/:id/accept", requireAuth, async (req, res) => {
     try {
+      // First check if freelancer is already assigned to an active job
+      const allJobs = await storage.getJobs({});
+      const userId = req.session.userId!;
+      const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted"];
+      
+      const assignedActiveJobs = allJobs.filter(j => {
+        if (!activeStatuses.includes(j.status)) return false;
+        if (j.freelancerId === userId) return true;
+        if (j.teamMembers?.includes(userId)) return true;
+        if (j.collaborators?.includes(userId)) return true;
+        return false;
+      });
+
+      if (assignedActiveJobs.length > 0) {
+        return res.status(400).json({ error: "You are already assigned to an active job. Complete it before accepting new invitations." });
+      }
+
       const invitation = await storage.updateInvitation(req.params.id, { 
         status: "accepted" 
       });
@@ -6770,26 +6786,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = await storage.getUser(recommendation.customerId);
 
       if (accept) {
-        // Check if freelancer already has an active job (as primary freelancer)
-        const activeJobs = await storage.getJobs({ freelancerId: user.id });
-        const hasActiveJob = activeJobs.some(j => 
-          j.status === "claimed" || j.status === "in_progress" || 
-          j.status === "submitted" || j.status === "awaiting_customer"
-        );
+        // Check if freelancer already has an active job (as primary, team member, or collaborator)
+        const allJobs = await storage.getJobs({});
+        const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted"];
         
-        // Also check jobFreelancers table for multi-freelancer assignments
-        const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
-        let hasActiveAssignment = false;
-        for (const jf of freelancerAssignments) {
-          const assignedJob = await storage.getJob(jf.jobId);
-          if (assignedJob && ["claimed", "in_progress", "submitted", "awaiting_customer"].includes(assignedJob.status)) {
-            hasActiveAssignment = true;
-            break;
-          }
-        }
-        
-        if (hasActiveJob || hasActiveAssignment) {
-          return res.status(400).json({ error: "You already have a job in progress" });
+        const assignedActiveJobs = allJobs.filter(j => {
+          if (!activeStatuses.includes(j.status)) return false;
+          if (j.freelancerId === user.id) return true;
+          if (j.teamMembers?.includes(user.id)) return true;
+          if (j.collaborators?.includes(user.id)) return true;
+          return false;
+        });
+
+        if (assignedActiveJobs.length > 0) {
+          return res.status(400).json({ error: "You are already assigned to an active job. Complete it before accepting new invitations." });
         }
 
         // Check if job is still available - allow joining for active, claimed, or in_progress jobs
