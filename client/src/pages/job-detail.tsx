@@ -1015,6 +1015,7 @@ export default function JobDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "rating"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       setIsRatingDialogOpen(false);
       setRatingScore(0);
       setRatingReview("");
@@ -1710,9 +1711,9 @@ export default function JobDetailPage() {
                         <p className="text-sm text-muted-foreground">{submissions[0].notes}</p>
                       </div>
                     )}
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex flex-wrap gap-2 pt-2">
                       <Button
-                        className="flex-1"
+                        className="flex-1 min-w-[140px]"
                         onClick={() => acceptWorkMutation.mutate()}
                         disabled={acceptWorkMutation.isPending}
                         data-testid="button-accept-work"
@@ -1722,7 +1723,7 @@ export default function JobDetailPage() {
                       </Button>
                       <Dialog>
                         <DialogTrigger asChild>
-                          <Button variant="outline" className="flex-1" data-testid="button-request-revision">
+                          <Button variant="outline" className="flex-1 min-w-[140px]" data-testid="button-request-revision">
                             Request Revision
                           </Button>
                         </DialogTrigger>

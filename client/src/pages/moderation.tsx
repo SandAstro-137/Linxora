@@ -1,10 +1,11 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Job, CancellationRequest, Report, PTORequest } from "@shared/schema";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,6 +33,24 @@ interface EnrichedPTORequest extends PTORequest {
   freelancerAvatar?: string | null;
 }
 
+interface EnrichedDispute {
+  id: string;
+  jobId: string;
+  openedByUserId: string;
+  reason: string;
+  status: string;
+  moderatorId: string | null;
+  resolution: string | null;
+  freelancerAmount: string | null;
+  customerRefund: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  jobTitle?: string;
+  jobBudget?: string;
+  openedByUsername?: string;
+  moderatorUsername?: string;
+}
+
 export default function ModerationPage() {
   const { toast } = useToast();
   const [requestChangesDialogOpen, setRequestChangesDialogOpen] = useState(false);
@@ -53,6 +72,71 @@ export default function ModerationPage() {
   const { data: pendingPTORequests, isLoading: ptoLoading } = useQuery<EnrichedPTORequest[]>({
     queryKey: ["/api/pto/pending"],
   });
+
+  const { data: disputes, isLoading: disputesLoading } = useQuery<EnrichedDispute[]>({
+    queryKey: ["/api/disputes"],
+  });
+
+  const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
+  const [selectedDispute, setSelectedDispute] = useState<EnrichedDispute | null>(null);
+  const [disputeResolution, setDisputeResolution] = useState("");
+  const [freelancerAmount, setFreelancerAmount] = useState("");
+  const [customerRefund, setCustomerRefund] = useState("");
+
+  const claimDisputeMutation = useMutation({
+    mutationFn: (disputeId: string) =>
+      apiRequest("POST", `/api/disputes/${disputeId}/claim`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+      toast({
+        title: "Dispute claimed",
+        description: "You are now handling this dispute.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to claim dispute",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resolveDisputeMutation = useMutation({
+    mutationFn: ({ disputeId, resolution, freelancerAmount, customerRefund }: { 
+      disputeId: string; 
+      resolution: string; 
+      freelancerAmount: string; 
+      customerRefund: string;
+    }) =>
+      apiRequest("POST", `/api/disputes/${disputeId}/resolve`, { 
+        resolution, 
+        freelancerAmount: parseFloat(freelancerAmount), 
+        customerRefund: parseFloat(customerRefund) 
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+      setDisputeDialogOpen(false);
+      setSelectedDispute(null);
+      setDisputeResolution("");
+      setFreelancerAmount("");
+      setCustomerRefund("");
+      toast({
+        title: "Dispute resolved",
+        description: "The funds have been distributed according to your decision.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to resolve dispute",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const openDisputes = disputes?.filter(d => d.status === "open") || [];
+  const inProgressDisputes = disputes?.filter(d => d.status === "in_progress") || [];
 
   const approvePTOMutation = useMutation({
     mutationFn: (ptoId: string) =>
@@ -289,6 +373,15 @@ export default function ModerationPage() {
             {pendingPTORequests && pendingPTORequests.length > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {pendingPTORequests.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="disputes" data-testid="tab-disputes">
+            <Gavel className="w-4 h-4 mr-1" />
+            Disputes
+            {(openDisputes.length + inProgressDisputes.length) > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {openDisputes.length + inProgressDisputes.length}
               </Badge>
             )}
           </TabsTrigger>
@@ -745,7 +838,213 @@ export default function ModerationPage() {
             </Card>
           )}
         </TabsContent>
+
+        <TabsContent value="disputes">
+          {disputesLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : (openDisputes.length + inProgressDisputes.length) > 0 ? (
+            <div className="space-y-4">
+              {[...openDisputes, ...inProgressDisputes].map((dispute) => (
+                <Card key={dispute.id} className="border-2" data-testid={`card-dispute-${dispute.id}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex-1">
+                        <CardTitle className="mb-2 flex items-center gap-2">
+                          <Gavel className="w-5 h-5" />
+                          {dispute.jobTitle || "Dispute"}
+                        </CardTitle>
+                        <div className="flex gap-2 flex-wrap">
+                          {dispute.jobBudget && (
+                            <Badge variant="secondary">${dispute.jobBudget}</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <Badge variant={dispute.status === "open" ? "destructive" : "outline"}>
+                        {dispute.status === "open" ? "Open" : "In Progress"}
+                      </Badge>
+                    </div>
+                    <CardDescription className="mt-2">
+                      Opened {formatDistanceToNow(new Date(dispute.createdAt), { addSuffix: true })}
+                      {dispute.openedByUsername && ` by ${dispute.openedByUsername}`}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold mb-2">Reason for Dispute</h4>
+                      <p className="text-sm text-muted-foreground">{dispute.reason}</p>
+                    </div>
+
+                    {dispute.moderatorUsername && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <User className="w-4 h-4" />
+                        <span>Assigned to: {dispute.moderatorUsername}</span>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 flex-wrap pt-2">
+                      <Link href={`/jobs/${dispute.jobId}`}>
+                        <Button variant="outline" size="sm" data-testid={`button-view-job-${dispute.id}`}>
+                          <ExternalLink className="w-4 h-4 mr-1" />
+                          View Job
+                        </Button>
+                      </Link>
+                      {dispute.status === "open" && (
+                        <Button
+                          size="sm"
+                          onClick={() => claimDisputeMutation.mutate(dispute.id)}
+                          disabled={claimDisputeMutation.isPending}
+                          data-testid={`button-claim-dispute-${dispute.id}`}
+                        >
+                          <Check className="w-4 h-4 mr-1" />
+                          {claimDisputeMutation.isPending ? "Claiming..." : "Claim Dispute"}
+                        </Button>
+                      )}
+                      {dispute.status === "in_progress" && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSelectedDispute(dispute);
+                            setFreelancerAmount(dispute.jobBudget || "0");
+                            setCustomerRefund("0");
+                            setDisputeDialogOpen(true);
+                          }}
+                          data-testid={`button-resolve-dispute-${dispute.id}`}
+                        >
+                          <Gavel className="w-4 h-4 mr-1" />
+                          Resolve Dispute
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <Gavel className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No active disputes</h3>
+                  <p className="text-muted-foreground">
+                    All disputes have been resolved
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
       </Tabs>
+
+      <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
+        <DialogContent data-testid="dialog-resolve-dispute">
+          <DialogHeader>
+            <DialogTitle>Resolve Dispute</DialogTitle>
+            <DialogDescription>
+              Decide how to split the funds between the freelancer and customer.
+              Total budget: ${selectedDispute?.jobBudget || "0"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="freelancerAmount">Amount to Freelancer ($)</Label>
+              <Input
+                type="number"
+                id="freelancerAmount"
+                value={freelancerAmount}
+                onChange={(e) => setFreelancerAmount(e.target.value)}
+                step="0.01"
+                min="0"
+                data-testid="input-freelancer-amount"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="customerRefund">Refund to Customer ($)</Label>
+              <Input
+                type="number"
+                id="customerRefund"
+                value={customerRefund}
+                onChange={(e) => setCustomerRefund(e.target.value)}
+                step="0.01"
+                min="0"
+                data-testid="input-customer-refund"
+              />
+            </div>
+            {selectedDispute && (
+              <p className="text-sm text-muted-foreground">
+                Total: ${(parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0")).toFixed(2)} / ${selectedDispute.jobBudget || "0"}
+              </p>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="resolution">Resolution Notes</Label>
+              <Textarea
+                id="resolution"
+                placeholder="Explain your decision..."
+                value={disputeResolution}
+                onChange={(e) => setDisputeResolution(e.target.value)}
+                rows={4}
+                data-testid="textarea-resolution"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDisputeDialogOpen(false);
+                setSelectedDispute(null);
+                setDisputeResolution("");
+                setFreelancerAmount("");
+                setCustomerRefund("");
+              }}
+              data-testid="button-cancel-resolve"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!selectedDispute || !disputeResolution.trim()) return;
+                
+                const freelancerAmt = parseFloat(freelancerAmount || "0");
+                const customerAmt = parseFloat(customerRefund || "0");
+                const budget = parseFloat(selectedDispute.jobBudget || "0");
+                
+                if (isNaN(freelancerAmt) || isNaN(customerAmt) || freelancerAmt < 0 || customerAmt < 0) {
+                  toast({
+                    title: "Invalid amounts",
+                    description: "Please enter valid positive numbers for both amounts.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                
+                if (freelancerAmt + customerAmt > budget) {
+                  toast({
+                    title: "Amounts exceed budget",
+                    description: `Total distribution cannot exceed the job budget of $${budget}.`,
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                
+                resolveDisputeMutation.mutate({
+                  disputeId: selectedDispute.id,
+                  resolution: disputeResolution,
+                  freelancerAmount: freelancerAmt.toString(),
+                  customerRefund: customerAmt.toString(),
+                });
+              }}
+              disabled={!disputeResolution.trim() || resolveDisputeMutation.isPending}
+              data-testid="button-confirm-resolve"
+            >
+              {resolveDisputeMutation.isPending ? "Resolving..." : "Resolve Dispute"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={requestChangesDialogOpen} onOpenChange={setRequestChangesDialogOpen}>
         <DialogContent data-testid="dialog-request-changes">
