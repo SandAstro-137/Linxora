@@ -4220,6 +4220,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get enriched direct team invitations for freelancer (pending invitations from Offer Team feature)
+  app.get("/api/invitations/pending", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can view pending invitations" });
+      }
+
+      const allInvitations = await storage.getInvitations(user.id);
+      // Filter to only pending invitations where user is the recipient
+      // Include both "pending" status and null status (for backwards compatibility)
+      const pendingInvitations = allInvitations.filter(
+        inv => inv.toUserId === user.id && (inv.status === "pending" || inv.status === null)
+      );
+
+      // Enrich with user and job data
+      const enrichedPromises = pendingInvitations.map(async (inv) => {
+        const fromUser = await storage.getUser(inv.fromUserId);
+        const job = await storage.getJob(inv.jobId);
+        
+        // Skip invitations with missing job data
+        if (!job) return null;
+        
+        // Get customer from job (not from sender)
+        const customer = await storage.getUser(job.customerId);
+        
+        // Get current team members for this job
+        let teamMembers: Array<{id: string; username: string; avatar: string | null; level: number}> = [];
+        if (job.freelancerId) {
+          const mainFreelancer = await storage.getUser(job.freelancerId);
+          if (mainFreelancer) {
+            teamMembers.push({
+              id: mainFreelancer.id,
+              username: mainFreelancer.username,
+              avatar: mainFreelancer.avatar,
+              level: mainFreelancer.level || 1,
+            });
+          }
+        }
+        const jobFreelancers = await storage.getJobFreelancers(job.id);
+        for (const jf of jobFreelancers) {
+          const fl = await storage.getUser(jf.freelancerId);
+          if (fl && !teamMembers.find(tm => tm.id === fl.id)) {
+            teamMembers.push({
+              id: fl.id,
+              username: fl.username,
+              avatar: fl.avatar,
+              level: fl.level || 1,
+            });
+          }
+        }
+        
+        // Calculate estimated split
+        const currentTeamSize = teamMembers.length;
+        const estimatedSplitCount = currentTeamSize + 1;
+        const jobBudget = parseFloat(job.budget) || 0;
+        const baseShare = estimatedSplitCount > 0 ? jobBudget / estimatedSplitCount : 0;
+        const invitedLevel = user.level || 1;
+        const levelPayout = getLevelPayout(invitedLevel);
+        const estimatedShare = baseShare * levelPayout;
+        
+        return {
+          id: inv.id,
+          type: "direct_invitation" as const,
+          status: inv.status || "pending",
+          createdAt: inv.createdAt,
+          inviter: fromUser ? {
+            id: fromUser.id,
+            username: fromUser.username,
+            avatar: fromUser.avatar,
+          } : null,
+          customer: customer ? {
+            id: customer.id,
+            username: customer.username,
+            avatar: customer.avatar,
+          } : null,
+          job: {
+            id: job.id,
+            title: job.title,
+            description: job.description,
+            budget: job.budget,
+            category: job.category,
+            deadline: job.deadline,
+          },
+          teamMembers,
+          currentTeamSize,
+          estimatedShare: estimatedShare.toFixed(2),
+        };
+      });
+      
+      const enrichedResults = await Promise.all(enrichedPromises);
+      // Filter out null results (missing job data)
+      const enriched = enrichedResults.filter(item => item !== null);
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/invitations/:id/accept", requireAuth, async (req, res) => {
     try {
       const invitation = await storage.updateInvitation(req.params.id, { 

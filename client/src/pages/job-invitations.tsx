@@ -20,12 +20,18 @@ interface TeamMember {
 
 interface JobInvitation {
   id: string;
+  type?: "recommendation" | "direct_invitation";
   status: string;
-  recommenderMessage: string | null;
-  freelancerMessage: string | null;
-  customerNote: string | null;
+  recommenderMessage?: string | null;
+  freelancerMessage?: string | null;
+  customerNote?: string | null;
   createdAt: string;
-  recommender: {
+  recommender?: {
+    id: string;
+    username: string;
+    avatar: string | null;
+  } | null;
+  inviter?: {
     id: string;
     username: string;
     avatar: string | null;
@@ -64,10 +70,24 @@ export default function JobInvitationsPage() {
     });
   };
 
-  const { data: invitations = [], isLoading } = useQuery<JobInvitation[]>({
+  // Fetch recommendation-based invitations
+  const { data: recommendationInvitations = [], isLoading: isLoadingRecommendations } = useQuery<JobInvitation[]>({
     queryKey: ["/api/recommendations/invitations"],
   });
 
+  // Fetch direct team invitations (from Offer Team feature)
+  const { data: directInvitations = [], isLoading: isLoadingDirect } = useQuery<JobInvitation[]>({
+    queryKey: ["/api/invitations/pending"],
+  });
+
+  // Combine both types of invitations
+  const invitations = [
+    ...recommendationInvitations.map(inv => ({ ...inv, type: "recommendation" as const })),
+    ...directInvitations,
+  ];
+  const isLoading = isLoadingRecommendations || isLoadingDirect;
+
+  // Mutation for recommendation-based invitations
   const respondMutation = useMutation({
     mutationFn: async ({ id, accept }: { id: string; accept: boolean }) => {
       const res = await apiRequest("POST", `/api/recommendations/${id}/invitation-respond`, { accept });
@@ -80,6 +100,36 @@ export default function JobInvitationsPage() {
           ? "You have been assigned to the job!" 
           : "The customer has been notified.",
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/recommendations/invitations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invitations/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation for direct team invitations
+  const respondDirectMutation = useMutation({
+    mutationFn: async ({ id, accept }: { id: string; accept: boolean }) => {
+      const endpoint = accept ? `/api/invitations/${id}/accept` : `/api/invitations/${id}/reject`;
+      const res = await apiRequest("POST", endpoint, {});
+      return res.json();
+    },
+    onSuccess: (data, variables) => {
+      toast({
+        title: variables.accept ? "Invitation accepted" : "Invitation declined",
+        description: variables.accept 
+          ? "You have been added to the job team!" 
+          : "The inviter has been notified.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/invitations/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/recommendations/invitations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
@@ -108,7 +158,7 @@ export default function JobInvitationsPage() {
       <div>
         <h1 className="text-2xl font-bold">Job Invitations</h1>
         <p className="text-muted-foreground">
-          Invitations from customers based on recommendations from other freelancers
+          Direct team invitations and recommendations from other freelancers
         </p>
       </div>
 
@@ -118,7 +168,7 @@ export default function JobInvitationsPage() {
             <Mail className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
             <h2 className="text-xl font-semibold mb-2">No Pending Invitations</h2>
             <p className="text-muted-foreground">
-              When someone recommends you for a job and the customer accepts, you'll see the invitation here.
+              When someone invites you to collaborate on a job or recommends you and the customer accepts, you'll see the invitation here.
             </p>
           </CardContent>
         </Card>
@@ -131,10 +181,18 @@ export default function JobInvitationsPage() {
                   <div>
                     <CardTitle className="text-lg">{invitation.job?.title || "Job"}</CardTitle>
                     <CardDescription>
-                      Recommended by {invitation.recommender?.username || "a friend"}
+                      {invitation.type === "direct_invitation" 
+                        ? `Invited by ${invitation.inviter?.username || invitation.customer?.username || "customer"}`
+                        : `Recommended by ${invitation.recommender?.username || "a friend"}`
+                      }
                     </CardDescription>
                   </div>
-                  <Badge variant="secondary">Pending Response</Badge>
+                  <div className="flex gap-2 flex-wrap">
+                    {invitation.type === "direct_invitation" && (
+                      <Badge variant="outline">Direct Invitation</Badge>
+                    )}
+                    <Badge variant="secondary">Pending Response</Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -185,7 +243,7 @@ export default function JobInvitationsPage() {
                   </div>
                 )}
 
-                {invitation.freelancerMessage && (
+                {invitation.freelancerMessage && invitation.type !== "direct_invitation" && (
                   <div className="bg-muted p-3 rounded-lg">
                     <p className="text-sm font-medium mb-1">
                       Message from {invitation.recommender?.username || "recommender"}:
@@ -227,8 +285,14 @@ export default function JobInvitationsPage() {
 
                 <div className="flex gap-2 pt-2">
                   <Button
-                    onClick={() => respondMutation.mutate({ id: invitation.id, accept: true })}
-                    disabled={respondMutation.isPending}
+                    onClick={() => {
+                      if (invitation.type === "direct_invitation") {
+                        respondDirectMutation.mutate({ id: invitation.id, accept: true });
+                      } else {
+                        respondMutation.mutate({ id: invitation.id, accept: true });
+                      }
+                    }}
+                    disabled={respondMutation.isPending || respondDirectMutation.isPending}
                     data-testid={`button-accept-${invitation.id}`}
                   >
                     <Check className="w-4 h-4 mr-2" />
@@ -236,8 +300,14 @@ export default function JobInvitationsPage() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => respondMutation.mutate({ id: invitation.id, accept: false })}
-                    disabled={respondMutation.isPending}
+                    onClick={() => {
+                      if (invitation.type === "direct_invitation") {
+                        respondDirectMutation.mutate({ id: invitation.id, accept: false });
+                      } else {
+                        respondMutation.mutate({ id: invitation.id, accept: false });
+                      }
+                    }}
+                    disabled={respondMutation.isPending || respondDirectMutation.isPending}
                     data-testid={`button-decline-${invitation.id}`}
                   >
                     <X className="w-4 h-4 mr-2" />
