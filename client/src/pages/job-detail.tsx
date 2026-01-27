@@ -1931,10 +1931,10 @@ export default function JobDetailPage() {
                         <Button
                           className="w-full"
                           variant="default"
-                          data-testid="button-rate-job"
+                          data-testid="button-rate-freelancer"
                         >
                           <Star className="w-4 h-4 mr-2" />
-                          Rate This Job
+                          Rate Freelancer
                         </Button>
                       </DialogTrigger>
                       <DialogContent>
