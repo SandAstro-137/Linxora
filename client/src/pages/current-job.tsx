@@ -10,7 +10,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, Send, Calendar, DollarSign, User, Briefcase, Users } from "lucide-react";
+import { MessageCircle, Send, Calendar, DollarSign, User, Briefcase, Users, ExternalLink } from "lucide-react";
+import { Link } from "wouter";
 import type { Job, ChatMessage, TeamMessage } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
@@ -224,9 +225,17 @@ export default function CurrentJobPage() {
                     {enrichedJob?.category || currentJob.category}
                   </CardDescription>
                 </div>
-                <Badge data-testid={`badge-status-${currentJob.status}`}>
-                  {currentJob.status}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge data-testid={`badge-status-${currentJob.status}`}>
+                    {currentJob.status}
+                  </Badge>
+                  <Link href={`/jobs/${currentJob.id}`}>
+                    <Button variant="outline" size="sm" data-testid="button-view-job-details">
+                      <ExternalLink className="w-4 h-4 mr-1" />
+                      Actions
+                    </Button>
+                  </Link>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">

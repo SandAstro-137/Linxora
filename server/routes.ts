@@ -498,8 +498,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/my-jobs", requireRole("customer"), async (req, res) => {
     try {
       const jobs = await storage.getJobs({ customerId: req.session.userId! });
-      res.json(jobs);
+      // Filter out archived jobs unless specifically requested
+      const includeArchived = req.query.includeArchived === "true";
+      const filteredJobs = includeArchived ? jobs : jobs.filter(j => !j.customerArchived);
+      
+      // Add hasRating info for completed jobs
+      const enrichedJobs = await Promise.all(filteredJobs.map(async (job) => {
+        if (job.status === "completed" && job.freelancerId) {
+          const rating = await storage.getRating(job.id);
+          return { ...job, hasRating: !!rating };
+        }
+        return { ...job, hasRating: false };
+      }));
+      
+      res.json(enrichedJobs);
     } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Archive a completed job (customer clears it from their list)
+  app.post("/api/jobs/:id/archive", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can archive this job" });
+      }
+
+      if (job.status !== "completed" && job.status !== "cancelled") {
+        return res.status(400).json({ error: "Only completed or cancelled jobs can be archived" });
+      }
+
+      // For completed jobs with a freelancer, require rating before archiving
+      if (job.status === "completed" && job.freelancerId) {
+        const rating = await storage.getRating(job.id);
+        if (!rating) {
+          return res.status(400).json({ error: "Please rate the freelancer before clearing this job" });
+        }
+      }
+
+      const updatedJob = await storage.updateJob(job.id, { customerArchived: true });
+      res.json(updatedJob);
+    } catch (error) {
+      console.error("Error archiving job:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -1710,15 +1755,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sourceType: "job",
           sourceId: job.id,
         });
-
-        // Update freelancer stats
-        await updateFreelancerStats(freelancerId);
       }
 
-      // Mark job as completed
+      // Mark job as completed FIRST (before updating stats)
       const updatedJob = await storage.updateJob(job.id, {
         status: JobStatus.COMPLETED,
       });
+
+      // NOW update freelancer stats after job is marked completed
+      for (const freelancerId of allFreelancerIds) {
+        await updateFreelancerStats(freelancerId);
+      }
 
       res.json(updatedJob);
     } catch (error) {

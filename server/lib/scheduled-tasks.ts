@@ -127,13 +127,17 @@ async function handleAutoComplete(jobId: string) {
       sourceType: "job",
       sourceId: job.id,
     });
-
-    await updateFreelancerStats(freelancerId);
   }
 
+  // Mark job as completed FIRST (before updating stats)
   await storage.updateJob(job.id, {
     status: JobStatus.COMPLETED,
   });
+
+  // NOW update freelancer stats after job is marked completed
+  for (const freelancerId of allFreelancerIds) {
+    await updateFreelancerStats(freelancerId);
+  }
 
   await storage.createNotification({
     userId: job.customerId,

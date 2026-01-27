@@ -219,6 +219,7 @@ export const jobs = pgTable("jobs", {
   autoCompleteAt: timestamp("auto_complete_at"), // When auto-complete will trigger (4 days after submission)
   maxFreelancers: integer("max_freelancers").default(1), // For multi-freelancer jobs
   isLocked: boolean("is_locked").default(false), // Lock job during dispute
+  customerArchived: boolean("customer_archived").default(false), // Customer can hide completed jobs
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

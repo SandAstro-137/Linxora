@@ -10,8 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Briefcase, DollarSign, Calendar, User, X } from "lucide-react";
+import { Briefcase, DollarSign, Calendar, User, X, Check, Trash2 } from "lucide-react";
 import type { Job } from "@shared/schema";
+
+type EnrichedJob = Job & { hasRating?: boolean };
 import { formatDistanceToNow } from "date-fns";
 
 export default function MyJobsPage() {
@@ -22,7 +24,7 @@ export default function MyJobsPage() {
   const [cancelReason, setCancelReason] = useState("");
 
   // Get customer's jobs (all statuses)
-  const { data: myJobs = [] } = useQuery<Job[]>({
+  const { data: myJobs = [] } = useQuery<EnrichedJob[]>({
     queryKey: ["/api/my-jobs"],
   });
 
@@ -76,6 +78,37 @@ export default function MyJobsPage() {
       jobId: selectedJob.id,
       reason: cancelReason.trim() || "Cancelled by customer",
     });
+  };
+
+  const archiveJobMutation = useMutation({
+    mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/archive`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      toast({
+        title: "Job cleared",
+        description: "The job has been removed from your list",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to clear job",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const canClearJob = (job: EnrichedJob) => {
+    // Cancelled jobs can always be cleared
+    if (job.status === "cancelled") return true;
+    // Completed jobs can only be cleared after rating the freelancer
+    if (job.status === "completed") {
+      // Jobs without a freelancer (edge case) can be cleared
+      if (!job.freelancerId) return true;
+      // Must have rating to clear
+      return job.hasRating === true;
+    }
+    return false;
   };
 
   const getStatusColor = (status: string) => {
@@ -171,17 +204,31 @@ export default function MyJobsPage() {
                     </div>
                     <CardDescription>{job.category}</CardDescription>
                   </div>
-                  {canCancelJob(job) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleCancelClick(job)}
-                      data-testid={`button-cancel-${job.id}`}
-                    >
-                      <X className="w-4 h-4 mr-1" />
-                      Cancel
-                    </Button>
-                  )}
+                  <div className="flex gap-2">
+                    {canCancelJob(job) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleCancelClick(job)}
+                        data-testid={`button-cancel-${job.id}`}
+                      >
+                        <X className="w-4 h-4 mr-1" />
+                        Cancel
+                      </Button>
+                    )}
+                    {canClearJob(job) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => archiveJobMutation.mutate(job.id)}
+                        disabled={archiveJobMutation.isPending}
+                        data-testid={`button-clear-${job.id}`}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Clear
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
