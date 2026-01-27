@@ -6138,20 +6138,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ).length;
       
       // Calculate credibility score (0-100)
-      // Based on: completion rate, low cancellation rate
+      // Credibility starts at 100% and decreases based on cancellation rate
+      // No cancellations = 100% credibility (trustworthy customer)
       let credibility = 100;
-      if (totalPostedJobs > 0) {
-        const completionRate = (completedJobs / totalPostedJobs) * 100;
+      if (totalPostedJobs > 0 && cancelledJobs > 0) {
+        // Only reduce credibility if there are cancellations
         const cancellationRate = (cancelledJobs / totalPostedJobs) * 100;
-        // Reduce credibility based on cancellation rate
-        credibility = Math.max(0, Math.min(100, completionRate - (cancellationRate * 2)));
-        // If no completed jobs yet but also no cancellations, give neutral score
-        if (completedJobs === 0 && cancelledJobs === 0) {
-          credibility = 50; // New customer, neutral credibility
-        }
-      } else {
-        credibility = 50; // New customer with no history
+        // Each cancellation reduces credibility significantly
+        credibility = Math.max(0, 100 - (cancellationRate * 2));
       }
+      // New customers or customers with no cancellations get 100% credibility
 
       res.json({
         totalPostedJobs,
