@@ -105,10 +105,16 @@ export function NotificationCenter() {
     
     // Route based on notification type first for more specific handling
     switch (notificationType) {
-      // Job invitations and recommendations
+      // Job invitations (for freelancers)
       case "invitation":
       case "recommendation_accepted":
+      case "job_invitation":
         setLocation("/job-invitations");
+        return;
+      
+      // Recommendation notifications for customer - go to incoming recommendations page
+      case "job_recommendation":
+        setLocation("/incoming-recommendations");
         return;
       
       // Recommendation notifications for recommender
