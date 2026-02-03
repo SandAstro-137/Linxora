@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Briefcase, DollarSign, Calendar, User, Check, X, ChevronDown, ChevronUp, Users, Wallet } from "lucide-react";
+import { Mail, Briefcase, DollarSign, Calendar, User, Check, X, ChevronDown, ChevronUp, Users, Wallet, Eye } from "lucide-react";
+import { Link } from "wouter";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -283,7 +284,16 @@ export default function JobInvitationsPage() {
                   </CollapsibleContent>
                 </Collapsible>
 
-                <div className="flex gap-2 pt-2">
+                <div className="flex gap-2 pt-2 flex-wrap">
+                  <Link href={`/jobs/${invitation.job?.id}`}>
+                    <Button
+                      variant="secondary"
+                      data-testid={`button-view-job-${invitation.id}`}
+                    >
+                      <Eye className="w-4 h-4 mr-2" />
+                      View Job Details
+                    </Button>
+                  </Link>
                   <Button
                     onClick={() => {
                       if (invitation.type === "direct_invitation") {
