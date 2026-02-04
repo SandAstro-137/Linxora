@@ -19,7 +19,7 @@ import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, F
 import { ReportDialog } from "@/components/ReportDialog";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -104,6 +104,138 @@ interface JobRequestWithFreelancer {
     completedJobs: number;
     completionPercentage: string;
   } | null;
+}
+
+interface JobChatMessage {
+  id: string;
+  jobId: string;
+  senderId: string;
+  receiverId: string;
+  message: string;
+  read: boolean;
+  createdAt: Date;
+  senderUsername?: string;
+  senderAvatar?: string;
+  senderRole?: string;
+}
+
+function CustomerFreelancerChat({ jobId, isCustomer }: { jobId: string; isCustomer: boolean }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [newMessage, setNewMessage] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const { data: messages = [], isLoading } = useQuery<JobChatMessage[]>({
+    queryKey: ["/api/jobs", jobId, "chat"],
+    refetchInterval: 3000,
+  });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: (message: string) =>
+      apiRequest("POST", `/api/jobs/${jobId}/chat`, { message }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "chat"] });
+      setNewMessage("");
+    },
+    onError: () => {
+      toast({
+        title: "Failed to send message",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MessageSquare className="w-5 h-5" />
+          {isCustomer ? "Chat with Freelancer" : "Chat with Customer"}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="h-64 overflow-y-auto space-y-3 border rounded-md p-3">
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : messages.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-16">
+              No messages yet. Start the conversation!
+            </p>
+          ) : (
+            messages.map((msg) => {
+              const isMe = msg.senderId === user?.id;
+              const roleLabel = msg.senderRole === "customer" ? "Customer" : 
+                                msg.senderRole === "freelancer" ? "Freelancer" :
+                                msg.senderRole === "moderator" ? "Moderator" : null;
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex ${isMe ? "justify-end" : "justify-start"}`}
+                  data-testid={`chat-message-${msg.id}`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-lg p-3 ${
+                      isMe
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted"
+                    }`}
+                  >
+                    {!isMe && (
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium">{msg.senderUsername}</span>
+                        {roleLabel && (
+                          <Badge 
+                            variant={msg.senderRole === "customer" ? "default" : "secondary"} 
+                            className="text-xs py-0 px-1"
+                          >
+                            {roleLabel}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                    <p className="break-words text-sm">{msg.message}</p>
+                    <p className={`text-xs mt-1 ${isMe ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                      {formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Type a message..."
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newMessage.trim() && !sendMessageMutation.isPending) {
+                sendMessageMutation.mutate(newMessage);
+              }
+            }}
+            data-testid="input-chat-message"
+          />
+          <Button
+            onClick={() => sendMessageMutation.mutate(newMessage)}
+            disabled={!newMessage.trim() || sendMessageMutation.isPending}
+            size="icon"
+            data-testid="button-send-chat"
+          >
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: boolean }) {
@@ -1205,7 +1337,9 @@ export default function JobDetailPage() {
     (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
 
   const getTabGridCols = () => {
-    const count = 1 + (isTeamMember ? 1 : 0) + (canAccessWorkspace ? 1 : 0);
+    // Overview (1) + Team (if member) + Workspace (if can access) + Chat (if can access)
+    const count = 1 + (isTeamMember ? 1 : 0) + (canAccessWorkspace ? 2 : 0);
+    if (count >= 4) return 'grid-cols-4';
     if (count === 3) return 'grid-cols-3';
     if (count === 2) return 'grid-cols-2';
     return 'grid-cols-1';
@@ -1326,6 +1460,12 @@ export default function JobDetailPage() {
                   Workspace
                 </TabsTrigger>
               )}
+              {canAccessWorkspace && (
+                <TabsTrigger value="chat" data-testid="tab-chat">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Chat
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="overview" className="space-y-6 mt-6">
@@ -1411,6 +1551,11 @@ export default function JobDetailPage() {
             {canAccessWorkspace && (
               <TabsContent value="workspace" className="space-y-6 mt-6">
                 <TeamCollaboration jobId={jobId!} />
+              </TabsContent>
+            )}
+            {canAccessWorkspace && (
+              <TabsContent value="chat" className="space-y-6 mt-6">
+                <CustomerFreelancerChat jobId={jobId!} isCustomer={isCustomer} />
               </TabsContent>
             )}
           </Tabs>

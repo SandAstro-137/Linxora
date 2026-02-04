@@ -4899,7 +4899,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark messages as read for current user
       await storage.markChatMessagesAsRead(req.params.jobId, userId);
 
-      res.json(messages);
+      // Enrich messages with sender info
+      const enrichedMessages = await Promise.all(
+        messages.map(async (msg) => {
+          const sender = await storage.getUser(msg.senderId);
+          return {
+            ...msg,
+            senderUsername: sender?.username || "Unknown",
+            senderAvatar: sender?.avatar || null,
+            senderRole: sender?.role || null,
+          };
+        })
+      );
+
+      res.json(enrichedMessages);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
