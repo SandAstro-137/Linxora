@@ -84,6 +84,7 @@ interface TeamMessage {
   createdAt: Date;
   username?: string;
   avatar?: string;
+  role?: string;
 }
 
 interface JobRequestWithFreelancer {
@@ -776,7 +777,12 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                 No messages yet. Start the conversation!
               </p>
             ) : (
-              messages.map((message) => (
+              messages.map((message) => {
+                const roleLabel = message.role === "customer" ? "Customer" : 
+                                  message.role === "freelancer" ? "Freelancer" :
+                                  message.role === "moderator" ? "Moderator" :
+                                  message.role === "staff" ? "Staff" : null;
+                return (
                 <div
                   key={message.id}
                   className="flex items-start gap-2"
@@ -789,8 +795,17 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium">{message.username}</span>
+                      {roleLabel && (
+                        <Badge 
+                          variant={message.role === "customer" ? "default" : "secondary"} 
+                          className="text-xs py-0 px-1"
+                          data-testid={`badge-role-${message.id}`}
+                        >
+                          {roleLabel}
+                        </Badge>
+                      )}
                       <span className="text-xs text-muted-foreground">
                         {formatDistanceToNow(new Date(message.createdAt), {
                           addSuffix: true,
@@ -811,7 +826,8 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                     </Button>
                   )}
                 </div>
-              ))
+              );
+              })
             )}
           </div>
           <div className="flex gap-2">
@@ -1183,8 +1199,13 @@ export default function JobDetailPage() {
     (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
     (job.status === "claimed" || job.status === "in_progress");
 
+  // Customer or freelancer can access workspace when job is active
+  const canAccessWorkspace = 
+    (isCustomer || user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
+    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
+
   const getTabGridCols = () => {
-    const count = 1 + (isTeamMember ? 1 : 0) + (isFreelancerOnJob ? 1 : 0);
+    const count = 1 + (isTeamMember ? 1 : 0) + (canAccessWorkspace ? 1 : 0);
     if (count === 3) return 'grid-cols-3';
     if (count === 2) return 'grid-cols-2';
     return 'grid-cols-1';
@@ -1299,7 +1320,7 @@ export default function JobDetailPage() {
                   Team
                 </TabsTrigger>
               )}
-              {isFreelancerOnJob && (
+              {canAccessWorkspace && (
                 <TabsTrigger value="workspace" data-testid="tab-workspace">
                   <Briefcase className="w-4 h-4 mr-2" />
                   Workspace
@@ -1387,7 +1408,7 @@ export default function JobDetailPage() {
               <PublicTeamViewer job={job} isCustomer={isCustomer} />
             </TabsContent>
 
-            {isFreelancerOnJob && (
+            {canAccessWorkspace && (
               <TabsContent value="workspace" className="space-y-6 mt-6">
                 <TeamCollaboration jobId={jobId!} />
               </TabsContent>

@@ -2900,7 +2900,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const messages = await storage.getTeamMessages(req.params.id);
-      res.json(messages);
+      
+      // Enrich messages with user role
+      const enrichedMessages = await Promise.all(
+        messages.map(async (msg) => {
+          const sender = await storage.getUser(msg.senderId);
+          return {
+            ...msg,
+            role: sender?.role || null,
+          };
+        })
+      );
+      
+      res.json(enrichedMessages);
     } catch (error) {
       console.error("Error fetching team messages:", error);
       res.status(500).json({ error: "Internal server error" });
