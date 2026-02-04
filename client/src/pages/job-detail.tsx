@@ -314,7 +314,7 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
   );
 }
 
-function PublicTeamViewer({ job }: { job: EnrichedJob }) {
+function PublicTeamViewer({ job, isCustomer }: { job: EnrichedJob; isCustomer?: boolean }) {
   const leadFreelancer = job.collaboratorData?.find(c => c.id === job.freelancerId);
   const otherCollaborators = job.collaboratorData?.filter(c => c.id !== job.freelancerId) || [];
 
@@ -348,16 +348,26 @@ function PublicTeamViewer({ job }: { job: EnrichedJob }) {
                     <Badge variant="secondary" className="text-xs">Lead Freelancer</Badge>
                   </div>
                 </div>
-                {job.profitSplits && (
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      ${job.profitSplits.find(s => s.userId === leadFreelancer.id)?.amount || '0'}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {job.profitSplits.find(s => s.userId === leadFreelancer.id)?.percentage || 0}%
-                    </p>
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  {isCustomer && (
+                    <RouterLink href={`/messages/${leadFreelancer.id}`}>
+                      <Button size="sm" variant="outline" data-testid="button-message-freelancer">
+                        <MessageSquare className="w-4 h-4 mr-1" />
+                        Message
+                      </Button>
+                    </RouterLink>
+                  )}
+                  {job.profitSplits && (
+                    <div className="text-right">
+                      <p className="font-semibold">
+                        ${job.profitSplits.find(s => s.userId === leadFreelancer.id)?.amount || '0'}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {job.profitSplits.find(s => s.userId === leadFreelancer.id)?.percentage || 0}%
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {otherCollaborators.map((collaborator, index) => {
@@ -1374,7 +1384,7 @@ export default function JobDetailPage() {
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6 mt-6">
-              <PublicTeamViewer job={job} />
+              <PublicTeamViewer job={job} isCustomer={isCustomer} />
             </TabsContent>
 
             {isFreelancerOnJob && (
@@ -1413,18 +1423,28 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               )}
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <User className="w-4 h-4" />
-                <div>
-                  <p className="text-sm">Client</p>
-                  <RouterLink 
-                    href={`/user/${job.customerId}`}
-                    className="text-sm text-foreground hover:text-primary hover:underline cursor-pointer"
-                    data-testid="link-customer-profile"
-                  >
-                    {job.customerUsername || "Unknown"}
-                  </RouterLink>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <User className="w-4 h-4" />
+                  <div>
+                    <p className="text-sm">Client</p>
+                    <RouterLink 
+                      href={`/user/${job.customerId}`}
+                      className="text-sm text-foreground hover:text-primary hover:underline cursor-pointer"
+                      data-testid="link-customer-profile"
+                    >
+                      {job.customerUsername || "Unknown"}
+                    </RouterLink>
+                  </div>
                 </div>
+                {isFreelancerOnJob && (
+                  <RouterLink href={`/messages/${job.customerId}`}>
+                    <Button size="sm" variant="outline" data-testid="button-message-customer">
+                      <MessageSquare className="w-4 h-4 mr-1" />
+                      Message
+                    </Button>
+                  </RouterLink>
+                )}
               </div>
               {customerStats && (
                 <>
