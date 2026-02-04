@@ -338,6 +338,11 @@ export default function MessagesPage() {
                   <div className="space-y-4">
                     {messages.map((msg) => {
                       const isMe = msg.senderId === user.id;
+                      const senderRole = msg.sender?.role || (isMe ? user.role : null);
+                      const roleLabel = senderRole === "customer" ? "Customer" : 
+                                        senderRole === "freelancer" ? "Freelancer" :
+                                        senderRole === "moderator" ? "Moderator" :
+                                        senderRole === "staff" ? "Staff" : null;
                       return (
                         <div
                           key={msg.id}
@@ -351,14 +356,32 @@ export default function MessagesPage() {
                                 : "bg-muted"
                             }`}
                           >
+                            {roleLabel && !isMe && (
+                              <Badge 
+                                variant="secondary" 
+                                className="text-xs mb-1"
+                                data-testid={`badge-role-${msg.id}`}
+                              >
+                                {roleLabel}
+                              </Badge>
+                            )}
                             <p className="break-words">{msg.message}</p>
-                            <p
-                              className={`text-xs mt-1 ${
-                                isMe ? "text-primary-foreground/70" : "text-muted-foreground"
-                              }`}
-                            >
-                              {formatDateET(msg.createdAt)}
-                            </p>
+                            <div className={`flex items-center gap-2 mt-1 ${
+                              isMe ? "text-primary-foreground/70" : "text-muted-foreground"
+                            }`}>
+                              <p className="text-xs">
+                                {formatDateET(msg.createdAt)}
+                              </p>
+                              {isMe && roleLabel && (
+                                <Badge 
+                                  variant="outline" 
+                                  className="text-xs py-0 px-1"
+                                  data-testid={`badge-my-role-${msg.id}`}
+                                >
+                                  {roleLabel}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
