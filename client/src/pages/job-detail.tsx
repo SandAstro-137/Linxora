@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -119,22 +120,65 @@ interface JobChatMessage {
   senderRole?: string;
 }
 
-function CustomerFreelancerChat({ jobId, isCustomer }: { jobId: string; isCustomer: boolean }) {
+interface TeamMemberInfo {
+  id: string;
+  username: string;
+  avatar?: string | null;
+}
+
+function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isCustomer: boolean; job: EnrichedJob }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [newMessage, setNewMessage] = useState("");
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // For customers: get all team members to choose from
+  // For freelancers: the partner is always the customer
+  const { data: teamMembers = [] } = useQuery<TeamMemberInfo[]>({
+    queryKey: ["/api/jobs", jobId, "team-members-list"],
+    queryFn: async () => {
+      // Get team members from job freelancers endpoint
+      const res = await fetch(`/api/jobs/${jobId}/team-members`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.map((m: any) => ({
+        id: m.id || m.freelancerId,
+        username: m.username,
+        avatar: m.avatar,
+      }));
+    },
+    enabled: isCustomer,
+  });
+
+  // Auto-set partner when data loads
+  useEffect(() => {
+    if (isCustomer && teamMembers.length > 0 && !selectedPartnerId) {
+      setSelectedPartnerId(teamMembers[0].id);
+    } else if (!isCustomer && job.customerId) {
+      setSelectedPartnerId(job.customerId);
+    }
+  }, [isCustomer, teamMembers, job.customerId, selectedPartnerId]);
+
+  const partnerId = isCustomer ? selectedPartnerId : job.customerId;
+
   const { data: messages = [], isLoading } = useQuery<JobChatMessage[]>({
-    queryKey: ["/api/jobs", jobId, "chat"],
+    queryKey: ["/api/jobs", jobId, "chat", partnerId],
+    queryFn: async () => {
+      if (!partnerId) return [];
+      const res = await fetch(`/api/jobs/${jobId}/chat?partnerId=${partnerId}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
     refetchInterval: 3000,
+    enabled: !!partnerId,
   });
 
   const sendMessageMutation = useMutation({
     mutationFn: (message: string) =>
-      apiRequest("POST", `/api/jobs/${jobId}/chat`, { message }),
+      apiRequest("POST", `/api/jobs/${jobId}/chat`, { message, receiverId: partnerId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "chat"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "chat", partnerId] });
       setNewMessage("");
     },
     onError: () => {
@@ -150,13 +194,39 @@ function CustomerFreelancerChat({ jobId, isCustomer }: { jobId: string; isCustom
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const selectedPartnerName = isCustomer 
+    ? teamMembers.find(m => m.id === selectedPartnerId)?.username || "Team Member"
+    : job.customerUsername || "Customer";
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5" />
-          {isCustomer ? "Chat with Freelancer" : "Chat with Customer"}
+          {isCustomer ? "Private Chat with Team Member" : "Private Chat with Customer"}
         </CardTitle>
+        {isCustomer && teamMembers.length > 1 && (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-sm text-muted-foreground">Chatting with:</span>
+            <Select value={selectedPartnerId} onValueChange={setSelectedPartnerId}>
+              <SelectTrigger className="w-48" data-testid="select-chat-partner">
+                <SelectValue placeholder="Select team member" />
+              </SelectTrigger>
+              <SelectContent>
+                {teamMembers.map((member) => (
+                  <SelectItem key={member.id} value={member.id} data-testid={`chat-partner-${member.id}`}>
+                    {member.username}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {isCustomer && teamMembers.length === 1 && (
+          <p className="text-sm text-muted-foreground mt-1">
+            Chatting with: <span className="font-medium">{teamMembers[0]?.username}</span>
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="h-64 overflow-y-auto space-y-3 border rounded-md p-3">
@@ -165,9 +235,13 @@ function CustomerFreelancerChat({ jobId, isCustomer }: { jobId: string; isCustom
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
+          ) : !partnerId ? (
+            <p className="text-sm text-muted-foreground text-center py-16">
+              Select a team member to start chatting
+            </p>
           ) : messages.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-16">
-              No messages yet. Start the conversation!
+              No messages yet. Start the conversation with {selectedPartnerName}!
             </p>
           ) : (
             messages.map((msg) => {
@@ -214,19 +288,20 @@ function CustomerFreelancerChat({ jobId, isCustomer }: { jobId: string; isCustom
         </div>
         <div className="flex gap-2">
           <Input
-            placeholder="Type a message..."
+            placeholder={partnerId ? `Message ${selectedPartnerName}...` : "Select a team member first..."}
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && newMessage.trim() && !sendMessageMutation.isPending) {
+              if (e.key === "Enter" && newMessage.trim() && !sendMessageMutation.isPending && partnerId) {
                 sendMessageMutation.mutate(newMessage);
               }
             }}
+            disabled={!partnerId}
             data-testid="input-chat-message"
           />
           <Button
             onClick={() => sendMessageMutation.mutate(newMessage)}
-            disabled={!newMessage.trim() || sendMessageMutation.isPending}
+            disabled={!newMessage.trim() || sendMessageMutation.isPending || !partnerId}
             size="icon"
             data-testid="button-send-chat"
           >
@@ -1561,7 +1636,7 @@ export default function JobDetailPage() {
             )}
             {canAccessChat && (
               <TabsContent value="chat" className="space-y-6 mt-6">
-                <CustomerFreelancerChat jobId={jobId!} isCustomer={isCustomer} />
+                <CustomerFreelancerChat jobId={jobId!} isCustomer={isCustomer} job={job} />
               </TabsContent>
             )}
           </Tabs>

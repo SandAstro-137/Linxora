@@ -4894,7 +4894,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      const messages = await storage.getChatMessages(req.params.jobId);
+      // Get the partner ID from query param (for 1-on-1 private chats)
+      const partnerId = req.query.partnerId as string | undefined;
+      
+      const allMessages = await storage.getChatMessages(req.params.jobId);
+      
+      // Filter to only show messages between current user and their chat partner
+      let messages = allMessages;
+      if (partnerId) {
+        // Show only messages between userId and partnerId
+        messages = allMessages.filter(
+          (msg) =>
+            (msg.senderId === userId && msg.receiverId === partnerId) ||
+            (msg.senderId === partnerId && msg.receiverId === userId)
+        );
+      } else {
+        // If no partner specified, show messages where current user is sender or receiver
+        messages = allMessages.filter(
+          (msg) => msg.senderId === userId || msg.receiverId === userId
+        );
+      }
       
       // Mark messages as read for current user
       await storage.markChatMessagesAsRead(req.params.jobId, userId);
@@ -4926,7 +4945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const userId = req.session.userId!;
-      const { message } = req.body;
+      const { message, receiverId: specifiedReceiverId } = req.body;
 
       if (!message || typeof message !== 'string' || message.trim().length === 0) {
         return res.status(400).json({ error: "Message is required" });
@@ -4945,8 +4964,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      // Determine receiver (customer if sender is freelancer/collaborator/team member, freelancer if sender is customer)
-      const receiverId = isCustomer ? job.freelancerId! : job.customerId;
+      // Determine receiver - use specified receiverId if provided, otherwise default logic
+      let receiverId: string;
+      if (specifiedReceiverId) {
+        receiverId = specifiedReceiverId;
+      } else {
+        // Default: customer sends to lead freelancer, freelancer sends to customer
+        receiverId = isCustomer ? job.freelancerId! : job.customerId;
+      }
 
       const chatMessage = await storage.createChatMessage({
         jobId: req.params.jobId,
