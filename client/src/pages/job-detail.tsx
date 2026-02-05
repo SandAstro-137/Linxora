@@ -1332,13 +1332,19 @@ export default function JobDetailPage() {
     (job.status === "claimed" || job.status === "in_progress");
 
   // Customer or freelancer can access workspace when job is active
+  // Workspace is freelancer-team only (not customers)
   const canAccessWorkspace = 
+    (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
+    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
+
+  // Chat is for both customers and freelancers
+  const canAccessChat = 
     (isCustomer || user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
     (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
 
   const getTabGridCols = () => {
-    // Overview (1) + Team (if member) + Workspace (if can access) + Chat (if can access)
-    const count = 1 + (isTeamMember ? 1 : 0) + (canAccessWorkspace ? 2 : 0);
+    // Overview (1) + Team (if member) + Workspace (if freelancer) + Chat (if customer or freelancer)
+    const count = 1 + (isTeamMember ? 1 : 0) + (canAccessWorkspace ? 1 : 0) + (canAccessChat ? 1 : 0);
     if (count >= 4) return 'grid-cols-4';
     if (count === 3) return 'grid-cols-3';
     if (count === 2) return 'grid-cols-2';
@@ -1460,7 +1466,7 @@ export default function JobDetailPage() {
                   Workspace
                 </TabsTrigger>
               )}
-              {canAccessWorkspace && (
+              {canAccessChat && (
                 <TabsTrigger value="chat" data-testid="tab-chat">
                   <MessageSquare className="w-4 h-4 mr-2" />
                   Chat
@@ -1553,7 +1559,7 @@ export default function JobDetailPage() {
                 <TeamCollaboration jobId={jobId!} />
               </TabsContent>
             )}
-            {canAccessWorkspace && (
+            {canAccessChat && (
               <TabsContent value="chat" className="space-y-6 mt-6">
                 <CustomerFreelancerChat jobId={jobId!} isCustomer={isCustomer} />
               </TabsContent>
