@@ -4872,6 +4872,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Job Team Members endpoint (for chat partner selection)
+  app.get("/api/jobs/:jobId/team-members", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const teamMembers: Array<{ id: string; username: string; avatar: string | null }> = [];
+
+      // Add lead freelancer
+      if (job.freelancerId) {
+        const lead = await storage.getUser(job.freelancerId);
+        if (lead) {
+          teamMembers.push({ id: lead.id, username: lead.username, avatar: lead.avatar });
+        }
+      }
+
+      // Add collaborators
+      if (job.collaborators) {
+        for (const collabId of job.collaborators) {
+          if (!teamMembers.find(tm => tm.id === collabId)) {
+            const collab = await storage.getUser(collabId);
+            if (collab) {
+              teamMembers.push({ id: collab.id, username: collab.username, avatar: collab.avatar });
+            }
+          }
+        }
+      }
+
+      // Add from jobFreelancers table (multi-freelancer assignments)
+      const jobFreelancers = await storage.getJobFreelancers(req.params.jobId);
+      for (const jf of jobFreelancers) {
+        if (!teamMembers.find(tm => tm.id === jf.freelancerId)) {
+          const fl = await storage.getUser(jf.freelancerId);
+          if (fl) {
+            teamMembers.push({ id: fl.id, username: fl.username, avatar: fl.avatar });
+          }
+        }
+      }
+
+      res.json(teamMembers);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Chat Message routes
   app.get("/api/jobs/:jobId/chat", requireAuth, async (req, res) => {
     try {

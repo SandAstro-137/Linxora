@@ -136,18 +136,7 @@ function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isC
   // For customers: get all team members to choose from
   // For freelancers: the partner is always the customer
   const { data: teamMembers = [] } = useQuery<TeamMemberInfo[]>({
-    queryKey: ["/api/jobs", jobId, "team-members-list"],
-    queryFn: async () => {
-      // Get team members from job freelancers endpoint
-      const res = await fetch(`/api/jobs/${jobId}/team-members`);
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.map((m: any) => ({
-        id: m.id || m.freelancerId,
-        username: m.username,
-        avatar: m.avatar,
-      }));
-    },
+    queryKey: ["/api/jobs", jobId, "team-members"],
     enabled: isCustomer,
   });
 
