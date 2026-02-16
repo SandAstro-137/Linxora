@@ -665,6 +665,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return splits;
   }
 
+  // Check job submission cooldown status for current customer
+  app.get("/api/jobs/cooldown", requireAuth, async (req, res) => {
+    try {
+      const customerJobs = await storage.getJobs({ customerId: req.session.userId! });
+
+      const hasPendingReview = customerJobs.find(
+        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
+      );
+
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      const recentlySubmitted = customerJobs.find(
+        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
+      );
+
+      let cooldownEndsAt: string | null = null;
+      if (recentlySubmitted?.submittedForReviewAt) {
+        cooldownEndsAt = new Date(new Date(recentlySubmitted.submittedForReviewAt).getTime() + threeHoursMs).toISOString();
+      }
+
+      res.json({
+        canSubmit: !hasPendingReview && !recentlySubmitted,
+        hasPendingReview: !!hasPendingReview,
+        pendingReviewTitle: hasPendingReview?.title || null,
+        cooldownEndsAt,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/jobs", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
