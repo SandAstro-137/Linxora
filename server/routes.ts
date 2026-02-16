@@ -1308,10 +1308,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only draft jobs can be submitted for approval" });
       }
 
-      // Prevent submitting more than one job for review at a time
+      // Prevent submitting more than one job for review at a time (including this job itself)
       const customerJobs = await storage.getJobs({ customerId: job.customerId });
       const pendingReviewJob = customerJobs.find(
-        j => j.id !== job.id && (j.status === JobStatus.PENDING_APPROVAL || j.status === "pending")
+        j => (j.status === JobStatus.PENDING_APPROVAL || j.status === "pending")
       );
       if (pendingReviewJob) {
         return res.status(400).json({ 
@@ -1319,10 +1319,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Enforce 3-hour cooldown between job review submissions
+      // Enforce 3-hour cooldown between job review submissions (check ALL jobs including this one)
       const threeHoursMs = 3 * 60 * 60 * 1000;
       const recentlySubmitted = customerJobs.find(
-        j => j.id !== job.id && j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
+        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
       );
       if (recentlySubmitted) {
         const elapsed = Date.now() - new Date(recentlySubmitted.submittedForReviewAt!).getTime();
