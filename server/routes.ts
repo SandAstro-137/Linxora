@@ -706,13 +706,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
-      const premiumFee = validated.isPremium ? 1000 : 0;
+      const premiumFee = validated.isPremium ? 100 : 0;
       const totalCost = budget + premiumFee;
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
         });
       }
 
@@ -753,13 +753,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
-      const premiumFee = validated.isPremium ? 1000 : 0;
+      const premiumFee = validated.isPremium ? 100 : 0;
       const totalCost = budget + premiumFee;
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
         });
       }
 
@@ -1315,13 +1315,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(job.budget);
-      const premiumFee = job.isPremium ? 1000 : 0;
+      const premiumFee = job.isPremium ? 100 : 0;
       const totalCost = budget + premiumFee;
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium fee" : ""}). Available: $${availableBalance.toFixed(2)}.` 
+          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium fee" : ""}). Available: $${availableBalance.toFixed(2)}.` 
         });
       }
 

@@ -71,7 +71,7 @@ export default function CreateJobPage() {
 
   const budgetValue = parseFloat(form.watch("budget") || "0");
   const isPremium = form.watch("isPremium");
-  const premiumFee = isPremium ? 1000 : 0;
+  const premiumFee = isPremium ? 100 : 0;
   const totalCost = budgetValue + premiumFee;
   const availableBalance = wallet 
     ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
@@ -342,7 +342,7 @@ export default function CreateJobPage() {
                           <Star className={`w-5 h-5 ${field.value ? "text-amber-500 fill-amber-500" : "text-muted-foreground"}`} />
                           <div className="flex-1">
                             <FormLabel className="text-sm font-medium cursor-pointer">
-                              Premium Listing (+$1,000)
+                              Premium Listing (+$100)
                             </FormLabel>
                             <FormDescription className="text-xs">
                               Get priority placement in freelancer recommendations and stand out from other listings
@@ -373,7 +373,7 @@ export default function CreateJobPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Available: ${availableBalance.toFixed(2)} | Total required: ${totalCost.toFixed(2)}
-                          {isPremium && ` (Budget $${budgetValue.toFixed(2)} + Premium $1,000)`}
+                          {isPremium && ` (Budget $${budgetValue.toFixed(2)} + Premium $100)`}
                         </p>
                       </div>
                       {!hasSufficientFunds && (
