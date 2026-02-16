@@ -1319,6 +1319,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Enforce 3-hour cooldown between job review submissions
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      const recentlySubmitted = customerJobs.find(
+        j => j.id !== job.id && j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
+      );
+      if (recentlySubmitted) {
+        const elapsed = Date.now() - new Date(recentlySubmitted.submittedForReviewAt!).getTime();
+        const remaining = threeHoursMs - elapsed;
+        const hoursLeft = Math.floor(remaining / (60 * 60 * 1000));
+        const minutesLeft = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
+        return res.status(400).json({
+          error: `Please wait ${hoursLeft > 0 ? `${hoursLeft}h ` : ""}${minutesLeft}m before submitting another job for review.`
+        });
+      }
+
       // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);
       if (!wallet) {
@@ -1347,10 +1362,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: EscrowStatus.HELD,
       });
 
-      // Update job status to pending approval
+      // Update job status to pending approval and record submission time
       const updatedJob = await storage.updateJob(req.params.id, {
         status: JobStatus.PENDING_APPROVAL,
         moderatorFeedback: null,
+        submittedForReviewAt: new Date(),
       });
 
       // Notify moderators
