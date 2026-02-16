@@ -699,6 +699,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (validated.requirements) {
         validated.requirements = sanitizeText(validated.requirements);
       }
+
+      // Prevent spam: only one pending review at a time + 3-hour cooldown
+      const existingJobs = await storage.getJobs({ customerId: req.session.userId! });
+      const hasPendingReview = existingJobs.find(
+        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
+      );
+      if (hasPendingReview) {
+        return res.status(400).json({
+          error: `You already have a job pending review ("${hasPendingReview.title}"). Please wait for it to be reviewed before creating another.`
+        });
+      }
+
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      const recentlySubmitted = existingJobs.find(
+        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
+      );
+      if (recentlySubmitted) {
+        const elapsed = Date.now() - new Date(recentlySubmitted.submittedForReviewAt!).getTime();
+        const remaining = threeHoursMs - elapsed;
+        const hoursLeft = Math.floor(remaining / (60 * 60 * 1000));
+        const minutesLeft = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
+        return res.status(400).json({
+          error: `Please wait ${hoursLeft > 0 ? `${hoursLeft}h ` : ""}${minutesLeft}m before creating another job.`
+        });
+      }
       
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {

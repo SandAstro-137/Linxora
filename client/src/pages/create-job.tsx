@@ -49,6 +49,7 @@ export default function CreateJobPage() {
   const editJobId = new URLSearchParams(searchParams).get("edit");
   const isEditMode = !!editJobId;
   const [submitAction, setSubmitAction] = useState<"draft" | "submit">("submit");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data: wallet } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
@@ -138,6 +139,7 @@ export default function CreateJobPage() {
       }
     },
     onError: (error: any) => {
+      setIsSubmitting(false);
       toast({
         title: isEditMode ? "Failed to update job" : "Failed to save job",
         description: error.message || "Please try again later.",
@@ -160,6 +162,7 @@ export default function CreateJobPage() {
       setLocation("/my-jobs");
     },
     onError: (error: any) => {
+      setIsSubmitting(false);
       toast({
         title: "Failed to submit for approval",
         description: error.message || "Please check your wallet balance and try again.",
@@ -169,6 +172,8 @@ export default function CreateJobPage() {
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     createJobMutation.mutate({ ...values, action: submitAction });
   }
 
@@ -415,7 +420,7 @@ export default function CreateJobPage() {
                 <Button 
                   type="submit" 
                   variant="secondary"
-                  disabled={createJobMutation.isPending}
+                  disabled={isSubmitting || createJobMutation.isPending}
                   onClick={() => setSubmitAction("draft")}
                   data-testid="button-save-draft"
                 >
@@ -424,12 +429,12 @@ export default function CreateJobPage() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0)}
+                  disabled={isSubmitting || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0)}
                   onClick={() => setSubmitAction("submit")}
                   data-testid="button-submit-job"
                 >
                   <Send className="w-4 h-4 mr-2" />
-                  {(createJobMutation.isPending || submitForApprovalMutation.isPending) && submitAction === "submit"
+                  {isSubmitting && submitAction === "submit"
                     ? (submitForApprovalMutation.isPending ? "Submitting for review..." : "Saving...") 
                     : (isEditMode ? "Update & Submit" : "Submit for Review")}
                 </Button>
