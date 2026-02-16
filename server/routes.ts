@@ -1311,7 +1311,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Prevent submitting more than one job for review at a time
       const customerJobs = await storage.getJobs({ customerId: job.customerId });
       const pendingReviewJob = customerJobs.find(
-        j => j.id !== job.id && j.status === JobStatus.PENDING_APPROVAL
+        j => j.id !== job.id && (j.status === JobStatus.PENDING_APPROVAL || j.status === "pending")
       );
       if (pendingReviewJob) {
         return res.status(400).json({ 
