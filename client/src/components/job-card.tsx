@@ -1,7 +1,7 @@
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Clock, DollarSign, User } from "lucide-react";
+import { Clock, DollarSign, User, Star } from "lucide-react";
 import { Job } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate } from "@/lib/timezone";
@@ -35,9 +35,17 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
     <Card className="hover-elevate transition-all" data-testid={`card-job-${job.id}`}>
       <CardHeader className="space-y-2">
         <div className="flex items-start justify-between gap-2 flex-wrap">
-          <h3 className="text-lg font-semibold line-clamp-1" data-testid={`text-job-title-${job.id}`}>
-            {job.title}
-          </h3>
+          <div className="flex items-center gap-2 min-w-0">
+            {job.isPremium && (
+              <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 shrink-0" variant="secondary" data-testid={`badge-premium-${job.id}`}>
+                <Star className="w-3 h-3 mr-1 fill-current" />
+                Premium
+              </Badge>
+            )}
+            <h3 className="text-lg font-semibold line-clamp-1" data-testid={`text-job-title-${job.id}`}>
+              {job.title}
+            </h3>
+          </div>
           <Badge className={getStatusColor(job.status)} variant="secondary">
             {job.status}
           </Badge>

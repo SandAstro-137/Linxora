@@ -477,6 +477,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Sort premium jobs first for priority placement
+      jobs.sort((a, b) => {
+        if (a.isPremium && !b.isPremium) return -1;
+        if (!a.isPremium && b.isPremium) return 1;
+        return 0;
+      });
+      
       res.json(jobs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -489,6 +496,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const jobs = allJobs.filter(j => 
         j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active"
       );
+      // Sort premium jobs first for priority placement
+      jobs.sort((a, b) => {
+        if (a.isPremium && !b.isPremium) return -1;
+        if (!a.isPremium && b.isPremium) return 1;
+        return 0;
+      });
       res.json(jobs.slice(0, 10));
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -693,10 +706,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
-      const walletBalance = parseFloat(wallet.usdtBalance || "0");
+      const premiumFee = validated.isPremium ? 1000 : 0;
+      const totalCost = budget + premiumFee;
+      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
-      if (budget > walletBalance) {
-        return res.status(400).json({ error: "Budget cannot exceed your wallet balance" });
+      if (totalCost > availableBalance) {
+        return res.status(400).json({ 
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+        });
       }
 
       const job = await storage.createJob({
@@ -729,20 +746,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const validated = insertJobSchema.parse(req.body);
       
-      // Check wallet balance
+      // Check wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {
         return res.status(400).json({ error: "Wallet not found" });
       }
 
       const budget = parseFloat(validated.budget);
-      const walletBalance = parseFloat(wallet.usdtBalance || "0");
+      const premiumFee = validated.isPremium ? 1000 : 0;
+      const totalCost = budget + premiumFee;
+      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
-      if (budget > walletBalance) {
-        return res.status(400).json({ error: "Budget cannot exceed your wallet balance" });
+      if (totalCost > availableBalance) {
+        return res.status(400).json({ 
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+        });
       }
 
-      // Update job, reset status to pending, and clear moderator feedback
+      // Update job as draft, clear moderator feedback
       const updatedJob = await storage.updateJob(req.params.id, {
         ...validated,
         status: "pending",
@@ -1287,20 +1308,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only draft jobs can be submitted for approval" });
       }
 
-      // Validate wallet balance covers budget
+      // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);
       if (!wallet) {
         return res.status(400).json({ error: "Wallet not found" });
       }
 
       const budget = parseFloat(job.budget);
+      const premiumFee = job.isPremium ? 1000 : 0;
+      const totalCost = budget + premiumFee;
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
-      if (budget > availableBalance) {
+      if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: "Insufficient available balance to fund this job. Please deposit more funds." 
+          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $1,000 premium fee" : ""}). Available: $${availableBalance.toFixed(2)}.` 
         });
       }
+
+      // Lock funds in escrow at submission time (payment at creation)
+      await storage.adjustPendingBalance(job.customerId, totalCost);
+
+      // Create escrow record
+      await storage.createEscrow({
+        jobId: job.id,
+        customerId: job.customerId,
+        totalAmount: totalCost.toFixed(2),
+        status: EscrowStatus.HELD,
+      });
 
       // Update job status to pending approval
       const updatedJob = await storage.updateJob(req.params.id, {
@@ -1316,7 +1350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId: mod.id,
           type: "moderation",
           title: "New job pending approval",
-          message: `Job "${job.title}" is waiting for moderation review.`,
+          message: `Job "${job.title}"${job.isPremium ? " [PREMIUM]" : ""} is waiting for moderation review.`,
           relatedId: job.id,
           sourceType: "system",
           sourceId: job.id,
@@ -1342,31 +1376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Job is not pending approval" });
       }
 
-      // Lock customer funds in escrow
-      const wallet = await storage.getWallet(job.customerId);
-      if (!wallet) {
-        return res.status(400).json({ error: "Customer wallet not found" });
-      }
-
-      const budget = parseFloat(job.budget);
-      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
-
-      if (budget > availableBalance) {
-        return res.status(400).json({ 
-          error: "Customer has insufficient funds to cover job budget" 
-        });
-      }
-
-      // Put funds on hold (pending balance)
-      await storage.adjustPendingBalance(job.customerId, budget);
-
-      // Create escrow record
-      await storage.createEscrow({
-        jobId: job.id,
-        customerId: job.customerId,
-        totalAmount: job.budget,
-        status: EscrowStatus.HELD,
-      });
+      // Funds are already locked in escrow at submission time - no need to lock again here
 
       // Set job expiration (2 months from approval)
       const twoMonthsFromNow = new Date();
@@ -1439,6 +1449,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
       }
 
+      // Refund escrowed funds since job was rejected
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        const refundAmount = parseFloat(escrow.totalAmount);
+        await storage.adjustPendingBalance(job.customerId, -refundAmount);
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+
       const updatedJob = await storage.updateJob(req.params.id, {
         status: "rejected",
         moderatorFeedback: feedback.trim(),
@@ -1456,8 +1474,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.createNotification({
         userId: job.customerId,
         type: "job_rejected",
-        title: "Job needs changes",
-        message: `Your job "${job.title}" was not approved. Please review the feedback.`,
+        title: "Job rejected - funds refunded",
+        message: `Your job "${job.title}" was not approved. Your funds have been released back to your wallet. Please review the feedback.`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,
@@ -1487,6 +1505,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
       }
 
+      // Refund escrowed funds - customer will re-pay when resubmitting
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        const refundAmount = parseFloat(escrow.totalAmount);
+        await storage.adjustPendingBalance(job.customerId, -refundAmount);
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+
       const updatedJob = await storage.updateJob(req.params.id, {
         status: "changes_requested",
         moderatorFeedback: feedback.trim(),
@@ -1504,8 +1530,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.createNotification({
         userId: job.customerId,
         type: "job_changes_requested",
-        title: "Job changes requested",
-        message: `A moderator has requested changes to your job "${job.title}".`,
+        title: "Job changes requested - funds refunded",
+        message: `A moderator has requested changes to your job "${job.title}". Your funds have been released back to your wallet.`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,

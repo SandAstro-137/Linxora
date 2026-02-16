@@ -16,7 +16,8 @@ import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Save, Send, AlertCircle, Wallet } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Save, Send, AlertCircle, Wallet, Star } from "lucide-react";
 
 const formSchema = insertJobSchema.extend({
   budget: z.string().min(1, "Budget is required"),
@@ -64,14 +65,18 @@ export default function CreateJobPage() {
       deadline: "",
       customerId: user?.id || "",
       status: JobStatus.DRAFT,
+      isPremium: false,
     },
   });
 
   const budgetValue = parseFloat(form.watch("budget") || "0");
+  const isPremium = form.watch("isPremium");
+  const premiumFee = isPremium ? 1000 : 0;
+  const totalCost = budgetValue + premiumFee;
   const availableBalance = wallet 
     ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
     : 0;
-  const hasSufficientFunds = availableBalance >= budgetValue;
+  const hasSufficientFunds = availableBalance >= totalCost;
 
   // Fetch job data when in edit mode
   const { data: existingJob, isLoading: isLoadingJob } = useQuery<Job>({
@@ -91,6 +96,7 @@ export default function CreateJobPage() {
         deadline: existingJob.deadline ? new Date(existingJob.deadline).toISOString().split('T')[0] : "",
         customerId: existingJob.customerId,
         status: existingJob.status,
+        isPremium: existingJob.isPremium || false,
       });
     }
   }, [existingJob, isEditMode, form]);
@@ -325,7 +331,38 @@ export default function CreateJobPage() {
                 )}
               />
 
-              {budgetValue > 0 && (
+              <FormField
+                control={form.control}
+                name="isPremium"
+                render={({ field }) => (
+                  <FormItem>
+                    <Card className={field.value ? "border-amber-500/50 bg-amber-500/5" : ""}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-3">
+                          <Star className={`w-5 h-5 ${field.value ? "text-amber-500 fill-amber-500" : "text-muted-foreground"}`} />
+                          <div className="flex-1">
+                            <FormLabel className="text-sm font-medium cursor-pointer">
+                              Premium Listing (+$1,000)
+                            </FormLabel>
+                            <FormDescription className="text-xs">
+                              Get priority placement in freelancer recommendations and stand out from other listings
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              data-testid="switch-premium"
+                            />
+                          </FormControl>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </FormItem>
+                )}
+              />
+
+              {(budgetValue > 0 || isPremium) && (
                 <Card className={hasSufficientFunds ? "border-green-500/50 bg-green-500/5" : "border-destructive/50 bg-destructive/5"}>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
@@ -335,7 +372,8 @@ export default function CreateJobPage() {
                           {hasSufficientFunds ? "Funds available" : "Insufficient funds"}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Available: ${availableBalance.toFixed(2)} | Required: ${budgetValue.toFixed(2)}
+                          Available: ${availableBalance.toFixed(2)} | Total required: ${totalCost.toFixed(2)}
+                          {isPremium && ` (Budget $${budgetValue.toFixed(2)} + Premium $1,000)`}
                         </p>
                       </div>
                       {!hasSufficientFunds && (
@@ -354,13 +392,13 @@ export default function CreateJobPage() {
                 </Card>
               )}
 
-              {!hasSufficientFunds && budgetValue > 0 && (
+              {!hasSufficientFunds && totalCost > 0 && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle>Funds Required</AlertTitle>
                   <AlertDescription>
-                    You need ${(budgetValue - availableBalance).toFixed(2)} more to submit this job for approval. 
-                    The full budget amount will be held in escrow when the job is approved.
+                    You need ${(totalCost - availableBalance).toFixed(2)} more to submit this job for approval. 
+                    The total amount{isPremium ? " (budget + premium fee)" : ""} will be held in escrow when submitted.
                   </AlertDescription>
                 </Alert>
               )}
@@ -386,7 +424,7 @@ export default function CreateJobPage() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && budgetValue > 0)}
+                  disabled={createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0)}
                   onClick={() => setSubmitAction("submit")}
                   data-testid="button-submit-job"
                 >
