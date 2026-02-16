@@ -1308,6 +1308,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only draft jobs can be submitted for approval" });
       }
 
+      // Prevent submitting more than one job for review at a time
+      const customerJobs = await storage.getJobs({ customerId: job.customerId });
+      const pendingReviewJob = customerJobs.find(
+        j => j.id !== job.id && j.status === JobStatus.PENDING_APPROVAL
+      );
+      if (pendingReviewJob) {
+        return res.status(400).json({ 
+          error: `You already have a job pending review ("${pendingReviewJob.title}"). Please wait for it to be reviewed before submitting another.`
+        });
+      }
+
       // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);
       if (!wallet) {
