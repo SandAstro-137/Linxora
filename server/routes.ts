@@ -584,6 +584,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check job submission cooldown status for current customer (must be before /api/jobs/:id)
+  app.get("/api/jobs/cooldown", requireAuth, async (req, res) => {
+    try {
+      const customerJobs = await storage.getJobs({ customerId: req.session.userId! });
+
+      const hasPendingReview = customerJobs.find(
+        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
+      );
+
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      const recentlySubmitted = customerJobs.find(
+        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
+      );
+
+      let cooldownEndsAt: string | null = null;
+      if (recentlySubmitted?.submittedForReviewAt) {
+        cooldownEndsAt = new Date(new Date(recentlySubmitted.submittedForReviewAt).getTime() + threeHoursMs).toISOString();
+      }
+
+      res.json({
+        canSubmit: !hasPendingReview && !recentlySubmitted,
+        hasPendingReview: !!hasPendingReview,
+        pendingReviewTitle: hasPendingReview?.title || null,
+        cooldownEndsAt,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/jobs/:id", requireAuth, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);
@@ -662,36 +692,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     return splits;
   }
-
-  // Check job submission cooldown status for current customer
-  app.get("/api/jobs/cooldown", requireAuth, async (req, res) => {
-    try {
-      const customerJobs = await storage.getJobs({ customerId: req.session.userId! });
-
-      const hasPendingReview = customerJobs.find(
-        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
-      );
-
-      const threeHoursMs = 3 * 60 * 60 * 1000;
-      const recentlySubmitted = customerJobs.find(
-        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
-      );
-
-      let cooldownEndsAt: string | null = null;
-      if (recentlySubmitted?.submittedForReviewAt) {
-        cooldownEndsAt = new Date(new Date(recentlySubmitted.submittedForReviewAt).getTime() + threeHoursMs).toISOString();
-      }
-
-      res.json({
-        canSubmit: !hasPendingReview && !recentlySubmitted,
-        hasPendingReview: !!hasPendingReview,
-        pendingReviewTitle: hasPendingReview?.title || null,
-        cooldownEndsAt,
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
 
   app.post("/api/jobs", requireAuth, async (req, res) => {
     try {
@@ -1098,25 +1098,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "This freelancer already has an active job and cannot accept new jobs" });
       }
 
-      // Check if customer has enough available balance (total - pending)
-      const customerWallet = await storage.getWallet(req.session.userId!);
-      if (!customerWallet) {
-        return res.status(404).json({ error: "Customer wallet not found" });
-      }
-
-      const jobBudget = parseFloat(job.budget);
-      const jobPremium = parseFloat(job.premiumAmount || "0");
-      const totalJobCost = jobBudget + jobPremium;
-      const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
-      const customerPending = parseFloat(customerWallet.pendingUsdtBalance || "0");
-      const availableBalance = customerUSDT - customerPending;
-
-      if (availableBalance < totalJobCost) {
-        return res.status(400).json({ error: "Insufficient available USDT balance to approve this job" });
-      }
-
-      // Add to customer's pending balance (budget + premium locked)
-      await storage.adjustPendingBalance(req.session.userId!, totalJobCost);
+      // Funds already deducted from customer wallet at job submission time
+      // No need for additional balance check or pending balance adjustment
 
       // Update job - assign to freelancer and set status to claimed
       const updatedJob = await storage.updateJob(req.params.id, {
@@ -1237,29 +1220,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No freelancer assigned to this job" });
       }
 
-      // Release pending funds from customer (budget + premium)
+      // Funds already deducted from customer wallet at submission time
+      // Just mark escrow as released and pay the freelancer
       const jobBudget = parseFloat(job.budget);
-      const jobPremium = parseFloat(job.premiumAmount || "0");
-      const totalCost = jobBudget + jobPremium;
-      await storage.adjustPendingBalance(job.customerId, -totalCost);
-
-      // Get customer wallet to deduct full amount (budget + premium; premium goes to Linxora)
-      const customerWallet = await storage.getWallet(job.customerId);
-      if (customerWallet) {
-        const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
-        await storage.updateWallet(job.customerId, {
-          usdtBalance: (customerUSDT - totalCost).toFixed(8),
-        });
-
-        await storage.createTransaction({
-          walletId: customerWallet.id,
-          type: "withdrawal",
-          currency: "USDT",
-          amount: totalCost.toFixed(8),
-          usdAmount: totalCost.toFixed(2),
-          status: "completed",
-          transactionHash: `job-payment-${job.id}`,
-        });
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
       }
 
       // Transfer level-based portion of budget to freelancer (premium stays with Linxora)
@@ -1410,16 +1376,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const budget = parseFloat(job.budget);
       const premiumFee = parseFloat(job.premiumAmount || "0");
       const totalCost = budget + premiumFee;
-      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
+      const walletBalance = parseFloat(wallet.usdtBalance || "0");
 
-      if (totalCost > availableBalance) {
+      if (totalCost > walletBalance) {
         return res.status(400).json({ 
-          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium fee` : ""}). Available: $${availableBalance.toFixed(2)}.` 
+          error: `Insufficient balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium fee` : ""}). Balance: $${walletBalance.toFixed(2)}.` 
         });
       }
 
-      // Lock funds in escrow at submission time (payment at creation)
-      await storage.adjustPendingBalance(job.customerId, totalCost);
+      // Charge wallet immediately when submitting for review
+      await storage.updateWallet(job.customerId, {
+        usdtBalance: (walletBalance - totalCost).toFixed(8),
+      });
+
+      // Create transaction record for the charge
+      await storage.createTransaction({
+        walletId: wallet.id,
+        type: "escrow_lock",
+        currency: "USDT",
+        amount: totalCost.toFixed(8),
+        usdAmount: totalCost.toFixed(2),
+        status: "completed",
+        transactionHash: `escrow-lock-${job.id}-${Date.now()}`,
+      });
 
       // Create escrow record
       await storage.createEscrow({
@@ -1543,11 +1522,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
       }
 
-      // Refund escrowed funds since job was rejected
+      // Refund charged funds back to wallet since job was rejected
       const escrow = await storage.getEscrowByJob(job.id);
       if (escrow && escrow.status === EscrowStatus.HELD) {
         const refundAmount = parseFloat(escrow.totalAmount);
-        await storage.adjustPendingBalance(job.customerId, -refundAmount);
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (currentBalance + refundAmount).toFixed(8),
+          });
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: refundAmount.toFixed(8),
+            usdAmount: refundAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `rejection-refund-${job.id}-${Date.now()}`,
+          });
+        }
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
       }
 
@@ -1599,11 +1593,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Please provide feedback (at least 10 characters)" });
       }
 
-      // Refund escrowed funds - customer will re-pay when resubmitting
+      // Refund charged funds back to wallet - customer will re-pay when resubmitting
       const escrow = await storage.getEscrowByJob(job.id);
       if (escrow && escrow.status === EscrowStatus.HELD) {
         const refundAmount = parseFloat(escrow.totalAmount);
-        await storage.adjustPendingBalance(job.customerId, -refundAmount);
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (currentBalance + refundAmount).toFixed(8),
+          });
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: refundAmount.toFixed(8),
+            usdAmount: refundAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `changes-refund-${job.id}-${Date.now()}`,
+          });
+        }
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
       }
 
@@ -1819,26 +1828,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const numFreelancers = allFreelancerIds.length;
       const sharePerFreelancer = numFreelancers > 0 ? budget / numFreelancers : 0;
 
-      // Release pending funds from customer (budget + premium)
-      await storage.adjustPendingBalance(job.customerId, -totalCost);
-
-      // Deduct full amount from customer wallet (premium goes to Linxora)
-      const customerWallet = await storage.getWallet(job.customerId);
-      if (customerWallet) {
-        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
-        await storage.updateWallet(job.customerId, {
-          usdtBalance: (customerBalance - totalCost).toFixed(8),
-        });
-
-        await storage.createTransaction({
-          walletId: customerWallet.id,
-          type: "escrow_release",
-          currency: "USDT",
-          amount: totalCost.toFixed(8),
-          usdAmount: totalCost.toFixed(2),
-          status: "completed",
-          transactionHash: `escrow-release-${job.id}`,
-        });
+      // Funds already deducted from customer wallet at submission time
+      // Just release escrow and pay freelancers
+      const escrow2 = await storage.getEscrowByJob(job.id);
+      if (escrow2 && escrow2.status === EscrowStatus.HELD) {
+        await storage.updateEscrow(escrow2.id, { status: EscrowStatus.RELEASED });
       }
 
       // Pay each freelancer based on their level
@@ -2270,21 +2264,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resolutionNotes: resolutionNotes.trim(),
       });
 
-      // Release pending balance from customer (budget + premium)
-      await storage.adjustPendingBalance(job.customerId, -totalCost);
+      // Funds already deducted from customer wallet at submission time
+      // Only refund the customerRefund portion back to wallet (premium stays with Linxora)
+      if (customerRefund > 0) {
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (customerBalance + customerRefund).toFixed(8),
+          });
 
-      // Process payouts - deduct full amount, refund customerRefund portion (premium stays with Linxora)
-      const customerWallet = await storage.getWallet(job.customerId);
-      if (customerWallet) {
-        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
-        
-        // Deduct total cost (budget + premium), refund customerRefund amount
-        const netDeduction = totalCost - customerRefund;
-        await storage.updateWallet(job.customerId, {
-          usdtBalance: (customerBalance - netDeduction).toFixed(8),
-        });
-
-        if (customerRefund > 0) {
           await storage.createTransaction({
             walletId: customerWallet.id,
             type: "refund",
@@ -2393,15 +2382,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
       }
 
-      // Release pending balance (budget + premium = full refund)
+      // Credit full refund back to wallet (budget + premium)
       const budget = parseFloat(job.budget);
       const jobPremium = parseFloat(job.premiumAmount || "0");
       const totalRefund = budget + jobPremium;
-      await storage.adjustPendingBalance(job.customerId, -totalRefund);
 
-      // Create refund transaction for full amount
       const customerWallet = await storage.getWallet(job.customerId);
       if (customerWallet) {
+        const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (currentBalance + totalRefund).toFixed(8),
+        });
         await storage.createTransaction({
           walletId: customerWallet.id,
           type: "refund",
@@ -2563,37 +2554,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const customerRefund = parseFloat(negotiation.proposedCustomerRefund || "0");
         const budget = parseFloat(job.budget);
 
-        // Release pending balance
-        await storage.adjustPendingBalance(job.customerId, -budget);
-
         // Update escrow
         const escrow = await storage.getEscrowByJob(job.id);
         if (escrow) {
           await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
         }
 
-        // Process payments
-        const customerWallet = await storage.getWallet(job.customerId);
-        if (customerWallet && customerRefund > 0) {
-          const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
-          await storage.updateWallet(job.customerId, {
-            usdtBalance: (customerBalance - budget + customerRefund).toFixed(8),
-          });
+        // Funds already deducted at submission time
+        // Only refund the customerRefund portion back to wallet
+        if (customerRefund > 0) {
+          const customerWallet = await storage.getWallet(job.customerId);
+          if (customerWallet) {
+            const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+            await storage.updateWallet(job.customerId, {
+              usdtBalance: (customerBalance + customerRefund).toFixed(8),
+            });
 
-          await storage.createTransaction({
-            walletId: customerWallet.id,
-            type: "refund",
-            currency: "USDT",
-            amount: customerRefund.toFixed(8),
-            usdAmount: customerRefund.toFixed(2),
-            status: "completed",
-            transactionHash: `cancel-refund-${job.id}`,
-          });
-        } else if (customerWallet) {
-          const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
-          await storage.updateWallet(job.customerId, {
-            usdtBalance: (customerBalance - budget).toFixed(8),
-          });
+            await storage.createTransaction({
+              walletId: customerWallet.id,
+              type: "refund",
+              currency: "USDT",
+              amount: customerRefund.toFixed(8),
+              usdAmount: customerRefund.toFixed(2),
+              status: "completed",
+              transactionHash: `cancel-refund-${job.id}`,
+            });
+          }
         }
 
         if (job.freelancerId && freelancerAmount > 0) {
@@ -3314,21 +3300,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         reviewNotes: approvalRequired ? null : "Auto-approved: immediate customer cancellation",
       });
 
-      // If no approval required, update job status immediately
+      // If no approval required, update job status immediately and refund
       let updatedJob = job;
       if (!approvalRequired && isCustomer) {
+        // Refund escrow funds back to wallet
+        const escrow = await storage.getEscrowByJob(jobId);
+        if (escrow && escrow.status === EscrowStatus.HELD) {
+          const refundAmount = parseFloat(escrow.totalAmount);
+          const customerWallet = await storage.getWallet(job.customerId);
+          if (customerWallet) {
+            const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+            await storage.updateWallet(job.customerId, {
+              usdtBalance: (currentBalance + refundAmount).toFixed(8),
+            });
+            await storage.createTransaction({
+              walletId: customerWallet.id,
+              type: "refund",
+              currency: "USDT",
+              amount: refundAmount.toFixed(8),
+              usdAmount: refundAmount.toFixed(2),
+              status: "completed",
+              transactionHash: `cancel-refund-${job.id}-${Date.now()}`,
+            });
+          }
+          await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+        }
+
         updatedJob = await storage.updateJob(jobId, {
-          status: "active",
+          status: JobStatus.CANCELLED,
           freelancerId: null,
           collaborators: [],
         }) || job;
 
-        // Create notification for admin/moderators
+        const refundTotal = parseFloat(job.budget) + parseFloat(job.premiumAmount || "0");
         await storage.createNotification({
           userId: user.id,
           type: "cancellation_request",
-          title: "Job cancelled",
-          message: `Your job "${job.title}" has been cancelled`,
+          title: "Job cancelled - funds refunded",
+          message: `Your job "${job.title}" has been cancelled. $${refundTotal.toFixed(2)} has been refunded to your wallet.`,
           relatedId: jobId,
           sourceType: "job",
           sourceId: jobId,
@@ -3394,12 +3403,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         reviewNotes: req.body.reviewNotes || null,
       });
 
-      // Release pending funds back to customer (make them available again)
+      // Refund charged funds back to customer wallet
       const jobBudget = parseFloat(job.budget);
-      await storage.adjustPendingBalance(job.customerId, -jobBudget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalRefund = jobBudget + jobPremium;
+
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (currentBalance + totalRefund).toFixed(8),
+          });
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: totalRefund.toFixed(8),
+            usdAmount: totalRefund.toFixed(2),
+            status: "completed",
+            transactionHash: `cancel-approve-refund-${job.id}-${Date.now()}`,
+          });
+        }
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
 
       const updatedJob = await storage.updateJob(request.jobId, { 
-        status: "active",
+        status: JobStatus.CANCELLED,
         freelancerId: null,
       });
 

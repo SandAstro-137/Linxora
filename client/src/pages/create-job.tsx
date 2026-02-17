@@ -114,7 +114,7 @@ export default function CreateJobPage() {
   const premiumFee = isPremium ? premiumAmountValue : 0;
   const totalCost = budgetValue + premiumFee;
   const availableBalance = wallet 
-    ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
+    ? parseFloat(wallet.usdtBalance || "0")
     : 0;
   const hasSufficientFunds = availableBalance >= totalCost;
 
