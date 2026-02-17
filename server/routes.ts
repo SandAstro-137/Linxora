@@ -699,7 +699,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validated.requirements = sanitizeText(validated.requirements);
       }
 
-      
+      const existingJobs = await storage.getJobs({ customerId: req.session.userId! });
+      const hasPendingReview = existingJobs.find(
+        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
+      );
+      if (hasPendingReview) {
+        return res.status(400).json({
+          error: `You already have a job pending review ("${hasPendingReview.title}"). Please wait for it to be reviewed before submitting another.`
+        });
+      }
+
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {
         return res.status(400).json({ error: "Wallet not found" });

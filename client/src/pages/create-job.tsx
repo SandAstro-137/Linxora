@@ -127,6 +127,8 @@ export default function CreateJobPage() {
     onSuccess: async ({ result, action }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
       
       if (action === "draft") {
         toast({
@@ -158,6 +160,7 @@ export default function CreateJobPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
       toast({
         title: "Submitted for approval!",
         description: "Your job has been submitted for moderator review. Funds have been reserved.",

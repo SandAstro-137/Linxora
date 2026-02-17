@@ -39,10 +39,14 @@ export default function WalletPage() {
 
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
+    refetchOnWindowFocus: true,
+    refetchInterval: 15000,
   });
 
   const { data: transactions = [] } = useQuery<any[]>({
     queryKey: ["/api/wallet/transactions"],
+    refetchOnWindowFocus: true,
+    refetchInterval: 15000,
   });
 
   const filteredTransactions = useMemo(() => {
