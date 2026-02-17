@@ -1105,16 +1105,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const jobBudget = parseFloat(job.budget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalJobCost = jobBudget + jobPremium;
       const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
       const customerPending = parseFloat(customerWallet.pendingUsdtBalance || "0");
       const availableBalance = customerUSDT - customerPending;
 
-      if (availableBalance < jobBudget) {
+      if (availableBalance < totalJobCost) {
         return res.status(400).json({ error: "Insufficient available USDT balance to approve this job" });
       }
 
-      // Add to customer's pending balance (funds are now locked for this job)
-      await storage.adjustPendingBalance(req.session.userId!, jobBudget);
+      // Add to customer's pending balance (budget + premium locked)
+      await storage.adjustPendingBalance(req.session.userId!, totalJobCost);
 
       // Update job - assign to freelancer and set status to claimed
       const updatedJob = await storage.updateJob(req.params.id, {
@@ -1235,45 +1237,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No freelancer assigned to this job" });
       }
 
-      // Release pending funds from customer
+      // Release pending funds from customer (budget + premium)
       const jobBudget = parseFloat(job.budget);
-      await storage.adjustPendingBalance(job.customerId, -jobBudget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalCost = jobBudget + jobPremium;
+      await storage.adjustPendingBalance(job.customerId, -totalCost);
 
-      // Get customer wallet to deduct funds
+      // Get customer wallet to deduct full amount (budget + premium; premium goes to Linxora)
       const customerWallet = await storage.getWallet(job.customerId);
       if (customerWallet) {
         const customerUSDT = parseFloat(customerWallet.usdtBalance || "0");
         await storage.updateWallet(job.customerId, {
-          usdtBalance: (customerUSDT - jobBudget).toFixed(8),
+          usdtBalance: (customerUSDT - totalCost).toFixed(8),
         });
 
-        // Create customer transaction
         await storage.createTransaction({
           walletId: customerWallet.id,
           type: "withdrawal",
           currency: "USDT",
-          amount: jobBudget.toFixed(8),
-          usdAmount: jobBudget.toFixed(2),
+          amount: totalCost.toFixed(8),
+          usdAmount: totalCost.toFixed(2),
           status: "completed",
           transactionHash: `job-payment-${job.id}`,
         });
       }
 
-      // Transfer funds to freelancer
+      // Transfer level-based portion of budget to freelancer (premium stays with Linxora)
+      const freelancer2 = await storage.getUser(job.freelancerId);
+      const level = freelancer2?.level || 1;
+      const levelPayout = getLevelPayout(level);
+      const payoutAmount = jobBudget * levelPayout;
+
       const freelancerWallet = await storage.getWallet(job.freelancerId);
       if (freelancerWallet) {
         const freelancerUSDT = parseFloat(freelancerWallet.usdtBalance || "0");
         await storage.updateWallet(job.freelancerId, {
-          usdtBalance: (freelancerUSDT + jobBudget).toFixed(8),
+          usdtBalance: (freelancerUSDT + payoutAmount).toFixed(8),
         });
 
-        // Create freelancer transaction
         await storage.createTransaction({
           walletId: freelancerWallet.id,
           type: "deposit",
           currency: "USDT",
-          amount: jobBudget.toFixed(8),
-          usdAmount: jobBudget.toFixed(2),
+          amount: payoutAmount.toFixed(8),
+          usdAmount: payoutAmount.toFixed(2),
           status: "completed",
           transactionHash: `job-payment-${job.id}`,
         });
@@ -1807,26 +1814,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         : job.freelancerId ? [job.freelancerId] : [];
 
       const budget = parseFloat(job.budget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalCost = budget + jobPremium;
       const numFreelancers = allFreelancerIds.length;
       const sharePerFreelancer = numFreelancers > 0 ? budget / numFreelancers : 0;
 
-      // Release pending funds from customer
-      await storage.adjustPendingBalance(job.customerId, -budget);
+      // Release pending funds from customer (budget + premium)
+      await storage.adjustPendingBalance(job.customerId, -totalCost);
 
-      // Deduct from customer wallet
+      // Deduct full amount from customer wallet (premium goes to Linxora)
       const customerWallet = await storage.getWallet(job.customerId);
       if (customerWallet) {
         const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
         await storage.updateWallet(job.customerId, {
-          usdtBalance: (customerBalance - budget).toFixed(8),
+          usdtBalance: (customerBalance - totalCost).toFixed(8),
         });
 
         await storage.createTransaction({
           walletId: customerWallet.id,
           type: "escrow_release",
           currency: "USDT",
-          amount: budget.toFixed(8),
-          usdAmount: budget.toFixed(2),
+          amount: totalCost.toFixed(8),
+          usdAmount: totalCost.toFixed(2),
           status: "completed",
           transactionHash: `escrow-release-${job.id}`,
         });
@@ -2239,8 +2248,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(job.budget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalCost = budget + jobPremium;
 
-      // Validate amounts don't exceed budget
+      // Validate amounts don't exceed budget (premium always goes to Linxora)
       if (freelancerAmount + customerRefund > budget) {
         return res.status(400).json({ error: "Total distribution cannot exceed job budget" });
       }
@@ -2259,16 +2270,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resolutionNotes: resolutionNotes.trim(),
       });
 
-      // Release pending balance from customer
-      await storage.adjustPendingBalance(job.customerId, -budget);
+      // Release pending balance from customer (budget + premium)
+      await storage.adjustPendingBalance(job.customerId, -totalCost);
 
-      // Process payouts
+      // Process payouts - deduct full amount, refund customerRefund portion (premium stays with Linxora)
       const customerWallet = await storage.getWallet(job.customerId);
       if (customerWallet) {
         const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
         
-        // Deduct budget, refund customerRefund amount
-        const netDeduction = budget - customerRefund;
+        // Deduct total cost (budget + premium), refund customerRefund amount
+        const netDeduction = totalCost - customerRefund;
         await storage.updateWallet(job.customerId, {
           usdtBalance: (customerBalance - netDeduction).toFixed(8),
         });
@@ -2382,19 +2393,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
       }
 
-      // Release pending balance
+      // Release pending balance (budget + premium = full refund)
       const budget = parseFloat(job.budget);
-      await storage.adjustPendingBalance(job.customerId, -budget);
+      const jobPremium = parseFloat(job.premiumAmount || "0");
+      const totalRefund = budget + jobPremium;
+      await storage.adjustPendingBalance(job.customerId, -totalRefund);
 
-      // Create refund transaction
+      // Create refund transaction for full amount
       const customerWallet = await storage.getWallet(job.customerId);
       if (customerWallet) {
         await storage.createTransaction({
           walletId: customerWallet.id,
           type: "refund",
           currency: "USDT",
-          amount: budget.toFixed(8),
-          usdAmount: budget.toFixed(2),
+          amount: totalRefund.toFixed(8),
+          usdAmount: totalRefund.toFixed(2),
           status: "completed",
           transactionHash: `job-cancel-refund-${job.id}`,
         });
@@ -2418,7 +2431,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId: job.customerId,
         type: "job_cancelled",
         title: "Job cancelled",
-        message: `Your job "${job.title}" has been cancelled. Full refund of $${budget} processed.`,
+        message: `Your job "${job.title}" has been cancelled. Full refund of $${totalRefund.toFixed(2)} processed.`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,
