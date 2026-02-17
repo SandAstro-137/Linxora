@@ -764,20 +764,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Premium amount must be at least $100" });
       }
       const totalCost = budget + (validated.isPremium ? premiumFee : 0);
-      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
+      const walletBalance = parseFloat(wallet.usdtBalance || "0");
 
-      if (totalCost > availableBalance) {
+      if (totalCost > walletBalance) {
         return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Available: $${availableBalance.toFixed(2)}.`
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Balance: $${walletBalance.toFixed(2)}.`
         });
       }
+
+      // Charge wallet immediately when creating job for review
+      await storage.updateWallet(req.session.userId!, {
+        usdtBalance: (walletBalance - totalCost).toFixed(8),
+      });
+
+      await storage.createTransaction({
+        walletId: wallet.id,
+        type: "escrow_lock",
+        currency: "USDT",
+        amount: totalCost.toFixed(8),
+        usdAmount: totalCost.toFixed(2),
+        status: "completed",
+        transactionHash: `escrow-lock-newjob-${Date.now()}`,
+      });
 
       const job = await storage.createJob({
         ...validated,
         premiumAmount: validated.isPremium ? (premiumFee || 0).toString() : "0",
         customerId: req.session.userId!,
         status: "pending",
+        submittedForReviewAt: new Date(),
       });
+
+      // Create escrow record
+      await storage.createEscrow({
+        jobId: job.id,
+        customerId: req.session.userId!,
+        totalAmount: totalCost.toFixed(2),
+        status: EscrowStatus.HELD,
+      });
+
       res.json(job);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid job data" });
@@ -3157,23 +3182,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/moderation/:id/reject", requireRole("staff", "moderator"), async (req, res) => {
     try {
-      const job = await storage.updateJob(req.params.id, { status: "rejected" });
+      const job = await storage.getJob(req.params.id);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
+
+      // Refund charged funds back to wallet since job was rejected
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        const refundAmount = parseFloat(escrow.totalAmount);
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (currentBalance + refundAmount).toFixed(8),
+          });
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: refundAmount.toFixed(8),
+            usdAmount: refundAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `mod-rejection-refund-${job.id}-${Date.now()}`,
+          });
+        }
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+
+      const updatedJob = await storage.updateJob(req.params.id, { status: "rejected" });
 
       // Notify customer that their job was rejected
       await storage.createNotification({
         userId: job.customerId,
         type: "job_rejected",
-        title: "Job rejected",
-        message: `Your job "${job.title}" was not approved. Please review our guidelines and try again.`,
+        title: "Job rejected - funds refunded",
+        message: `Your job "${job.title}" was not approved. Your funds have been refunded to your wallet.`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,
       });
 
-      res.json(job);
+      res.json(updatedJob);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -3192,6 +3242,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
+      // Refund charged funds back to wallet - customer will re-pay when resubmitting
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow && escrow.status === EscrowStatus.HELD) {
+        const refundAmount = parseFloat(escrow.totalAmount);
+        const customerWallet = await storage.getWallet(job.customerId);
+        if (customerWallet) {
+          const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (currentBalance + refundAmount).toFixed(8),
+          });
+          await storage.createTransaction({
+            walletId: customerWallet.id,
+            type: "refund",
+            currency: "USDT",
+            amount: refundAmount.toFixed(8),
+            usdAmount: refundAmount.toFixed(2),
+            status: "completed",
+            transactionHash: `mod-changes-refund-${job.id}-${Date.now()}`,
+          });
+        }
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+
       // Update job status to changes_requested and store feedback
       const updatedJob = await storage.updateJob(req.params.id, { 
         status: "changes_requested",
@@ -3203,8 +3276,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.createNotification({
           userId: job.customerId,
           type: "job_changes_requested",
-          title: "Changes requested for your job",
-          message: `Your job "${job.title}" requires the following changes:\n\n${feedback}`,
+          title: "Changes requested - funds refunded",
+          message: `Your job "${job.title}" requires changes. Your funds have been refunded. Changes needed:\n\n${feedback}`,
           relatedId: job.id,
           sourceType: "job",
           sourceId: job.id,
