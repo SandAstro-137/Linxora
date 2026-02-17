@@ -584,35 +584,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check job submission cooldown status for current customer (must be before /api/jobs/:id)
-  app.get("/api/jobs/cooldown", requireAuth, async (req, res) => {
-    try {
-      const customerJobs = await storage.getJobs({ customerId: req.session.userId! });
-
-      const hasPendingReview = customerJobs.find(
-        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
-      );
-
-      const threeHoursMs = 3 * 60 * 60 * 1000;
-      const recentlySubmitted = customerJobs.find(
-        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
-      );
-
-      let cooldownEndsAt: string | null = null;
-      if (recentlySubmitted?.submittedForReviewAt) {
-        cooldownEndsAt = new Date(new Date(recentlySubmitted.submittedForReviewAt).getTime() + threeHoursMs).toISOString();
-      }
-
-      res.json({
-        canSubmit: !hasPendingReview && !recentlySubmitted,
-        hasPendingReview: !!hasPendingReview,
-        pendingReviewTitle: hasPendingReview?.title || null,
-        cooldownEndsAt,
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
 
   app.get("/api/jobs/:id", requireAuth, async (req, res) => {
     try {
@@ -728,30 +699,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validated.requirements = sanitizeText(validated.requirements);
       }
 
-      // Prevent spam: only one pending review at a time + 3-hour cooldown
-      const existingJobs = await storage.getJobs({ customerId: req.session.userId! });
-      const hasPendingReview = existingJobs.find(
-        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
-      );
-      if (hasPendingReview) {
-        return res.status(400).json({
-          error: `You already have a job pending review ("${hasPendingReview.title}"). Please wait for it to be reviewed before creating another.`
-        });
-      }
-
-      const threeHoursMs = 3 * 60 * 60 * 1000;
-      const recentlySubmitted = existingJobs.find(
-        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
-      );
-      if (recentlySubmitted) {
-        const elapsed = Date.now() - new Date(recentlySubmitted.submittedForReviewAt!).getTime();
-        const remaining = threeHoursMs - elapsed;
-        const hoursLeft = Math.floor(remaining / (60 * 60 * 1000));
-        const minutesLeft = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
-        return res.status(400).json({
-          error: `Please wait ${hoursLeft > 0 ? `${hoursLeft}h ` : ""}${minutesLeft}m before creating another job.`
-        });
-      }
       
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {
@@ -1377,20 +1324,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Enforce 3-hour cooldown between job review submissions (check ALL jobs including this one)
-      const threeHoursMs = 3 * 60 * 60 * 1000;
-      const recentlySubmitted = customerJobs.find(
-        j => j.submittedForReviewAt && (Date.now() - new Date(j.submittedForReviewAt).getTime()) < threeHoursMs
-      );
-      if (recentlySubmitted) {
-        const elapsed = Date.now() - new Date(recentlySubmitted.submittedForReviewAt!).getTime();
-        const remaining = threeHoursMs - elapsed;
-        const hoursLeft = Math.floor(remaining / (60 * 60 * 1000));
-        const minutesLeft = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
-        return res.status(400).json({
-          error: `Please wait ${hoursLeft > 0 ? `${hoursLeft}h ` : ""}${minutesLeft}m before submitting another job for review.`
-        });
-      }
 
       // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);

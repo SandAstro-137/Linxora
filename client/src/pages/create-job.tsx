@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Save, Send, AlertCircle, Wallet, Star, Clock } from "lucide-react";
+import { Save, Send, AlertCircle, Wallet, Star } from "lucide-react";
 
 const formSchema = insertJobSchema.extend({
   budget: z.string().min(1, "Budget is required"),
@@ -50,44 +50,7 @@ export default function CreateJobPage() {
   const isEditMode = !!editJobId;
   const [submitAction, setSubmitAction] = useState<"draft" | "submit">("submit");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [countdown, setCountdown] = useState("");
 
-  interface CooldownData {
-    canSubmit: boolean;
-    hasPendingReview: boolean;
-    pendingReviewTitle: string | null;
-    cooldownEndsAt: string | null;
-  }
-
-  const { data: cooldown_data } = useQuery<CooldownData>({
-    queryKey: ["/api/jobs/cooldown"],
-    refetchInterval: 30000,
-  });
-
-  const onCooldown = cooldown_data ? !cooldown_data.canSubmit : false;
-
-  useEffect(() => {
-    if (!cooldown_data?.cooldownEndsAt) {
-      setCountdown("");
-      return;
-    }
-    const endTime = new Date(cooldown_data.cooldownEndsAt).getTime();
-    const tick = () => {
-      const remaining = endTime - Date.now();
-      if (remaining <= 0) {
-        setCountdown("");
-        queryClient.invalidateQueries({ queryKey: ["/api/jobs/cooldown"] });
-        return;
-      }
-      const h = Math.floor(remaining / (60 * 60 * 1000));
-      const m = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
-      const s = Math.floor((remaining % (60 * 1000)) / 1000);
-      setCountdown(`${h}h ${m.toString().padStart(2, "0")}m ${s.toString().padStart(2, "0")}s`);
-    };
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [cooldown_data?.cooldownEndsAt]);
 
   const { data: wallet } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
@@ -249,24 +212,6 @@ export default function CreateJobPage() {
         </p>
       </div>
 
-      {onCooldown && (
-        <Alert>
-          <Clock className="h-4 w-4" />
-          <AlertTitle>
-            {cooldown_data?.hasPendingReview 
-              ? "Job Pending Review" 
-              : "Cooldown Active"}
-          </AlertTitle>
-          <AlertDescription>
-            {cooldown_data?.hasPendingReview 
-              ? `Your job "${cooldown_data.pendingReviewTitle}" is still being reviewed by a moderator. You can submit a new job once it's been reviewed.`
-              : countdown 
-                ? `You can submit a new job for review in ${countdown}.`
-                : "Please wait before submitting another job."
-            }
-          </AlertDescription>
-        </Alert>
-      )}
 
       {isEditMode && existingJob?.moderatorFeedback && (
         <Card className="border-destructive">
@@ -523,16 +468,14 @@ export default function CreateJobPage() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={isSubmitting || onCooldown || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0) || (!!isPremium && premiumAmountValue < 100)}
+                  disabled={isSubmitting || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0) || (!!isPremium && premiumAmountValue < 100)}
                   onClick={() => setSubmitAction("submit")}
                   data-testid="button-submit-job"
                 >
                   <Send className="w-4 h-4 mr-2" />
                   {isSubmitting && submitAction === "submit"
-                    ? (submitForApprovalMutation.isPending ? "Submitting for review..." : "Saving...") 
-                    : onCooldown && countdown
-                      ? `Wait ${countdown}`
-                      : (isEditMode ? "Update & Submit" : "Submit for Review")}
+                    ? (submitForApprovalMutation.isPending ? "Submitting for review..." : "Sent!") 
+                    : (isEditMode ? "Update & Submit" : "Submit for Review")}
                 </Button>
               </div>
             </form>
