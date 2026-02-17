@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Bell, Trash2 } from "lucide-react";
@@ -43,8 +43,20 @@ export function NotificationCenter() {
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: true,
-    refetchInterval: 10000,
+    refetchInterval: 5000,
   });
+
+  const prevUnreadCount = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const currentCount = unreadData?.count;
+    if (prevUnreadCount.current !== undefined && currentCount !== undefined && currentCount > prevUnreadCount.current) {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+    }
+    prevUnreadCount.current = currentCount;
+  }, [unreadData?.count]);
 
   const { data: settings } = useQuery<UserPreferences>({
     queryKey: ["/api/settings"],
