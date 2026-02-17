@@ -70,14 +70,15 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Customer has 4 days to review (auto-complete if no response)
     - 8-hour reminder notification sent to customer
 - **Premium Listing System:** Variable premium amount (minimum $100). Higher premium = higher placement on job board. Premium amount goes to Linxora (platform revenue).
-- **Escrow Payment System (NEW):**
-    - Full amount (budget + premium) charged/locked when customer submits job for review
-    - Full refund (budget + premium) on cancellation or moderator rejection
-    - On completion: customer charged full amount, freelancer receives level-based portion of budget only, premium goes to Linxora
-    - On dispute: premium goes to Linxora, budget split per moderator decision
+- **Escrow Payment System (UPDATED Feb 2026):**
+    - Full amount (budget + premium) **actually deducted from wallet** when customer submits job for review (not just pending hold)
+    - Full refund (budget + premium) **credited back to wallet** on cancellation or moderator rejection
+    - On completion: no further charge (already paid), freelancer receives level-based portion of budget only, premium stays with Linxora
+    - On dispute: premium goes to Linxora, customerRefund portion credited back to wallet, freelancer gets their split
     - Level-based freelancer payouts: Level 1=60%, Level 2=70%, Level 3=75%, Level 4=80%, Level 5=85%
     - Platform retains difference as fee
     - Multi-freelancer jobs split payment equally, then apply level percentage
+    - Transaction records created for all charges and refunds (escrow_lock, refund types)
 - **Dispute Resolution (NEW):**
     - Either party can open dispute for active jobs
     - Job locked during dispute
