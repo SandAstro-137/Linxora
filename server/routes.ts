@@ -477,11 +477,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Sort premium jobs first for priority placement
       jobs.sort((a, b) => {
-        if (a.isPremium && !b.isPremium) return -1;
-        if (!a.isPremium && b.isPremium) return 1;
-        return 0;
+        const aPremium = parseFloat(a.premiumAmount || "0");
+        const bPremium = parseFloat(b.premiumAmount || "0");
+        return bPremium - aPremium;
       });
       
       res.json(jobs);
@@ -496,11 +495,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const jobs = allJobs.filter(j => 
         j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active"
       );
-      // Sort premium jobs first for priority placement
       jobs.sort((a, b) => {
-        if (a.isPremium && !b.isPremium) return -1;
-        if (!a.isPremium && b.isPremium) return 1;
-        return 0;
+        const aPremium = parseFloat(a.premiumAmount || "0");
+        const bPremium = parseFloat(b.premiumAmount || "0");
+        return bPremium - aPremium;
       });
       res.json(jobs.slice(0, 10));
     } catch (error) {
@@ -761,18 +759,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
-      const premiumFee = validated.isPremium ? 100 : 0;
-      const totalCost = budget + premiumFee;
+      const premiumFee = parseFloat(validated.premiumAmount || "0");
+      if (validated.isPremium && premiumFee < 100) {
+        return res.status(400).json({ error: "Premium amount must be at least $100" });
+      }
+      const totalCost = budget + (validated.isPremium ? premiumFee : 0);
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Available: $${availableBalance.toFixed(2)}.`
         });
       }
 
       const job = await storage.createJob({
         ...validated,
+        premiumAmount: validated.isPremium ? (premiumFee || 0).toString() : "0",
         customerId: req.session.userId!,
         status: "pending",
       });
@@ -808,19 +810,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
-      const premiumFee = validated.isPremium ? 100 : 0;
-      const totalCost = budget + premiumFee;
+      const premiumFee = parseFloat(validated.premiumAmount || "0");
+      if (validated.isPremium && premiumFee < 100) {
+        return res.status(400).json({ error: "Premium amount must be at least $100" });
+      }
+      const totalCost = budget + (validated.isPremium ? premiumFee : 0);
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium" : ""}). Available: $${availableBalance.toFixed(2)}.`
+          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Available: $${availableBalance.toFixed(2)}.`
         });
       }
 
-      // Update job as draft, clear moderator feedback
       const updatedJob = await storage.updateJob(req.params.id, {
         ...validated,
+        premiumAmount: validated.isPremium ? (premiumFee || 0).toString() : "0",
         status: "pending",
         moderatorFeedback: null,
       });
@@ -1396,13 +1401,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(job.budget);
-      const premiumFee = job.isPremium ? 100 : 0;
+      const premiumFee = parseFloat(job.premiumAmount || "0");
       const totalCost = budget + premiumFee;
       const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
 
       if (totalCost > availableBalance) {
         return res.status(400).json({ 
-          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? " + $100 premium fee" : ""}). Available: $${availableBalance.toFixed(2)}.` 
+          error: `Insufficient available balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium fee` : ""}). Available: $${availableBalance.toFixed(2)}.` 
         });
       }
 
@@ -1432,7 +1437,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId: mod.id,
           type: "moderation",
           title: "New job pending approval",
-          message: `Job "${job.title}"${job.isPremium ? " [PREMIUM]" : ""} is waiting for moderation review.`,
+          message: `Job "${job.title}"${parseFloat(job.premiumAmount || "0") > 0 ? ` [PREMIUM $${job.premiumAmount}]` : ""} is waiting for moderation review.`,
           relatedId: job.id,
           sourceType: "system",
           sourceId: job.id,

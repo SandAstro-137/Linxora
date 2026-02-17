@@ -220,7 +220,8 @@ export const jobs = pgTable("jobs", {
   maxFreelancers: integer("max_freelancers").default(1), // For multi-freelancer jobs
   isLocked: boolean("is_locked").default(false), // Lock job during dispute
   customerArchived: boolean("customer_archived").default(false), // Customer can hide completed jobs
-  isPremium: boolean("is_premium").default(false), // Premium listing ($100 extra for priority recommendations)
+  isPremium: boolean("is_premium").default(false),
+  premiumAmount: text("premium_amount").default("0"),
   submittedForReviewAt: timestamp("submitted_for_review_at"), // Tracks when job was last submitted for review (3h cooldown)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

@@ -36,10 +36,10 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
       <CardHeader className="space-y-2">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
-            {job.isPremium && (
+            {(job.isPremium || parseFloat(job.premiumAmount || "0") > 0) && (
               <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 shrink-0" variant="secondary" data-testid={`badge-premium-${job.id}`}>
                 <Star className="w-3 h-3 mr-1 fill-current" />
-                Premium
+                Premium ${job.premiumAmount || "0"}
               </Badge>
             )}
             <h3 className="text-lg font-semibold line-clamp-1" data-testid={`text-job-title-${job.id}`}>

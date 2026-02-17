@@ -110,7 +110,8 @@ export default function CreateJobPage() {
 
   const budgetValue = parseFloat(form.watch("budget") || "0");
   const isPremium = form.watch("isPremium");
-  const premiumFee = isPremium ? 100 : 0;
+  const premiumAmountValue = parseFloat(form.watch("premiumAmount") || "0");
+  const premiumFee = isPremium ? premiumAmountValue : 0;
   const totalCost = budgetValue + premiumFee;
   const availableBalance = wallet 
     ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
@@ -136,6 +137,7 @@ export default function CreateJobPage() {
         customerId: existingJob.customerId,
         status: existingJob.status,
         isPremium: existingJob.isPremium || false,
+        premiumAmount: existingJob.premiumAmount || "0",
       });
     }
   }, [existingJob, isEditMode, form]);
@@ -404,20 +406,55 @@ export default function CreateJobPage() {
                           <Star className={`w-5 h-5 ${field.value ? "text-amber-500 fill-amber-500" : "text-muted-foreground"}`} />
                           <div className="flex-1">
                             <FormLabel className="text-sm font-medium cursor-pointer">
-                              Premium Listing (+$100)
+                              Premium Listing
                             </FormLabel>
                             <FormDescription className="text-xs">
-                              Get priority placement in freelancer recommendations and stand out from other listings
+                              Pay for priority placement on the job board. The more you spend, the higher your job appears. Minimum $100.
                             </FormDescription>
                           </div>
                           <FormControl>
                             <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
+                              checked={field.value ?? false}
+                              onCheckedChange={(checked) => {
+                                field.onChange(checked);
+                                if (checked && premiumAmountValue < 100) {
+                                  form.setValue("premiumAmount", "100");
+                                }
+                              }}
                               data-testid="switch-premium"
                             />
                           </FormControl>
                         </div>
+                        {field.value && (
+                          <div className="mt-3 pt-3 border-t">
+                            <FormField
+                              control={form.control}
+                              name="premiumAmount"
+                              render={({ field: amountField }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs">Premium Amount ($)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      min="100"
+                                      step="1"
+                                      placeholder="100"
+                                      value={amountField.value || ""}
+                                      onChange={amountField.onChange}
+                                      data-testid="input-premium-amount"
+                                    />
+                                  </FormControl>
+                                  {premiumAmountValue > 0 && premiumAmountValue < 100 && (
+                                    <p className="text-xs text-destructive">Minimum premium amount is $100</p>
+                                  )}
+                                  <FormDescription className="text-xs">
+                                    Higher amounts get better placement on the job board
+                                  </FormDescription>
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   </FormItem>
@@ -435,7 +472,7 @@ export default function CreateJobPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Available: ${availableBalance.toFixed(2)} | Total required: ${totalCost.toFixed(2)}
-                          {isPremium && ` (Budget $${budgetValue.toFixed(2)} + Premium $100)`}
+                          {isPremium && premiumFee > 0 && ` (Budget $${budgetValue.toFixed(2)} + Premium $${premiumFee.toFixed(2)})`}
                         </p>
                       </div>
                       {!hasSufficientFunds && (
@@ -460,7 +497,7 @@ export default function CreateJobPage() {
                   <AlertTitle>Funds Required</AlertTitle>
                   <AlertDescription>
                     You need ${(totalCost - availableBalance).toFixed(2)} more to submit this job for approval. 
-                    The total amount{isPremium ? " (budget + premium fee)" : ""} will be held in escrow when submitted.
+                    The total amount{isPremium && premiumFee > 0 ? " (budget + premium fee)" : ""} will be held in escrow when submitted.
                   </AlertDescription>
                 </Alert>
               )}
@@ -486,7 +523,7 @@ export default function CreateJobPage() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={isSubmitting || onCooldown || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0)}
+                  disabled={isSubmitting || onCooldown || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0) || (!!isPremium && premiumAmountValue < 100)}
                   onClick={() => setSubmitAction("submit")}
                   data-testid="button-submit-job"
                 >
