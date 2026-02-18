@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase, Send, Link, AlertTriangle, CheckCircle2, Gavel } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, UserPlus, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase, Send, Link, AlertTriangle, CheckCircle2, Gavel } from "lucide-react";
 import { ReportDialog } from "@/components/ReportDialog";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
@@ -1385,6 +1385,7 @@ export default function JobDetailPage() {
   const isCustomer = job.customerId === user?.id;
   const isFreelancerOwner = job.freelancerId === user?.id;
   const canOfferTeam = isJobTaken && !isFreelancerOwner;
+  const canCustomerInvite = isCustomer && (job.status === "active" || job.status === "claimed" || job.status === "in_progress");
   const isTeamMember = 
     user?.id === job.customerId || 
     user?.id === job.freelancerId || 
@@ -2096,6 +2097,116 @@ export default function JobDetailPage() {
                         data-testid="button-confirm-dispute"
                       >
                         {openDisputeMutation.isPending ? "Opening..." : "Open Dispute"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {canCustomerInvite && (
+                <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="w-full"
+                      variant="outline"
+                      data-testid="button-customer-invite-freelancer"
+                    >
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Invite Freelancer
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Invite Freelancer</DialogTitle>
+                      <DialogDescription>
+                        Enter the User ID of the freelancer you want to invite to this job.
+                        Profits will be split equally among all team members.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="customerInviteUserId">User ID</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="customerInviteUserId"
+                            type="number"
+                            placeholder="Enter User ID (e.g., 12345)"
+                            value={userIdInput}
+                            onChange={(e) => {
+                              setUserIdInput(e.target.value);
+                              setSelectedUser(null);
+                              setLookupError(null);
+                            }}
+                            data-testid="input-customer-invite-user-id"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              if (lookupApiError) {
+                                setLookupError(lookupApiError.message || "User not found");
+                                setSelectedUser(null);
+                              } else if (lookupResult && lookupResult.length > 0) {
+                                const foundUser = lookupResult.find(u => u.role === "freelancer");
+                                if (foundUser) {
+                                  setSelectedUser(foundUser);
+                                  setLookupError(null);
+                                } else {
+                                  setLookupError("User is not a freelancer");
+                                  setSelectedUser(null);
+                                }
+                              } else if (userIdInput && !isLookingUp) {
+                                setLookupError("User not found");
+                                setSelectedUser(null);
+                              }
+                            }}
+                            disabled={!userIdInput || isLookingUp}
+                            data-testid="button-customer-lookup-user"
+                          >
+                            {isLookingUp ? "Looking up..." : "Look Up"}
+                          </Button>
+                        </div>
+                        {lookupError && (
+                          <p className="text-sm text-destructive">{lookupError}</p>
+                        )}
+                      </div>
+                      {selectedUser && (
+                        <div className="p-4 rounded-md border bg-accent/50">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={selectedUser.avatar || undefined} />
+                              <AvatarFallback>
+                                {selectedUser.username.charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">
+                                {selectedUser.username}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                User ID: {selectedUser.userId || selectedUser.id}
+                              </p>
+                              {selectedUser.specialization && (
+                                <p className="text-xs text-muted-foreground">
+                                  {selectedUser.specialization}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        onClick={() => {
+                          if (selectedUser) {
+                            inviteMutation.mutate(selectedUser.id);
+                          }
+                        }}
+                        disabled={!selectedUser || inviteMutation.isPending}
+                        data-testid="button-customer-send-invitation"
+                      >
+                        {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
