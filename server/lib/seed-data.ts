@@ -1,4 +1,5 @@
 import { storage } from "../storage";
+import { EscrowStatus } from "@shared/schema";
 
 export async function seedData() {
   // Check if data already exists
@@ -59,44 +60,50 @@ export async function seedData() {
     role: "founder",
   }, true);
 
-  // Create demo jobs
-  await storage.createJob({
-    customerId: customer.id,
-    title: "Build a Modern E-commerce Dashboard",
-    description: "We need a responsive dashboard for our e-commerce platform with real-time analytics, order management, and inventory tracking.",
-    category: "Web Development",
-    budget: "2500",
-    requirements: "React.js, TypeScript, Tailwind CSS, Chart.js",
-    status: "active",
-  });
+  // Create demo jobs with proper escrow records (matching real payment flow)
+  const seedJobs = [
+    {
+      customerId: customer.id,
+      title: "Build a Modern E-commerce Dashboard",
+      description: "We need a responsive dashboard for our e-commerce platform with real-time analytics, order management, and inventory tracking.",
+      category: "Web Development",
+      budget: "2500",
+      requirements: "React.js, TypeScript, Tailwind CSS, Chart.js",
+      status: "active",
+      submittedForReviewAt: new Date(),
+    },
+    {
+      customerId: customer.id,
+      title: "Mobile App UI/UX Design",
+      description: "Design a complete mobile app interface for a fitness tracking application. Should include onboarding, dashboard, workout tracking, and social features.",
+      category: "Design",
+      budget: "1800",
+      requirements: "Figma, mobile design experience, fitness app knowledge preferred",
+      status: "active",
+      submittedForReviewAt: new Date(),
+    },
+    {
+      customerId: customer.id,
+      title: "API Integration for Payment System",
+      description: "Integrate Stripe payment gateway into existing Node.js application with webhook handling and subscription management.",
+      category: "Web Development",
+      budget: "1200",
+      status: "active",
+      submittedForReviewAt: new Date(),
+    },
+    {
+      customerId: customer.id,
+      title: "Content Writing for Tech Blog",
+      description: "Write 5 high-quality articles about emerging web development trends, each 1500-2000 words.",
+      category: "Writing",
+      budget: "500",
+      status: "pending",
+      submittedForReviewAt: new Date(),
+    },
+  ];
 
-  await storage.createJob({
-    customerId: customer.id,
-    title: "Mobile App UI/UX Design",
-    description: "Design a complete mobile app interface for a fitness tracking application. Should include onboarding, dashboard, workout tracking, and social features.",
-    category: "Design",
-    budget: "1800",
-    requirements: "Figma, mobile design experience, fitness app knowledge preferred",
-    status: "active",
-  });
-
-  await storage.createJob({
-    customerId: customer.id,
-    title: "API Integration for Payment System",
-    description: "Integrate Stripe payment gateway into existing Node.js application with webhook handling and subscription management.",
-    category: "Web Development",
-    budget: "1200",
-    status: "active",
-  });
-
-  await storage.createJob({
-    customerId: customer.id,
-    title: "Content Writing for Tech Blog",
-    description: "Write 5 high-quality articles about emerging web development trends, each 1500-2000 words.",
-    category: "Writing",
-    budget: "500",
-    status: "pending",
-  });
+  const totalSeedJobCost = seedJobs.reduce((sum, j) => sum + parseFloat(j.budget), 0);
+  const customerStartingBalance = 10000;
 
   // Create demo wallets with initial balances
   const freelancer1Wallet = await storage.createWallet({
@@ -116,6 +123,35 @@ export async function seedData() {
     ltcBalance: "15.6",
     walletAddress: "0xdef789abc012ghi345jkl678mno901pqr234stu",
   });
+
+  const customerWallet = await storage.createWallet({
+    userId: customer.id,
+    usdtBalance: (customerStartingBalance - totalSeedJobCost).toFixed(2),
+    walletAddress: "0xcust123def456ghi789jkl012mno345pqr678stu",
+  });
+
+  // Create seed jobs with proper escrow records (matching real payment flow)
+  for (const jobData of seedJobs) {
+    const job = await storage.createJob(jobData);
+    const budget = parseFloat(jobData.budget);
+
+    await storage.createEscrow({
+      jobId: job.id,
+      customerId: customer.id,
+      totalAmount: budget.toFixed(2),
+      status: EscrowStatus.HELD,
+    });
+
+    await storage.createTransaction({
+      walletId: customerWallet.id,
+      type: "escrow_lock",
+      currency: "USDT",
+      amount: budget.toFixed(8),
+      usdAmount: budget.toFixed(2),
+      status: "completed",
+      transactionHash: `escrow-lock-seed-${job.id}`,
+    });
+  }
 
   // Create demo transactions
   await storage.createTransaction({
