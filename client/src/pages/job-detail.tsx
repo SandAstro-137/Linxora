@@ -1339,6 +1339,10 @@ export default function JobDetailPage() {
       setProofFile(null);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/recent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       toast({
         title: data.approvalRequired ? "Cancellation being reviewed" : "Job cancelled",
         description: data.message,

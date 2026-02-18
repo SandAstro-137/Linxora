@@ -306,7 +306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ["active", "claimed", "in_progress", "submitted", "awaiting_customer"].includes(j.status)
         ).length;
         stats.pendingJobs = allJobs.filter(j => j.status === "pending").length;
-        stats.totalSpent = allJobs.reduce((sum, j) => sum + parseFloat(j.budget), 0).toFixed(2);
+        stats.totalSpent = allJobs.reduce((sum, j) => sum + parseFloat(j.budget) + parseFloat(j.premiumAmount || "0"), 0).toFixed(2);
       } else if (user.role === "staff" || user.role === "moderator") {
         const pendingJobs = await storage.getJobsByStatus("pending");
         const allJobs = await storage.getJobs();
@@ -4961,7 +4961,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const allJobs = await storage.getJobs({ customerId: user.id });
         const completedJobs = allJobs.filter(j => j.status === "completed");
         const cancelledJobs = allJobs.filter(j => j.status === "cancelled");
-        const totalSpent = completedJobs.reduce((sum, j) => sum + (Number(j.budget) || 0), 0);
+        const totalSpent = completedJobs.reduce((sum, j) => sum + (Number(j.budget) || 0) + (Number(j.premiumAmount) || 0), 0);
         
         // Calculate cancellation rate
         const totalFinishedJobs = completedJobs.length + cancelledJobs.length;
