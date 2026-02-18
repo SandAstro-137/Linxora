@@ -5,6 +5,7 @@ import { Clock, DollarSign, User, Star } from "lucide-react";
 import { Job } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 import { formatEasternDate } from "@/lib/timezone";
+import { useLocation } from "wouter";
 
 interface JobCardProps {
   job: Job;
@@ -14,6 +15,7 @@ interface JobCardProps {
 }
 
 export function JobCard({ job, onView, onClaim, showActions = true }: JobCardProps) {
+  const [, setLocation] = useLocation();
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
@@ -32,7 +34,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
   };
 
   return (
-    <Card className="hover-elevate transition-all" data-testid={`card-job-${job.id}`}>
+    <Card className="hover-elevate transition-all cursor-pointer" data-testid={`card-job-${job.id}`} onClick={() => setLocation(`/jobs/${job.id}`)}>
       <CardHeader className="space-y-2">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
@@ -80,12 +82,12 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
       {showActions && (
         <CardFooter className="gap-2 flex-wrap">
           {onView && (
-            <Button variant="outline" size="sm" onClick={() => onView(job)} data-testid={`button-view-job-${job.id}`}>
+            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); onView(job); }} data-testid={`button-view-job-${job.id}`}>
               View Details
             </Button>
           )}
           {onClaim && job.status === "active" && (
-            <Button size="sm" onClick={() => onClaim(job)} data-testid={`button-claim-job-${job.id}`}>
+            <Button size="sm" onClick={(e) => { e.stopPropagation(); onClaim(job); }} data-testid={`button-claim-job-${job.id}`}>
               Claim Job
             </Button>
           )}
