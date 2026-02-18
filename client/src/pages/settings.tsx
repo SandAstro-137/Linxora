@@ -36,7 +36,8 @@ function BlacklistSection() {
 
   const addToBlacklistMutation = useMutation({
     mutationFn: async (freelancerId: string) => {
-      return apiRequest("POST", `/api/blacklist/${freelancerId}`, {});
+      const res = await apiRequest("POST", `/api/blacklist/${freelancerId}`);
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/blacklist"] });
@@ -50,7 +51,8 @@ function BlacklistSection() {
 
   const removeFromBlacklistMutation = useMutation({
     mutationFn: async (freelancerId: string) => {
-      return apiRequest("DELETE", `/api/blacklist/${freelancerId}`, {});
+      const res = await apiRequest("DELETE", `/api/blacklist/${freelancerId}`);
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/blacklist"] });
@@ -63,14 +65,10 @@ function BlacklistSection() {
 
   const searchFreelancerMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const res = await fetch(`/api/users/find?userId=${userId}`, { credentials: "include" });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "User not found");
-      }
-      return res.json();
+      const res = await apiRequest("GET", `/api/users/find?userId=${userId}`);
+      return await res.json();
     },
-    onSuccess: (user) => {
+    onSuccess: (user: any) => {
       if (user.role !== "freelancer") {
         toast({ title: "Error", description: "Can only blacklist freelancers", variant: "destructive" });
         return;
