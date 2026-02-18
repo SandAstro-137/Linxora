@@ -4742,8 +4742,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid or expired verification link" });
       }
       
-      // Check if token was already used
+      // Check if token was already used - if recently used, treat as success (handles duplicate requests)
       if (verificationToken.usedAt) {
+        const usedAgo = Date.now() - new Date(verificationToken.usedAt).getTime();
+        if (usedAgo < 5 * 60 * 1000) {
+          return res.json({ 
+            success: true, 
+            message: "Email verified successfully",
+            email: verificationToken.newEmail 
+          });
+        }
         return res.status(400).json({ error: "This verification link has already been used" });
       }
       
