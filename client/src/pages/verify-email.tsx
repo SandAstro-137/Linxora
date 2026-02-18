@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,12 @@ export default function VerifyEmailPage() {
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("");
   const [email, setEmail] = useState("");
+  const hasVerified = useRef(false);
 
   useEffect(() => {
+    if (hasVerified.current) return;
+    hasVerified.current = true;
+
     const verifyEmail = async () => {
       const params = new URLSearchParams(window.location.search);
       const token = params.get("token");
@@ -30,7 +34,8 @@ export default function VerifyEmailPage() {
           setStatus("success");
           setMessage(data.message || "Your email has been verified successfully!");
           setEmail(data.email || "");
-          await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/profile"] });
         } else {
           setStatus("error");
           setMessage(data.error || "Failed to verify email. The link may be expired or already used.");
