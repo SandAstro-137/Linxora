@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,12 +10,161 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw, Plus, ChevronUp } from "lucide-react";
+import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw, Plus, ChevronUp, ZoomIn, ZoomOut, Move } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
+
+function ImageCropper({ imageSrc, onCrop, onCancel }: { imageSrc: string; onCrop: (dataUrl: string) => void; onCancel: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const containerSize = 280;
+
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      imgRef.current = img;
+      const minScale = containerSize / Math.min(img.width, img.height);
+      setScale(minScale);
+      setOffset({
+        x: (containerSize - img.width * minScale) / 2,
+        y: (containerSize - img.height * minScale) / 2,
+      });
+      setImgLoaded(true);
+    };
+    img.src = imageSrc;
+  }, [imageSrc]);
+
+  useEffect(() => {
+    if (!imgLoaded || !imgRef.current || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return;
+    const img = imgRef.current;
+    const iw = img.width * scale;
+    const ih = img.height * scale;
+    ctx.clearRect(0, 0, containerSize, containerSize);
+    ctx.globalAlpha = 0.35;
+    ctx.drawImage(img, offset.x, offset.y, iw, ih);
+    ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(containerSize / 2, containerSize / 2, containerSize / 2 - 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, offset.x, offset.y, iw, ih);
+    ctx.restore();
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(containerSize / 2, containerSize / 2, containerSize / 2 - 1, 0, Math.PI * 2);
+    ctx.stroke();
+  }, [imgLoaded, scale, offset]);
+
+  const getEventPos = (e: React.MouseEvent | React.TouchEvent) => {
+    if ("touches" in e) {
+      return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    return { x: e.clientX, y: e.clientY };
+  };
+
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const pos = getEventPos(e);
+    setDragStart({ x: pos.x - offset.x, y: pos.y - offset.y });
+  };
+
+  const handlePointerMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (!dragging) return;
+    e.preventDefault();
+    const pos = getEventPos(e);
+    setOffset({ x: pos.x - dragStart.x, y: pos.y - dragStart.y });
+  }, [dragging, dragStart]);
+
+  const handlePointerUp = () => setDragging(false);
+
+  const handleZoom = (newScale: number[]) => {
+    if (!imgRef.current) return;
+    const img = imgRef.current;
+    const centerX = containerSize / 2;
+    const centerY = containerSize / 2;
+    const imgCenterX = (centerX - offset.x) / scale;
+    const imgCenterY = (centerY - offset.y) / scale;
+    const s = newScale[0];
+    setScale(s);
+    setOffset({
+      x: centerX - imgCenterX * s,
+      y: centerY - imgCenterY * s,
+    });
+  };
+
+  const handleCrop = () => {
+    if (!imgRef.current) return;
+    const outputSize = 400;
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = outputSize;
+    exportCanvas.height = outputSize;
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) return;
+    const ratio = outputSize / containerSize;
+    ctx.drawImage(imgRef.current, offset.x * ratio, offset.y * ratio, imgRef.current.width * scale * ratio, imgRef.current.height * scale * ratio);
+    onCrop(exportCanvas.toDataURL("image/jpeg", 0.85));
+  };
+
+  const minScale = imgRef.current ? containerSize / Math.max(imgRef.current.width, imgRef.current.height) : 0.1;
+  const maxScale = imgRef.current ? (containerSize / Math.min(imgRef.current.width, imgRef.current.height)) * 3 : 3;
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <p className="text-sm text-muted-foreground flex items-center gap-1">
+        <Move className="w-3 h-3" /> Drag to reposition
+      </p>
+      <div
+        className="relative cursor-grab active:cursor-grabbing"
+        style={{ width: containerSize, height: containerSize, touchAction: "none" }}
+        onMouseDown={handlePointerDown}
+        onMouseMove={handlePointerMove}
+        onMouseUp={handlePointerUp}
+        onMouseLeave={handlePointerUp}
+        onTouchStart={handlePointerDown}
+        onTouchMove={handlePointerMove}
+        onTouchEnd={handlePointerUp}
+      >
+        <canvas
+          ref={canvasRef}
+          width={containerSize}
+          height={containerSize}
+          className="rounded-md"
+          data-testid="canvas-image-cropper"
+        />
+      </div>
+      <div className="flex items-center gap-3 w-full max-w-[280px]">
+        <ZoomOut className="w-4 h-4 text-muted-foreground shrink-0" />
+        <Slider
+          min={minScale}
+          max={maxScale}
+          step={0.01}
+          value={[scale]}
+          onValueChange={handleZoom}
+          data-testid="slider-zoom"
+        />
+        <ZoomIn className="w-4 h-4 text-muted-foreground shrink-0" />
+      </div>
+      <DialogFooter className="w-full">
+        <Button variant="outline" onClick={onCancel} data-testid="button-cancel-crop">Cancel</Button>
+        <Button onClick={handleCrop} data-testid="button-save-crop">Save</Button>
+      </DialogFooter>
+    </div>
+  );
+}
 
 interface BlacklistedUser {
   id: string;
@@ -288,36 +437,7 @@ export default function SettingsPage() {
   });
 
 
-  const resizeImage = (file: File, maxSize: number = 400): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      
-      img.onload = () => {
-        const cropSize = Math.min(img.width, img.height);
-        const cropX = (img.width - cropSize) / 2;
-        const cropY = (img.height - cropSize) / 2;
-        
-        canvas.width = maxSize;
-        canvas.height = maxSize;
-        ctx?.drawImage(img, cropX, cropY, cropSize, cropSize, 0, 0, maxSize, maxSize);
-        
-        const quality = 0.8;
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl);
-      };
-      
-      img.onerror = () => reject(new Error('Failed to load image'));
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
-  };
+  const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -328,12 +448,17 @@ export default function SettingsPage() {
       return;
     }
 
-    try {
-      const resizedImage = await resizeImage(file);
-      updateAvatarMutation.mutate(resizedImage);
-    } catch {
-      toast({ title: "Error", description: "Failed to process image.", variant: "destructive" });
-    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setCropperImageSrc(ev.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleCropComplete = (dataUrl: string) => {
+    setCropperImageSrc(null);
+    updateAvatarMutation.mutate(dataUrl);
   };
 
   const handleSwitchAccount = async (accountId: string) => {
@@ -429,6 +554,20 @@ export default function SettingsPage() {
                 data-testid="input-avatar-file"
               />
             </div>
+            <Dialog open={!!cropperImageSrc} onOpenChange={(open) => { if (!open) setCropperImageSrc(null); }}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Crop Profile Picture</DialogTitle>
+                </DialogHeader>
+                {cropperImageSrc && (
+                  <ImageCropper
+                    imageSrc={cropperImageSrc}
+                    onCrop={handleCropComplete}
+                    onCancel={() => setCropperImageSrc(null)}
+                  />
+                )}
+              </DialogContent>
+            </Dialog>
             <div className="flex-1 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
