@@ -34,6 +34,20 @@ function BlacklistSection() {
     queryKey: ["/api/blacklist"],
   });
 
+  const parseErrorMessage = (error: Error): string => {
+    try {
+      const msg = error.message;
+      const jsonStart = msg.indexOf("{");
+      if (jsonStart !== -1) {
+        const parsed = JSON.parse(msg.substring(jsonStart));
+        return parsed.error || parsed.message || "Something went wrong";
+      }
+      return msg;
+    } catch {
+      return error.message || "Something went wrong";
+    }
+  };
+
   const addToBlacklistMutation = useMutation({
     mutationFn: async (freelancerId: string) => {
       const res = await apiRequest("POST", `/api/blacklist/${freelancerId}`);
@@ -45,7 +59,7 @@ function BlacklistSection() {
       setSearchId("");
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Error", description: parseErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -59,7 +73,7 @@ function BlacklistSection() {
       toast({ title: "Removed from Blacklist", description: "Freelancer can now apply to your jobs." });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Error", description: parseErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -76,7 +90,7 @@ function BlacklistSection() {
       addToBlacklistMutation.mutate(user.id);
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Error", description: parseErrorMessage(error), variant: "destructive" });
     },
   });
 
