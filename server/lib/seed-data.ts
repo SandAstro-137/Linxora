@@ -60,6 +60,16 @@ export async function seedData() {
     role: "founder",
   }, true);
 
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  await Promise.all([
+    storage.updateUser(freelancer1.id, { createdAt: oneYearAgo }),
+    storage.updateUser(freelancer2.id, { createdAt: oneYearAgo }),
+    storage.updateUser(customer.id, { createdAt: oneYearAgo }),
+    storage.updateUser(moderator.id, { createdAt: oneYearAgo }),
+    storage.updateUser(founder.id, { createdAt: oneYearAgo }),
+  ]);
+
   // Create demo jobs with proper escrow records (matching real payment flow)
   const seedJobs = [
     {
