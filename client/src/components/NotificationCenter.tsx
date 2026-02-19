@@ -149,7 +149,11 @@ export function NotificationCenter() {
       
       // Role upgrade notifications
       case "role_upgrade":
-        setLocation("/profile");
+        if (notification.title?.includes("New Role Upgrade Request")) {
+          setLocation("/moderation?tab=upgrades");
+        } else {
+          setLocation("/profile");
+        }
         return;
       
       // Moderation notifications

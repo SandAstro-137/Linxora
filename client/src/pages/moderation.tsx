@@ -23,8 +23,8 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { useState } from "react";
-import { Link } from "wouter";
+import { useState, useEffect } from "react";
+import { Link, useSearch } from "wouter";
 
 interface EnrichedCancellationRequest extends CancellationRequest {
   jobTitle?: string;
@@ -80,6 +80,17 @@ interface EnrichedRoleUpgradeRequest {
 export default function ModerationPage() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const searchString = useSearch();
+  const searchParams = new URLSearchParams(searchString);
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(tabFromUrl || "jobs");
+
+  useEffect(() => {
+    if (tabFromUrl) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
+
   const [requestChangesDialogOpen, setRequestChangesDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [changesFeedback, setChangesFeedback] = useState("");
@@ -401,7 +412,7 @@ export default function ModerationPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="jobs" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="jobs" data-testid="tab-jobs">
             Pending Jobs

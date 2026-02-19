@@ -253,6 +253,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/auth/demo-accounts", async (_req, res) => {
+    try {
+      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-founder-1"];
+      const accounts = [];
+      for (const discordId of demoIds) {
+        const user = await storage.getUserByDiscordId(discordId);
+        if (user) {
+          accounts.push({ id: user.discordId, username: user.username, role: user.role, avatar: user.avatar });
+        }
+      }
+      res.json(accounts);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy(() => {
       res.json({ success: true });

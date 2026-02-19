@@ -316,12 +316,12 @@ function BlacklistSection() {
   );
 }
 
-const demoAccounts = [
-  { id: "demo-freelancer-1", username: "Alex Chen", role: "freelancer", avatar: null },
-  { id: "demo-freelancer-2", username: "Sarah Johnson", role: "freelancer", avatar: null },
-  { id: "demo-customer-1", username: "Tech Startup Inc", role: "customer", avatar: null },
-  { id: "demo-moderator-1", username: "Admin User", role: "moderator", avatar: null },
-  { id: "demo-founder-1", username: "Founder", role: "founder", avatar: null },
+const defaultDemoAccounts = [
+  { id: "demo-freelancer-1", username: "Alex Chen", role: "freelancer", avatar: null as string | null },
+  { id: "demo-freelancer-2", username: "Sarah Johnson", role: "freelancer", avatar: null as string | null },
+  { id: "demo-customer-1", username: "Tech Startup Inc", role: "customer", avatar: null as string | null },
+  { id: "demo-moderator-1", username: "Admin User", role: "moderator", avatar: null as string | null },
+  { id: "demo-founder-1", username: "Founder", role: "founder", avatar: null as string | null },
 ];
 
 export default function SettingsPage() {
@@ -340,6 +340,12 @@ export default function SettingsPage() {
       setBio(user.bio || "");
     }
   }, [user]);
+
+  const { data: demoAccounts } = useQuery<{ id: string; username: string; role: string; avatar: string | null }[]>({
+    queryKey: ["/api/auth/demo-accounts"],
+  });
+
+  const accounts = demoAccounts || defaultDemoAccounts;
 
   const { data: settings, isLoading } = useQuery<UserPreferences>({
     queryKey: ["/api/settings"],
@@ -467,6 +473,7 @@ export default function SettingsPage() {
       await logout();
       await login(accountId);
       setAccountSheetOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/demo-accounts"] });
       toast({ title: "Account switched", description: "You are now logged in as a different account." });
     } catch {
       toast({ title: "Error", description: "Failed to switch account.", variant: "destructive" });
@@ -840,7 +847,7 @@ export default function SettingsPage() {
                   </SheetDescription>
                 </SheetHeader>
                 <div className="mt-6 space-y-2 max-h-[50vh] overflow-y-auto">
-                  {demoAccounts.map((account) => {
+                  {accounts.map((account) => {
                     const isCurrentAccount = user?.discordId === account.id;
                     return (
                       <button
