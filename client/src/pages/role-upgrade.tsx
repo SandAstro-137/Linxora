@@ -71,7 +71,7 @@ function RolePreviewDialog({ targetRole }: { targetRole: "freelancer" | "moderat
         <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg">
           <p className="text-sm text-center">
             {targetRole === "freelancer" 
-              ? "As a Freelancer, you'll keepnot found  all existing Customer features plus gain these new abilities!"
+              ? "As a Freelancer, you'll lose some Customer features, but gain these new abilities to start earning!"
               : "As a Moderator, you'll no longer be able to take on freelance jobs, you will earn money through the Moderation team budget."
             }
           </p>

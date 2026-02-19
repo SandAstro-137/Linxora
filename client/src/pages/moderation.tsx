@@ -5,11 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistanceToNow, format } from "date-fns";
+import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import {
   Dialog,
   DialogContent,
@@ -51,8 +54,32 @@ interface EnrichedDispute {
   moderatorUsername?: string;
 }
 
+interface EnrichedRoleUpgradeRequest {
+  id: string;
+  userId: string;
+  upgradeType: string;
+  reason: string;
+  experience: string | null;
+  portfolio: string | null;
+  status: string;
+  reviewerId: string | null;
+  reviewNotes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  user: {
+    id: string;
+    username: string;
+    avatar: string | null;
+    role: string;
+    completedJobs: number;
+    level: number;
+    rating: string;
+  } | null;
+}
+
 export default function ModerationPage() {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [requestChangesDialogOpen, setRequestChangesDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [changesFeedback, setChangesFeedback] = useState("");
@@ -75,6 +102,40 @@ export default function ModerationPage() {
 
   const { data: disputes, isLoading: disputesLoading } = useQuery<EnrichedDispute[]>({
     queryKey: ["/api/disputes"],
+  });
+
+  const { data: roleUpgradeRequests = [], isLoading: upgradesLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
+    queryKey: ["/api/role-upgrade-requests/pending"],
+  });
+
+  const [upgradeReviewNotes, setUpgradeReviewNotes] = useState<Record<string, string>>({});
+  const canApproveModeratorPromotion = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
+
+  const reviewUpgradeMutation = useMutation({
+    mutationFn: async ({ id, status, notes }: { id: string; status: string; notes?: string }) => {
+      return apiRequest("PATCH", `/api/role-upgrade-requests/${id}`, { status, reviewNotes: notes });
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/role-upgrade-requests/pending"] });
+      toast({
+        title: variables.status === "approved" ? "Request Approved" : "Request Rejected",
+        description: variables.status === "approved" 
+          ? "The user's role has been upgraded." 
+          : "The upgrade request has been declined.",
+      });
+      setUpgradeReviewNotes((prev) => {
+        const newNotes = { ...prev };
+        delete newNotes[variables.id];
+        return newNotes;
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to process request",
+        variant: "destructive",
+      });
+    },
   });
 
   const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
@@ -382,6 +443,15 @@ export default function ModerationPage() {
             {(openDisputes.length + inProgressDisputes.length) > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {openDisputes.length + inProgressDisputes.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="upgrades" data-testid="tab-upgrades">
+            <Users className="w-4 h-4 mr-1" />
+            Role Upgrades
+            {roleUpgradeRequests.length > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {roleUpgradeRequests.length}
               </Badge>
             )}
           </TabsTrigger>
@@ -935,6 +1005,156 @@ export default function ModerationPage() {
                 </div>
               </CardContent>
             </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="upgrades">
+          {upgradesLoading ? (
+            <div className="space-y-4">
+              {[1, 2].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : roleUpgradeRequests.length === 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No pending role upgrade requests</h3>
+                  <p className="text-muted-foreground">
+                    Role upgrade applications will appear here for review
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">All times are in {TIMEZONE_LABEL}</p>
+              {roleUpgradeRequests.map((request) => (
+                <Card key={request.id} data-testid={`card-upgrade-${request.id}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <Avatar>
+                          <AvatarImage src={request.user?.avatar || undefined} />
+                          <AvatarFallback>
+                            {request.user?.username?.charAt(0).toUpperCase() || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <CardTitle className="text-lg">{request.user?.username || "Unknown User"}</CardTitle>
+                          <CardDescription>
+                            {request.upgradeType === "customer_to_freelancer"
+                              ? "Requesting: Customer → Freelancer"
+                              : "Requesting: Freelancer → Moderator"}
+                          </CardDescription>
+                        </div>
+                      </div>
+                      <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-700 dark:text-yellow-400">
+                        Pending Review
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {request.user && (
+                      <div className="flex flex-wrap gap-4 text-sm">
+                        <div className="flex items-center gap-1">
+                          <Briefcase className="w-4 h-4 text-muted-foreground" />
+                          <span>{request.user.completedJobs || 0} completed jobs</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Star className="w-4 h-4 text-muted-foreground" />
+                          <span>Level {request.user.level || 1}</span>
+                        </div>
+                        {Number(request.user.rating) > 0 && (
+                          <div className="flex items-center gap-1">
+                            <Star className="w-4 h-4 text-yellow-500" />
+                            <span>{Number(request.user.rating).toFixed(1)} rating</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <p className="font-medium">Reason for Request:</p>
+                      <p className="text-muted-foreground">{request.reason}</p>
+                    </div>
+
+                    {request.experience && (
+                      <div className="space-y-2">
+                        <p className="font-medium">Experience:</p>
+                        <p className="text-muted-foreground">{request.experience}</p>
+                      </div>
+                    )}
+
+                    {request.portfolio && (
+                      <div className="space-y-2">
+                        <p className="font-medium">Portfolio:</p>
+                        <a
+                          href={request.portfolio}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          {request.portfolio}
+                        </a>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-muted-foreground">
+                      Submitted {formatEasternDateTime(request.createdAt)} (ET)
+                    </p>
+
+                    <div className="space-y-2 pt-4 border-t">
+                      <label className="text-sm font-medium">Review Notes (optional):</label>
+                      <Textarea
+                        placeholder="Add notes about your decision..."
+                        value={upgradeReviewNotes[request.id] || ""}
+                        onChange={(e) => setUpgradeReviewNotes((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                        data-testid={`input-upgrade-notes-${request.id}`}
+                      />
+                    </div>
+
+                    {request.upgradeType === "freelancer_to_moderator" && !canApproveModeratorPromotion ? (
+                      <div className="flex items-center gap-2 pt-2 p-3 rounded-md bg-muted/50 text-muted-foreground">
+                        <Lock className="w-4 h-4" />
+                        <span className="text-sm">Only Founder or Head of Moderation can approve moderator promotions</span>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2 pt-2">
+                        <Button
+                          onClick={() => reviewUpgradeMutation.mutate({ 
+                            id: request.id, 
+                            status: "approved",
+                            notes: upgradeReviewNotes[request.id]
+                          })}
+                          disabled={reviewUpgradeMutation.isPending}
+                          className="flex-1"
+                          data-testid={`button-approve-upgrade-${request.id}`}
+                        >
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          onClick={() => reviewUpgradeMutation.mutate({ 
+                            id: request.id, 
+                            status: "rejected",
+                            notes: upgradeReviewNotes[request.id]
+                          })}
+                          disabled={reviewUpgradeMutation.isPending}
+                          className="flex-1"
+                          data-testid={`button-reject-upgrade-${request.id}`}
+                        >
+                          <XCircle className="w-4 h-4 mr-2" />
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           )}
         </TabsContent>
       </Tabs>
