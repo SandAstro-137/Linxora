@@ -295,24 +295,13 @@ export default function SettingsPage() {
       const ctx = canvas.getContext('2d');
       
       img.onload = () => {
-        let width = img.width;
-        let height = img.height;
+        const cropSize = Math.min(img.width, img.height);
+        const cropX = (img.width - cropSize) / 2;
+        const cropY = (img.height - cropSize) / 2;
         
-        if (width > height) {
-          if (width > maxSize) {
-            height = Math.round((height * maxSize) / width);
-            width = maxSize;
-          }
-        } else {
-          if (height > maxSize) {
-            width = Math.round((width * maxSize) / height);
-            height = maxSize;
-          }
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        ctx?.drawImage(img, 0, 0, width, height);
+        canvas.width = maxSize;
+        canvas.height = maxSize;
+        ctx?.drawImage(img, cropX, cropY, cropSize, cropSize, 0, 0, maxSize, maxSize);
         
         const quality = 0.8;
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
