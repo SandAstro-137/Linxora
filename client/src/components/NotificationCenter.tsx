@@ -24,11 +24,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth-context";
 import type { Notification, UserPreferences } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
 export function NotificationCenter() {
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [notificationToDelete, setNotificationToDelete] = useState<string | null>(null);
@@ -115,6 +117,8 @@ export function NotificationCenter() {
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
+    console.log("[NotificationClick] type:", notificationType, "title:", notification.title, "user role:", user?.role);
+    
     // Route based on notification type first for more specific handling
     switch (notificationType) {
       // Job invitations (for freelancers)
@@ -147,9 +151,10 @@ export function NotificationCenter() {
         setLocation("/friends");
         return;
       
-      // Role upgrade notifications - for moderators receiving requests vs users getting results
+      // Role upgrade notifications - moderators/staff see upgrade requests in moderation queue
       case "role_upgrade":
-        if (notification.title === "New Role Upgrade Request") {
+        if (user && (user.role === "moderator" || user.role === "head_of_moderation" || user.role === "founder") && 
+            (notification.title?.includes("Upgrade Request") || notification.title?.includes("upgrade request"))) {
           window.location.href = "/moderation?tab=upgrades";
         } else {
           setLocation("/profile");
