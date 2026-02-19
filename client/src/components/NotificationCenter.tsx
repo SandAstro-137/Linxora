@@ -147,10 +147,10 @@ export function NotificationCenter() {
         setLocation("/friends");
         return;
       
-      // Role upgrade notifications
+      // Role upgrade notifications - for moderators receiving requests vs users getting results
       case "role_upgrade":
-        if (notification.title?.includes("New Role Upgrade Request")) {
-          setLocation("/moderation?tab=upgrades");
+        if (notification.title === "New Role Upgrade Request") {
+          window.location.href = "/moderation?tab=upgrades";
         } else {
           setLocation("/profile");
         }
