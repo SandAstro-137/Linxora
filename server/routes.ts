@@ -5264,6 +5264,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/notifications/debug-click", (req, res) => {
+    console.log("[DEBUG-CLICK]", JSON.stringify(req.query));
+    res.json({ ok: true });
+  });
+
   app.put("/api/notifications/:id/read", requireAuth, async (req, res) => {
     try {
       const notification = await storage.markNotificationAsRead(req.params.id);

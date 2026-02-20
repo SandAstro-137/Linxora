@@ -117,12 +117,12 @@ export function NotificationCenter() {
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
-    console.error("[NotificationClick] FULL DATA:", JSON.stringify({ type: notificationType, title: notification.title, sourceType, sourceId, userRole: user?.role, userId: user?.id }));
+    fetch(`/api/notifications/debug-click?type=${encodeURIComponent(notificationType)}&role=${encodeURIComponent(user?.role || 'none')}&title=${encodeURIComponent(notification.title || 'none')}`, { credentials: "include" }).catch(() => {});
     
     // Role upgrade notifications - check FIRST before switch to ensure they're handled
     if (notificationType === "role_upgrade") {
       const isStaff = user && ["moderator", "head_of_moderation", "founder"].includes(user.role);
-      console.error("[NotificationClick] role_upgrade detected, isStaff:", isStaff, "role:", user?.role);
+      fetch(`/api/notifications/debug-click?branch=role_upgrade&isStaff=${isStaff}&dest=${isStaff ? 'moderation' : 'profile'}`, { credentials: "include" }).catch(() => {});
       if (isStaff) {
         window.location.href = "/moderation?tab=upgrades";
       } else {
