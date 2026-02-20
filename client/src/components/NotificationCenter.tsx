@@ -113,39 +113,39 @@ export function NotificationCenter() {
     
     setOpen(false);
     
+    // PRIMARY: Use server-provided redirectUrl if available (most reliable)
+    if (notification.redirectUrl) {
+      window.location.href = notification.redirectUrl;
+      return;
+    }
+    
     const notificationType = notification.type;
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
-    fetch(`/api/notifications/debug-click?type=${encodeURIComponent(notificationType)}&role=${encodeURIComponent(user?.role || 'none')}&title=${encodeURIComponent(notification.title || 'none')}`, { credentials: "include" }).catch(() => {});
-    
-    // Role upgrade notifications - check FIRST before switch to ensure they're handled
+    // Role upgrade notifications - check before switch
     if (notificationType === "role_upgrade") {
       const isStaff = user && ["moderator", "head_of_moderation", "founder"].includes(user.role);
-      fetch(`/api/notifications/debug-click?branch=role_upgrade&isStaff=${isStaff}&dest=${isStaff ? 'moderation' : 'profile'}`, { credentials: "include" }).catch(() => {});
       if (isStaff) {
         window.location.href = "/moderation?tab=upgrades";
       } else {
-        window.location.href = "/profile";
+        setLocation("/profile");
       }
       return;
     }
     
-    // Route based on notification type first for more specific handling
+    // Route based on notification type
     switch (notificationType) {
-      // Job invitations (for freelancers)
       case "invitation":
       case "recommendation_accepted":
       case "job_invitation":
         setLocation("/job-invitations");
         return;
       
-      // Recommendation notifications for customer - go to incoming recommendations page
       case "job_recommendation":
         setLocation("/incoming-recommendations");
         return;
       
-      // Recommendation notifications for recommender
       case "recommendation_declined":
       case "recommendation_success":
       case "invitation_accepted":
@@ -157,18 +157,15 @@ export function NotificationCenter() {
         }
         return;
       
-      // Friend-related notifications
       case "friend_request":
       case "friend_accepted":
         setLocation("/friends");
         return;
       
-      // Moderation notifications
       case "moderation":
         setLocation("/moderation");
         return;
       
-      // Direct messages
       case "direct_message":
         if (sourceId) {
           setLocation(`/messages/${sourceId}`);
@@ -177,7 +174,6 @@ export function NotificationCenter() {
         }
         return;
       
-      // Chat messages (job-related)
       case "chat_message":
         if (sourceId) {
           setLocation(`/jobs/${sourceId}`);
@@ -188,14 +184,12 @@ export function NotificationCenter() {
         }
         return;
       
-      // Meeting notifications
       case "meeting_invitation":
       case "meeting_reminder":
       case "meeting_rsvp":
         setLocation("/meetings");
         return;
       
-      // PTO notifications - moderators see requests, freelancers see their own
       case "pto_request":
         setLocation("/moderation");
         return;
@@ -205,7 +199,6 @@ export function NotificationCenter() {
         setLocation("/pto");
         return;
       
-      // Job status notifications
       case "job_approved":
       case "job_rejected":
       case "job_request":
@@ -233,14 +226,11 @@ export function NotificationCenter() {
         case "dispute":
           setLocation(`/moderation`);
           break;
-        case "system":
         default:
-          if (notification.relatedId) {
-            setLocation(`/jobs/${notification.relatedId}`);
-          }
+          setLocation("/notifications");
       }
-    } else if (notification.relatedId) {
-      setLocation(`/jobs/${notification.relatedId}`);
+    } else {
+      setLocation("/notifications");
     }
   };
 

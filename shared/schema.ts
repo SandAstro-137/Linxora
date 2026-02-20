@@ -446,6 +446,7 @@ export const notifications = pgTable("notifications", {
   relatedId: varchar("related_id"),
   sourceType: text("source_type"),
   sourceId: varchar("source_id"),
+  redirectUrl: text("redirect_url"),
   read: boolean("read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });

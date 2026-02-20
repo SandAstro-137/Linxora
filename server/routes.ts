@@ -5245,10 +5245,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/notifications", requireAuth, async (req, res) => {
     try {
       const notifications = await storage.getNotifications(req.session.userId!);
-      const roleUpgradeNotifs = notifications.filter(n => n.type === "role_upgrade" || n.title?.includes("Role Upgrade") || n.title?.includes("role upgrade"));
-      if (roleUpgradeNotifs.length > 0) {
-        console.log("[DEBUG] Role upgrade notifications for user:", req.session.userId, JSON.stringify(roleUpgradeNotifs.map(n => ({ id: n.id, type: n.type, title: n.title }))));
-      }
       res.json(notifications);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -5262,11 +5258,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
-  });
-
-  app.get("/api/notifications/debug-click", (req, res) => {
-    console.log("[DEBUG-CLICK]", JSON.stringify(req.query));
-    res.json({ ok: true });
   });
 
   app.put("/api/notifications/:id/read", requireAuth, async (req, res) => {
@@ -5616,6 +5607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           relatedId: request.id,
           sourceType: "user",
           sourceId: user.id,
+          redirectUrl: "/moderation?tab=upgrades",
         });
       }
 
@@ -5686,6 +5678,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           relatedId: request.id,
           sourceType: "user",
           sourceId: request.userId,
+          redirectUrl: "/profile",
         });
       } else {
         // Notify the user of rejection
@@ -5697,6 +5690,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           relatedId: request.id,
           sourceType: "user",
           sourceId: request.userId,
+          redirectUrl: "/profile",
         });
       }
 
@@ -6433,6 +6427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         relatedId: userId,
         sourceType: "user",
         sourceId: userId,
+        redirectUrl: "/profile",
       });
       
       const updatedUser = await storage.getUser(userId);
@@ -6467,6 +6462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         relatedId: userId,
         sourceType: "user",
         sourceId: userId,
+        redirectUrl: "/profile",
       });
       
       const updatedUser = await storage.getUser(userId);

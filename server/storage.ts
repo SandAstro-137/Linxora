@@ -840,6 +840,7 @@ export class MemStorage implements IStorage {
       read: insertNotification.read ?? false,
       sourceType: insertNotification.sourceType ?? null,
       sourceId: insertNotification.sourceId ?? null,
+      redirectUrl: insertNotification.redirectUrl ?? null,
       createdAt: new Date(),
     };
     this.notifications.set(id, notification);
