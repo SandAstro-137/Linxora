@@ -117,7 +117,19 @@ export function NotificationCenter() {
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
-    console.log("[NotificationClick] type:", notificationType, "title:", notification.title, "user role:", user?.role);
+    console.error("[NotificationClick] FULL DATA:", JSON.stringify({ type: notificationType, title: notification.title, sourceType, sourceId, userRole: user?.role, userId: user?.id }));
+    
+    // Role upgrade notifications - check FIRST before switch to ensure they're handled
+    if (notificationType === "role_upgrade") {
+      const isStaff = user && ["moderator", "head_of_moderation", "founder"].includes(user.role);
+      console.error("[NotificationClick] role_upgrade detected, isStaff:", isStaff, "role:", user?.role);
+      if (isStaff) {
+        window.location.href = "/moderation?tab=upgrades";
+      } else {
+        window.location.href = "/profile";
+      }
+      return;
+    }
     
     // Route based on notification type first for more specific handling
     switch (notificationType) {
@@ -149,16 +161,6 @@ export function NotificationCenter() {
       case "friend_request":
       case "friend_accepted":
         setLocation("/friends");
-        return;
-      
-      // Role upgrade notifications - moderators/staff see upgrade requests in moderation queue
-      case "role_upgrade":
-        if (user && (user.role === "moderator" || user.role === "head_of_moderation" || user.role === "founder") && 
-            (notification.title?.includes("Upgrade Request") || notification.title?.includes("upgrade request"))) {
-          window.location.href = "/moderation?tab=upgrades";
-        } else {
-          setLocation("/profile");
-        }
         return;
       
       // Moderation notifications
