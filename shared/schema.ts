@@ -169,8 +169,11 @@ export const users = pgTable("users", {
   onboardingCompleted: boolean("onboarding_completed").default(false),
   totalRatings: integer("total_ratings").default(0),
   completionPercentage: decimal("completion_percentage", { precision: 5, scale: 2 }).default("0"),
-  blacklistedFreelancers: text("blacklisted_freelancers").array().default(sql`'{}'::text[]`), // Customer's blacklisted freelancer IDs
-  lastActive: timestamp("last_active").defaultNow(), // Track last activity for online/inactive status
+  blacklistedFreelancers: text("blacklisted_freelancers").array().default(sql`'{}'::text[]`),
+  accountStatus: text("account_status").notNull().default(UserAccountStatus.ACTIVE),
+  suspendedUntil: timestamp("suspended_until"),
+  suspendedReason: text("suspended_reason"),
+  lastActive: timestamp("last_active").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -612,6 +615,7 @@ export const ReportStatus = {
   REVIEWED: "reviewed",
   RESOLVED: "resolved",
   DISMISSED: "dismissed",
+  FORWARDED: "forwarded",
 } as const;
 
 export const reports = pgTable("reports", {
@@ -624,6 +628,8 @@ export const reports = pgTable("reports", {
   status: text("status").notNull().default(ReportStatus.PENDING),
   reviewerId: varchar("reviewer_id"),
   reviewNotes: text("review_notes"),
+  actionTaken: text("action_taken"),
+  forwardedAt: timestamp("forwarded_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

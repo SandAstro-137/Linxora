@@ -5987,7 +5987,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       const { id } = req.params;
       const { status, reviewNotes } = req.body;
 
-      if (!status || !["reviewed", "resolved", "dismissed"].includes(status)) {
+      if (!status || !["reviewed", "resolved", "dismissed", "forwarded"].includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
 
@@ -5996,27 +5996,156 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         return res.status(404).json({ error: "Report not found" });
       }
 
-      // Sanitize review notes before storage
       const sanitizedNotes = reviewNotes ? sanitizeText(reviewNotes) : null;
       
-      const updatedReport = await storage.updateReport(id, {
+      const updateData: any = {
         status,
         reviewerId: req.session.userId,
         reviewNotes: sanitizedNotes,
-      });
+      };
 
-      // Notify the reporter
+      if (status === "forwarded") {
+        updateData.forwardedAt = new Date();
+      }
+      
+      const updatedReport = await storage.updateReport(id, updateData);
+
       await storage.createNotification({
         userId: report.reporterId,
         type: "report",
-        title: "Report Updated",
-        message: `Your report has been ${status}. ${sanitizedNotes ? `Notes: ${sanitizedNotes}` : ''}`,
+        title: status === "forwarded" ? "Bug Report Forwarded" : "Report Updated",
+        message: status === "forwarded" 
+          ? `Your bug report has been forwarded to the development team for review. Thank you for reporting!`
+          : `Your report has been ${status}. ${sanitizedNotes ? `Notes: ${sanitizedNotes}` : ''}`,
         relatedId: report.id,
         sourceType: "system",
         sourceId: report.id,
       });
 
       res.json(updatedReport);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Disciplinary action endpoint
+  app.post("/api/reports/:id/action", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { action, reason, duration } = req.body;
+
+      if (!action || !["warn", "suspend", "ban"].includes(action)) {
+        return res.status(400).json({ error: "Invalid action. Must be warn, suspend, or ban." });
+      }
+      if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
+        return res.status(400).json({ error: "A reason is required (minimum 5 characters)." });
+      }
+
+      const report = await storage.getReport(id);
+      if (!report) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+
+      if (report.reportType !== "user") {
+        return res.status(400).json({ error: "Disciplinary actions can only be taken on user reports." });
+      }
+
+      const targetUser = await storage.getUser(report.targetId);
+      if (!targetUser) {
+        return res.status(404).json({ error: "Target user not found." });
+      }
+
+      const moderator = await storage.getUser(req.session.userId!);
+      if (!moderator) {
+        return res.status(401).json({ error: "Moderator not found." });
+      }
+
+      // Prevent moderators from taking action against equal or higher roles
+      const roleHierarchy: Record<string, number> = { 
+        freelancer: 1, customer: 1, moderator: 2, head_of_moderation: 3, founder: 4 
+      };
+      if ((roleHierarchy[targetUser.role] || 0) >= (roleHierarchy[moderator.role] || 0)) {
+        return res.status(403).json({ error: "You cannot take disciplinary action against users of equal or higher rank." });
+      }
+
+      const sanitizedReason = sanitizeText(reason);
+
+      if (action === "warn") {
+        await storage.createNotification({
+          userId: targetUser.id,
+          type: "system",
+          title: "Official Warning",
+          message: `You have received an official warning from the moderation team. Reason: ${sanitizedReason}. Please review the platform rules to avoid further action.`,
+          relatedId: report.id,
+          sourceType: "system",
+          sourceId: report.id,
+        });
+      } else if (action === "suspend") {
+        if (!duration || !["1d", "3d", "7d", "14d", "30d"].includes(duration)) {
+          return res.status(400).json({ error: "Valid suspension duration required: 1d, 3d, 7d, 14d, or 30d." });
+        }
+        const daysMap: Record<string, number> = { "1d": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30 };
+        const suspendUntil = new Date();
+        suspendUntil.setDate(suspendUntil.getDate() + daysMap[duration]);
+
+        await storage.updateUser(targetUser.id, {
+          accountStatus: "suspended",
+          suspendedUntil: suspendUntil,
+          suspendedReason: sanitizedReason,
+        });
+
+        await storage.createNotification({
+          userId: targetUser.id,
+          type: "system",
+          title: "Account Suspended",
+          message: `Your account has been suspended for ${duration.replace("d", " day(s)")}. Reason: ${sanitizedReason}`,
+          relatedId: report.id,
+          sourceType: "system",
+          sourceId: report.id,
+        });
+      } else if (action === "ban") {
+        await storage.updateUser(targetUser.id, {
+          accountStatus: "banned",
+          suspendedReason: sanitizedReason,
+        });
+
+        await storage.createUserBan({
+          userId: targetUser.id,
+          reason: sanitizedReason,
+          bannedById: req.session.userId!,
+        });
+
+        await storage.createNotification({
+          userId: targetUser.id,
+          type: "system",
+          title: "Account Banned",
+          message: `Your account has been permanently banned. Reason: ${sanitizedReason}`,
+          relatedId: report.id,
+          sourceType: "system",
+          sourceId: report.id,
+        });
+      }
+
+      const actionLabel = action === "warn" ? "Warning issued" : action === "suspend" ? `Suspended for ${duration}` : "Banned";
+      await storage.updateReport(id, {
+        status: "resolved",
+        reviewerId: req.session.userId,
+        actionTaken: `${actionLabel}: ${sanitizedReason}`,
+        reviewNotes: `Disciplinary action: ${actionLabel}`,
+      });
+
+      res.json({ success: true, action: actionLabel });
+    } catch (error) {
+      console.error("Disciplinary action error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get forwarded bug reports (for founder/head of moderation)
+  app.get("/api/reports/forwarded-bugs", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const reports = await storage.getReports({ status: "forwarded", reportType: "bug" });
+      res.json(reports);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }

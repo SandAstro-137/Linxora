@@ -10,19 +10,54 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  // Update lastActive timestamp (throttled to avoid excessive writes)
   const userId = req.session.userId;
   const now = Date.now();
   const lastUpdate = lastActivityUpdates.get(userId) || 0;
   
   if (now - lastUpdate > ACTIVITY_UPDATE_INTERVAL) {
     lastActivityUpdates.set(userId, now);
-    storage.updateUser(userId, { lastActive: new Date() }).catch(() => {
-      // Silently fail - this is non-critical
-    });
+    storage.getUser(userId).then(user => {
+      if (user) {
+        if (user.accountStatus === 'banned') {
+          req.session.destroy(() => {});
+          return;
+        }
+        if (user.accountStatus === 'suspended' && user.suspendedUntil) {
+          if (new Date(user.suspendedUntil) <= new Date()) {
+            storage.updateUser(userId, { 
+              accountStatus: 'active', 
+              suspendedUntil: null, 
+              suspendedReason: null,
+              lastActive: new Date() 
+            }).catch(() => {});
+          }
+        } else {
+          storage.updateUser(userId, { lastActive: new Date() }).catch(() => {});
+        }
+      }
+    }).catch(() => {});
   }
-  
-  next();
+
+  storage.getUser(userId).then(user => {
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    if (user.accountStatus === 'banned') {
+      req.session.destroy(() => {});
+      return res.status(403).json({ error: 'Your account has been banned', accountStatus: 'banned' });
+    }
+    if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
+      return res.status(403).json({ 
+        error: `Your account is suspended until ${new Date(user.suspendedUntil).toLocaleDateString()}`,
+        accountStatus: 'suspended',
+        suspendedUntil: user.suspendedUntil,
+        reason: user.suspendedReason
+      });
+    }
+    next();
+  }).catch(() => {
+    next();
+  });
 }
 
 export function requireRole(...roles: string[]) {

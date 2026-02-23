@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -371,6 +372,10 @@ export default function ModerationPage() {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [reportReviewNotes, setReportReviewNotes] = useState("");
   const [reportReviewDialogOpen, setReportReviewDialogOpen] = useState(false);
+  const [disciplinaryDialogOpen, setDisciplinaryDialogOpen] = useState(false);
+  const [disciplinaryAction, setDisciplinaryAction] = useState<string>("");
+  const [disciplinaryReason, setDisciplinaryReason] = useState("");
+  const [disciplinaryDuration, setDisciplinaryDuration] = useState<string>("");
 
   const updateReportMutation = useMutation({
     mutationFn: ({ reportId, status, reviewNotes }: { reportId: string; status: string; reviewNotes?: string }) =>
@@ -389,6 +394,32 @@ export default function ModerationPage() {
       toast({
         title: "Failed to update report",
         description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const disciplinaryMutation = useMutation({
+    mutationFn: ({ reportId, action, reason, duration }: { reportId: string; action: string; reason: string; duration?: string }) =>
+      apiRequest("POST", `/api/reports/${reportId}/action`, { action, reason, duration }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/pending"] });
+      setDisciplinaryDialogOpen(false);
+      setReportReviewDialogOpen(false);
+      setSelectedReport(null);
+      setDisciplinaryAction("");
+      setDisciplinaryReason("");
+      setDisciplinaryDuration("");
+      const actionLabel = variables.action === "warn" ? "Warning issued" : variables.action === "suspend" ? "User suspended" : "User banned";
+      toast({
+        title: "Action taken",
+        description: actionLabel + " successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to take action",
+        description: error?.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -780,6 +811,43 @@ export default function ModerationPage() {
                     </div>
 
                     <div className="flex gap-2 pt-4 border-t flex-wrap">
+                      {report.reportType === "user" && (
+                        <Button
+                          variant="destructive"
+                          onClick={() => {
+                            setSelectedReport(report);
+                            setDisciplinaryAction("");
+                            setDisciplinaryReason("");
+                            setDisciplinaryDuration("");
+                            setDisciplinaryDialogOpen(true);
+                          }}
+                          className="gap-2"
+                          data-testid={`button-action-report-${report.id}`}
+                        >
+                          <ShieldAlert className="w-4 h-4" />
+                          Take Action
+                        </Button>
+                      )}
+                      {report.reportType === "bug" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            if (report) {
+                              updateReportMutation.mutate({
+                                reportId: report.id,
+                                status: "forwarded",
+                                reviewNotes: "Bug forwarded to development team",
+                              });
+                            }
+                          }}
+                          disabled={updateReportMutation.isPending}
+                          className="gap-2"
+                          data-testid={`button-forward-bug-${report.id}`}
+                        >
+                          <Forward className="w-4 h-4" />
+                          Forward Bug
+                        </Button>
+                      )}
                       <Button
                         onClick={() => {
                           setSelectedReport(report);
@@ -1420,6 +1488,137 @@ export default function ModerationPage() {
             >
               <Check className="w-4 h-4 mr-1" />
               Resolve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={disciplinaryDialogOpen} onOpenChange={setDisciplinaryDialogOpen}>
+        <DialogContent data-testid="dialog-disciplinary-action">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-destructive" />
+              Take Disciplinary Action
+            </DialogTitle>
+            <DialogDescription>
+              Choose an action to take against the reported user. This cannot be undone easily.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedReport && (
+              <div className="p-3 bg-muted/50 rounded-md space-y-2">
+                <p className="text-sm"><strong>Report Type:</strong> {selectedReport.reportType}</p>
+                <p className="text-sm"><strong>Reason:</strong> {selectedReport.reason}</p>
+                <p className="text-sm"><strong>Target User:</strong> <span className="font-mono">{selectedReport.targetId}</span></p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Action</Label>
+              <Select value={disciplinaryAction} onValueChange={setDisciplinaryAction}>
+                <SelectTrigger data-testid="select-disciplinary-action">
+                  <SelectValue placeholder="Select an action..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="warn">
+                    <span className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                      Issue Warning
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="suspend">
+                    <span className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-orange-500" />
+                      Suspend Account
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="ban">
+                    <span className="flex items-center gap-2">
+                      <Ban className="w-4 h-4 text-red-500" />
+                      Ban Account
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {disciplinaryAction === "suspend" && (
+              <div className="space-y-2">
+                <Label>Suspension Duration</Label>
+                <Select value={disciplinaryDuration} onValueChange={setDisciplinaryDuration}>
+                  <SelectTrigger data-testid="select-suspension-duration">
+                    <SelectValue placeholder="Select duration..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1d">1 Day</SelectItem>
+                    <SelectItem value="3d">3 Days</SelectItem>
+                    <SelectItem value="7d">7 Days</SelectItem>
+                    <SelectItem value="14d">14 Days</SelectItem>
+                    <SelectItem value="30d">30 Days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {disciplinaryAction === "ban" && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                <p className="text-sm text-destructive font-medium">
+                  Banning is permanent and will immediately lock the user out of their account.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="disciplinaryReason">Reason (required, minimum 5 characters)</Label>
+              <Textarea
+                id="disciplinaryReason"
+                placeholder="Explain the reason for this action..."
+                value={disciplinaryReason}
+                onChange={(e) => setDisciplinaryReason(e.target.value)}
+                rows={3}
+                data-testid="textarea-disciplinary-reason"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDisciplinaryDialogOpen(false);
+                setDisciplinaryAction("");
+                setDisciplinaryReason("");
+                setDisciplinaryDuration("");
+              }}
+              data-testid="button-cancel-disciplinary"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (selectedReport && disciplinaryAction && disciplinaryReason.trim().length >= 5) {
+                  disciplinaryMutation.mutate({
+                    reportId: selectedReport.id,
+                    action: disciplinaryAction,
+                    reason: disciplinaryReason,
+                    duration: disciplinaryAction === "suspend" ? disciplinaryDuration : undefined,
+                  });
+                }
+              }}
+              disabled={
+                disciplinaryMutation.isPending ||
+                !disciplinaryAction ||
+                disciplinaryReason.trim().length < 5 ||
+                (disciplinaryAction === "suspend" && !disciplinaryDuration)
+              }
+              data-testid="button-confirm-disciplinary"
+            >
+              {disciplinaryAction === "warn" && <AlertTriangle className="w-4 h-4 mr-1" />}
+              {disciplinaryAction === "suspend" && <Lock className="w-4 h-4 mr-1" />}
+              {disciplinaryAction === "ban" && <Ban className="w-4 h-4 mr-1" />}
+              {disciplinaryAction === "warn" ? "Issue Warning" :
+               disciplinaryAction === "suspend" ? "Suspend User" :
+               disciplinaryAction === "ban" ? "Ban User" : "Confirm Action"}
             </Button>
           </DialogFooter>
         </DialogContent>
