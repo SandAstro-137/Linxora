@@ -98,6 +98,7 @@ import MyApplicationsPage from "@/pages/my-applications";
 import UserProfilePage from "@/pages/user-profile";
 import JobInvitationsPage from "@/pages/job-invitations";
 import IncomingRecommendationsPage from "@/pages/incoming-recommendations";
+import LinoPage from "@/pages/lino";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -271,6 +272,11 @@ function Router() {
       <Route path="/incoming-recommendations">
         <ProtectedRoute allowedRoles={["customer"]}>
           <IncomingRecommendationsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/lino">
+        <ProtectedRoute>
+          <LinoPage />
         </ProtectedRoute>
       </Route>
       <Route path="/verify-email" component={VerifyEmailPage} />

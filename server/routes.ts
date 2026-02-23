@@ -9,6 +9,7 @@ import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
 import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
 import { z } from "zod";
+import OpenAI from "openai";
 
 const uploadedFiles = new Map<string, string>();
 
@@ -5740,6 +5741,121 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updatedRequest);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // === LINO AI ASSISTANT ===
+  const linoRateLimits = new Map<string, number[]>();
+  const linoOpenai = new OpenAI({
+    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  });
+
+  app.post("/api/lino/chat", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+
+      // Rate limit: max 20 messages per hour
+      const now = Date.now();
+      const oneHourAgo = now - 60 * 60 * 1000;
+      const userTimestamps = (linoRateLimits.get(userId) || []).filter(t => t > oneHourAgo);
+      if (userTimestamps.length >= 20) {
+        return res.status(429).json({
+          error: "You've sent too many messages to Lino recently. Please wait before trying again."
+        });
+      }
+      userTimestamps.push(now);
+      linoRateLimits.set(userId, userTimestamps);
+
+      const { messages } = req.body;
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: "Messages are required" });
+      }
+
+      // Limit conversation history to last 20 messages
+      const recentMessages = messages.slice(-20);
+
+      const systemPrompt = `You are Lino, the friendly and helpful AI support assistant for Linxora — a professional freelancer job marketplace platform.
+
+Your role is to help users understand how to use Linxora. Here is what you know about the platform:
+
+**Roles:**
+- Customer: Posts jobs, hires freelancers, manages payments
+- Freelancer: Applies to jobs, completes work, earns money
+- Moderator: Reviews jobs, handles reports, resolves disputes
+- Head of Moderation & Founder: Administrative roles with full access
+
+**Job Lifecycle:**
+- Customers create jobs (as drafts), then submit for moderator approval
+- Budget + premium is deducted from wallet at submission time
+- Moderators approve or reject (full refund on rejection)
+- Freelancers browse and apply to approved jobs (max 5 pending applications)
+- Customer accepts a freelancer, job moves to In Progress
+- Freelancer submits work with proof, customer has 4 days to review
+- Auto-completes if customer doesn't respond within 4 days
+
+**Wallet & Payments:**
+- USD-based wallet with deposit and withdrawal
+- Escrow system: money is held until job completes
+- Premium listings: minimum $100, premium revenue goes to Linxora
+- Level-based payouts: Level 1=60%, Level 2=70%, Level 3=75%, Level 4=80%, Level 5=85% of budget
+
+**Role Upgrades:**
+- Customers can apply to become Freelancers (account must be 2+ weeks old, no active jobs)
+- Freelancers can apply for Moderator (Level 5, 65%+ completion rate, 4+ months account age)
+- Cannot post new jobs while a role upgrade request is pending
+
+**Features:**
+- Friends system for connecting with other users
+- Direct messaging with privacy controls
+- Notification center for all alerts
+- Profile with stats, level, and rating
+- PTO requests for freelancers
+- Report system for reporting users, jobs, messages, or bugs
+- Team collaboration tools for active jobs
+
+**Guidelines for your responses:**
+- Be concise, friendly, and helpful
+- Use simple language, avoid technical jargon
+- If you don't know something specific, say so honestly
+- Don't make up features that don't exist
+- Don't provide advice on matters outside of Linxora platform usage
+- Keep responses focused and under 200 words when possible`;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const stream = await linoOpenai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...recentMessages.map((m: any) => ({
+            role: m.role as "user" | "assistant",
+            content: String(m.content).slice(0, 2000),
+          })),
+        ],
+        stream: true,
+        max_completion_tokens: 1024,
+      });
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (error: any) {
+      console.error("Lino chat error:", error);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: "Something went wrong" })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: "Failed to process your message" });
+      }
     }
   });
 

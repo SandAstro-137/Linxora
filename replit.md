@@ -60,6 +60,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Report System: Users can report jobs, users, messages, or bugs via ReportDialog component. "Report User" button on user profile pages, "Report a Bug" in sidebar for all roles. Reports are stored with sanitized content and checked for high-severity inappropriate content.
     - Moderation Queue: Reports tab in moderation page for moderators to review, resolve, mark reviewed, or dismiss reports with optional review notes.
     - Content filtering applied to job creation and report submissions to prevent malicious content.
+- **Lino AI Assistant:** AI-powered support chatbot accessible via "Ask Lino" in the sidebar's Support section. Uses OpenAI (via Replit AI Integrations) with gpt-5-mini model. Rate limited to 20 messages/hour. Conversation history limited to last 20 messages. System prompt contains Linxora platform knowledge. Available at /lino for all authenticated users.
 - **Job Lifecycle State Machine (NEW - Jan 2026):**
     - States: DRAFT → PENDING_APPROVAL → PENDING_ACCEPTANCE → IN_PROGRESS → AWAITING_CUSTOMER → COMPLETED
     - Alternative paths: CANCELLED, DISPUTE, EXPIRED

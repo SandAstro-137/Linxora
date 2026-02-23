@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug, Bot } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -177,6 +177,14 @@ export function AppSidebar() {
           <SidebarGroupLabel>Support</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/lino"} data-testid="link-ask-lino">
+                  <Link href="/lino">
+                    <Bot className="w-4 h-4" />
+                    <span>Ask Lino</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => setBugReportOpen(true)} data-testid="link-report-bug">
                   <Bug className="w-4 h-4" />
