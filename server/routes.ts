@@ -5540,6 +5540,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "Only customers can request freelancer upgrade" });
         }
         
+        // Customer to Freelancer: Must have no active jobs
+        const customerJobs = await storage.getJobs({ customerId: user.id });
+        const activeStatuses = [
+          JobStatus.DRAFT, JobStatus.PENDING_APPROVAL, JobStatus.PENDING_ACCEPTANCE,
+          JobStatus.IN_PROGRESS, JobStatus.SUBMITTED, JobStatus.AWAITING_CUSTOMER,
+          JobStatus.DISPUTE, JobStatus.PENDING, JobStatus.ACTIVE, JobStatus.FREELANCER_REQUESTED,
+          JobStatus.CLAIMED, JobStatus.CHANGES_REQUESTED
+        ];
+        const activeJobs = customerJobs.filter(j => activeStatuses.includes(j.status as any));
+        if (activeJobs.length > 0) {
+          return res.status(400).json({
+            error: `You cannot request a role upgrade while you have ${activeJobs.length} active job(s). Please complete or cancel all your jobs first.`
+          });
+        }
+
         // Customer to Freelancer: Account must be at least 2 weeks old
         if (user.createdAt) {
           const accountAge = Date.now() - new Date(user.createdAt).getTime();
@@ -5648,6 +5663,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!reviewer || (reviewer.role !== UserRole.FOUNDER && reviewer.role !== UserRole.HEAD_OF_MODERATION)) {
           return res.status(403).json({ 
             error: "Only the Founder or Head of Moderation can approve moderator promotions" 
+          });
+        }
+      }
+
+      // If approving a customer-to-freelancer upgrade, verify no active jobs
+      if (status === "approved" && request.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER) {
+        const customerJobs = await storage.getJobs({ customerId: request.userId });
+        const activeStatuses = [
+          JobStatus.DRAFT, JobStatus.PENDING_APPROVAL, JobStatus.PENDING_ACCEPTANCE,
+          JobStatus.IN_PROGRESS, JobStatus.SUBMITTED, JobStatus.AWAITING_CUSTOMER,
+          JobStatus.DISPUTE, JobStatus.PENDING, JobStatus.ACTIVE, JobStatus.FREELANCER_REQUESTED,
+          JobStatus.CLAIMED, JobStatus.CHANGES_REQUESTED
+        ];
+        const activeJobs = customerJobs.filter(j => activeStatuses.includes(j.status as any));
+        if (activeJobs.length > 0) {
+          return res.status(400).json({
+            error: `Cannot approve: this customer still has ${activeJobs.length} active job(s). They must complete or cancel all jobs before being promoted.`
           });
         }
       }
