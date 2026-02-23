@@ -16,6 +16,7 @@ interface Notification {
   sourceType?: string | null;
   sourceId?: string | null;
   relatedId?: string | null;
+  redirectUrl?: string | null;
   metadata?: any;
 }
 
@@ -53,6 +54,11 @@ export default function NotificationsPage() {
       markAsReadMutation.mutate(notification.id);
     }
     
+    if (notification.redirectUrl) {
+      setLocation(notification.redirectUrl);
+      return;
+    }
+    
     const notificationType = notification.type;
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
@@ -80,7 +86,7 @@ export default function NotificationsPage() {
         return;
       
       case "role_upgrade":
-        setLocation("/profile");
+        setLocation("/moderation?tab=upgrades");
         return;
       
       case "moderation":

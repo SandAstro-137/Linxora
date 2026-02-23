@@ -115,7 +115,7 @@ export function NotificationCenter() {
     
     // PRIMARY: Use server-provided redirectUrl if available (most reliable)
     if (notification.redirectUrl) {
-      window.location.href = notification.redirectUrl;
+      setLocation(notification.redirectUrl);
       return;
     }
     
@@ -127,7 +127,7 @@ export function NotificationCenter() {
     if (notificationType === "role_upgrade") {
       const isStaff = user && ["moderator", "head_of_moderation", "founder"].includes(user.role);
       if (isStaff) {
-        window.location.href = "/moderation?tab=upgrades";
+        setLocation("/moderation?tab=upgrades");
       } else {
         setLocation("/profile");
       }
