@@ -604,6 +604,7 @@ export const ReportType = {
   JOB: "job",
   USER: "user",
   MESSAGE: "message",
+  BUG: "bug",
 } as const;
 
 export const ReportStatus = {
@@ -637,7 +638,7 @@ export const insertReportSchema = createInsertSchema(reports)
     updatedAt: true,
   })
   .extend({
-    reportType: z.enum([ReportType.JOB, ReportType.USER, ReportType.MESSAGE]),
+    reportType: z.enum([ReportType.JOB, ReportType.USER, ReportType.MESSAGE, ReportType.BUG]),
     reason: z.string().min(5, "Please provide a reason"),
   });
 

@@ -1,5 +1,6 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
@@ -13,12 +14,14 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth-context";
 import { Badge } from "@/components/ui/badge";
+import { ReportDialog } from "@/components/ReportDialog";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
+  const [bugReportOpen, setBugReportOpen] = useState(false);
 
   // Fetch unread notification count for all roles
   const { data: unreadData } = useQuery<{ count: number }>({
@@ -170,7 +173,27 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Support</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setBugReportOpen(true)} data-testid="link-report-bug">
+                  <Bug className="w-4 h-4" />
+                  <span>Report a Bug</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
+      <ReportDialog
+        open={bugReportOpen}
+        onOpenChange={setBugReportOpen}
+        targetId="platform"
+        reportType="bug"
+        targetName="Linxora Platform"
+      />
     </Sidebar>
   );
 }

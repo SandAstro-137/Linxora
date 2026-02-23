@@ -57,7 +57,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 - **Tutorial System:** Slide-based walkthrough with role-specific content (6 slides for freelancers, 5 for customers, 4 for moderators), accessible via help button in header.
 - **Safety & Moderation:**
     - Content Filter: Server-side library (server/lib/content-filter.ts) with inappropriate/suspicious pattern detection, XSS sanitization via sanitizeText(), and spam detection via isSpamLike().
-    - Report System: Users can report jobs, users, or messages via ReportDialog component. Reports are stored with sanitized content and checked for high-severity inappropriate content.
+    - Report System: Users can report jobs, users, messages, or bugs via ReportDialog component. "Report User" button on user profile pages, "Report a Bug" in sidebar for all roles. Reports are stored with sanitized content and checked for high-severity inappropriate content.
     - Moderation Queue: Reports tab in moderation page for moderators to review, resolve, mark reviewed, or dismiss reports with optional review notes.
     - Content filtering applied to job creation and report submissions to prevent malicious content.
 - **Job Lifecycle State Machine (NEW - Jan 2026):**

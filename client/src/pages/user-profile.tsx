@@ -10,11 +10,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award } from "lucide-react";
+import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award, Flag } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { ReportDialog } from "@/components/ReportDialog";
 
 interface UserStatus {
   onlineStatus: "online" | "offline";
@@ -112,6 +113,7 @@ export default function UserProfilePage() {
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [freelancerMessage, setFreelancerMessage] = useState("");
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
   const { data: currentUser } = useQuery<CurrentUser>({
     queryKey: ["/api/auth/me"],
@@ -345,6 +347,13 @@ export default function UserProfilePage() {
                 </DialogContent>
               </Dialog>
             )}
+
+            {currentUser && currentUser.id !== profile.id && (
+              <Button size="sm" variant="outline" onClick={() => setReportDialogOpen(true)} data-testid="button-report-user">
+                <Flag className="w-4 h-4 mr-2" />
+                Report User
+              </Button>
+            )}
           </div>
 
           {profile.bio && (
@@ -418,6 +427,16 @@ export default function UserProfilePage() {
           )}
         </CardContent>
       </Card>
+
+      {profile && currentUser && currentUser.id !== profile.id && (
+        <ReportDialog
+          open={reportDialogOpen}
+          onOpenChange={setReportDialogOpen}
+          targetId={profile.id}
+          reportType="user"
+          targetName={profile.username}
+        />
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@ interface ReportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   targetId: string;
-  reportType: "job" | "user" | "message";
+  reportType: "job" | "user" | "message" | "bug";
   targetName?: string;
 }
 
@@ -36,6 +36,13 @@ const REPORT_REASONS = {
     { value: "harassment", label: "Harassment or threats" },
     { value: "inappropriate", label: "Inappropriate content" },
     { value: "spam", label: "Spam" },
+    { value: "other", label: "Other" },
+  ],
+  bug: [
+    { value: "ui_issue", label: "Visual or layout issue" },
+    { value: "broken_feature", label: "Feature not working correctly" },
+    { value: "performance", label: "Slow or unresponsive" },
+    { value: "data_issue", label: "Incorrect or missing data" },
     { value: "other", label: "Other" },
   ],
 };
@@ -84,7 +91,7 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
   };
 
   const reasons = REPORT_REASONS[reportType];
-  const typeLabel = reportType === "job" ? "Job" : reportType === "user" ? "User" : "Message";
+  const typeLabel = reportType === "job" ? "Job" : reportType === "user" ? "User" : reportType === "bug" ? "Bug" : "Message";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -97,9 +104,11 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
             <DialogTitle>Report {typeLabel}</DialogTitle>
           </div>
           <DialogDescription>
-            {targetName 
-              ? `Report "${targetName}" for violating our community guidelines.` 
-              : `Report this ${typeLabel.toLowerCase()} for violating our community guidelines.`}
+            {reportType === "bug"
+              ? "Help us improve Linxora by describing the issue you encountered."
+              : targetName 
+                ? `Report "${targetName}" for violating our community guidelines.` 
+                : `Report this ${typeLabel.toLowerCase()} for violating our community guidelines.`}
           </DialogDescription>
         </DialogHeader>
 
