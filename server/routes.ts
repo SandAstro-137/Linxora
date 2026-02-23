@@ -5744,12 +5744,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Report routes
+  const reportRateLimits = new Map<string, number[]>();
+
   app.post("/api/reports", requireAuth, async (req, res) => {
     try {
+      const userId = req.session.userId!;
+
+      // Rate limit: max 5 reports per hour per user
+      const now = Date.now();
+      const oneHourAgo = now - 60 * 60 * 1000;
+      const userTimestamps = (reportRateLimits.get(userId) || []).filter(t => t > oneHourAgo);
+      if (userTimestamps.length >= 5) {
+        return res.status(429).json({
+          error: "You've submitted too many reports recently. Please wait before submitting another."
+        });
+      }
+      // Record timestamp immediately to prevent concurrent requests bypassing the limit
+      userTimestamps.push(now);
+      reportRateLimits.set(userId, userTimestamps);
+
+      // Cap: max 10 pending reports per user at any time
+      const existingReports = await storage.getReports({ reporterId: userId });
+      const pendingReports = existingReports.filter(r => r.status === "pending");
+      if (pendingReports.length >= 10) {
+        return res.status(400).json({
+          error: "You have too many pending reports. Please wait for existing reports to be reviewed before submitting more."
+        });
+      }
+
       const validatedData = insertReportSchema.parse({
         ...req.body,
-        reporterId: req.session.userId,
+        reporterId: userId,
       });
+
+      // Prevent duplicate: can't report same target with same type while one is pending
+      const duplicateReport = pendingReports.find(
+        r => r.targetId === validatedData.targetId && r.reportType === validatedData.reportType
+      );
+      if (duplicateReport) {
+        return res.status(400).json({
+          error: "You already have a pending report for this. Please wait for it to be reviewed."
+        });
+      }
 
       // Check for spam-like content
       const contentToCheck = `${validatedData.reason} ${validatedData.description || ""}`;
