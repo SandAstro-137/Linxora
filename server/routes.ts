@@ -691,6 +691,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only customers can post jobs" });
       }
 
+      // Block job creation if customer has a pending role upgrade request
+      const pendingUpgrades = await storage.getRoleUpgradeRequests({
+        userId: user.id,
+        status: RoleUpgradeStatus.PENDING,
+      });
+      if (pendingUpgrades.length > 0) {
+        return res.status(400).json({
+          error: "You cannot post new jobs while you have a pending role upgrade request. Please wait for it to be processed or withdraw it first."
+        });
+      }
+
       const validated = insertJobSchema.parse(req.body);
       
       // Content filtering for job posts
