@@ -5893,6 +5893,23 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         reporterId: userId,
       });
 
+      // For user reports, try to resolve username to user ID if targetId doesn't match a known user
+      if (validatedData.reportType === "user" && validatedData.targetId !== "platform") {
+        const directUser = await storage.getUser(validatedData.targetId);
+        if (!directUser) {
+          // Try to find user by username
+          const allUsers = await storage.getUsers();
+          const matchedUser = allUsers.find(u => 
+            u.username.toLowerCase() === validatedData.targetId.toLowerCase() ||
+            u.discordId === validatedData.targetId
+          );
+          if (matchedUser) {
+            validatedData.targetId = matchedUser.id;
+          }
+          // If no match found, store the original text — moderators can investigate
+        }
+      }
+
       // Prevent duplicate: can't report same target with same type while one is pending
       const duplicateReport = pendingReports.find(
         r => r.targetId === validatedData.targetId && r.reportType === validatedData.reportType
@@ -5926,9 +5943,9 @@ Your role is to help users understand how to use Linxora. Here is what you know 
 
       const report = await storage.createReport(sanitizedData);
 
-      // Notify moderators about new report
+      // Notify moderators about new report (including head_of_moderation and founder)
       const users = await storage.getUsers();
-      const moderators = users.filter(u => u.role === "moderator" || u.role === "staff");
+      const moderators = users.filter(u => ["moderator", "head_of_moderation", "founder", "staff"].includes(u.role));
       for (const mod of moderators) {
         await storage.createNotification({
           userId: mod.id,
@@ -5936,8 +5953,9 @@ Your role is to help users understand how to use Linxora. Here is what you know 
           title: "New Report Submitted",
           message: `A new ${validatedData.reportType} report has been submitted and requires review.`,
           relatedId: report.id,
-          sourceType: "system",
+          sourceType: "report",
           sourceId: report.id,
+          redirectUrl: "/moderation?tab=reports",
         });
       }
 
@@ -6018,9 +6036,28 @@ Your role is to help users understand how to use Linxora. Here is what you know 
           ? `Your bug report has been forwarded to the development team for review. Thank you for reporting!`
           : `Your report has been ${status}. ${sanitizedNotes ? `Notes: ${sanitizedNotes}` : ''}`,
         relatedId: report.id,
-        sourceType: "system",
+        sourceType: "report",
         sourceId: report.id,
+        redirectUrl: "/notifications",
       });
+
+      // When forwarding bugs, notify founder and head_of_moderation
+      if (status === "forwarded") {
+        const allUsers = await storage.getUsers();
+        const leaders = allUsers.filter(u => ["founder", "head_of_moderation"].includes(u.role));
+        for (const leader of leaders) {
+          await storage.createNotification({
+            userId: leader.id,
+            type: "forwarded_bug",
+            title: "Bug Report Forwarded",
+            message: `A bug report has been forwarded to the development team: "${report.reason}"`,
+            relatedId: report.id,
+            sourceType: "report",
+            sourceId: report.id,
+            redirectUrl: "/moderation?tab=reports",
+          });
+        }
+      }
 
       res.json(updatedReport);
     } catch (error) {

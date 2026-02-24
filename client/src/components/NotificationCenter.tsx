@@ -166,6 +166,14 @@ export function NotificationCenter() {
         setLocation("/moderation");
         return;
       
+      case "report":
+        setLocation("/moderation?tab=reports");
+        return;
+      
+      case "forwarded_bug":
+        setLocation("/moderation?tab=reports");
+        return;
+      
       case "direct_message":
         if (sourceId) {
           setLocation(`/messages/${sourceId}`);

@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug, Bot } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug, Bot, Flag } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -187,8 +187,8 @@ export function AppSidebar() {
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => setBugReportOpen(true)} data-testid="link-report-bug">
-                  <Bug className="w-4 h-4" />
-                  <span>Report a Bug</span>
+                  <Flag className="w-4 h-4" />
+                  <span>Submit a Report</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -201,6 +201,7 @@ export function AppSidebar() {
         targetId="platform"
         reportType="bug"
         targetName="Linxora Platform"
+        allowTypeSelection
       />
     </Sidebar>
   );
