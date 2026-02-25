@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -125,6 +125,39 @@ export default function ModerationPage() {
     queryKey: ["/api/reports/forwarded-bugs"],
     enabled: isLeadership,
   });
+
+  const isModerationTeam = ["moderator", "head_of_moderation", "founder", "staff"].includes(currentUser?.role || "");
+  const { data: allReports = [], isLoading: allReportsLoading } = useQuery<Report[]>({
+    queryKey: ["/api/reports"],
+    enabled: isModerationTeam,
+  });
+
+  const [reportSearchId, setReportSearchId] = useState("");
+  const [searchedReport, setSearchedReport] = useState<Report | null>(null);
+  const [reportSearchError, setReportSearchError] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+
+  const handleReportSearch = async () => {
+    const trimmed = reportSearchId.trim();
+    if (!trimmed) return;
+    setIsSearching(true);
+    setSearchedReport(null);
+    setReportSearchError("");
+    try {
+      const res = await fetch(`/api/reports/${encodeURIComponent(trimmed)}`, { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json();
+        setReportSearchError(data.error || "Report not found");
+      } else {
+        const report = await res.json();
+        setSearchedReport(report);
+      }
+    } catch {
+      setReportSearchError("Failed to search for report");
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   const [upgradeReviewNotes, setUpgradeReviewNotes] = useState<Record<string, string>>({});
   const canApproveModeratorPromotion = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
@@ -514,6 +547,10 @@ export default function ModerationPage() {
               )}
             </TabsTrigger>
           )}
+          <TabsTrigger value="history" data-testid="tab-history">
+            <History className="w-4 h-4 mr-1" />
+            Report History
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="jobs">
@@ -1332,6 +1369,190 @@ export default function ModerationPage() {
             )}
           </TabsContent>
         )}
+
+        <TabsContent value="history">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Search className="w-5 h-5" />
+                  Look Up Report by ID
+                </CardTitle>
+                <CardDescription>
+                  Enter a report ID to find a specific report
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Paste report ID here..."
+                    value={reportSearchId}
+                    onChange={(e) => setReportSearchId(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleReportSearch(); }}
+                    className="flex-1 font-mono text-sm"
+                    data-testid="input-report-search"
+                  />
+                  <Button
+                    onClick={handleReportSearch}
+                    disabled={isSearching || !reportSearchId.trim()}
+                    data-testid="button-search-report"
+                  >
+                    {isSearching ? "Searching..." : "Search"}
+                  </Button>
+                </div>
+
+                {reportSearchError && (
+                  <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                    <p className="text-sm text-destructive">{reportSearchError}</p>
+                  </div>
+                )}
+
+                {searchedReport && (
+                  <Card className="mt-4" data-testid={`card-searched-report-${searchedReport.id}`}>
+                    <CardHeader>
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            {getReportTypeIcon(searchedReport.reportType)}
+                            <CardTitle className="text-lg">
+                              {searchedReport.reportType.charAt(0).toUpperCase() + searchedReport.reportType.slice(1)} Report
+                            </CardTitle>
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            <Badge variant="outline">{searchedReport.reportType}</Badge>
+                            <Badge variant={
+                              searchedReport.status === "pending" ? "secondary" :
+                              searchedReport.status === "resolved" ? "default" :
+                              searchedReport.status === "forwarded" ? "secondary" :
+                              "outline"
+                            } className={
+                              searchedReport.status === "pending" ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" :
+                              searchedReport.status === "resolved" ? "bg-green-500/10 text-green-700 dark:text-green-400" :
+                              searchedReport.status === "forwarded" ? "bg-blue-500/10 text-blue-700 dark:text-blue-400" :
+                              ""
+                            }>
+                              {searchedReport.status.charAt(0).toUpperCase() + searchedReport.status.slice(1)}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      <CardDescription className="mt-2">
+                        Submitted {searchedReport.createdAt ? formatDistanceToNow(new Date(searchedReport.createdAt), { addSuffix: true }) : "Unknown"}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div>
+                        <h4 className="font-semibold mb-1 text-sm">Reason</h4>
+                        <p className="text-sm text-muted-foreground">{searchedReport.reason}</p>
+                      </div>
+                      {searchedReport.description && (
+                        <div>
+                          <h4 className="font-semibold mb-1 text-sm">Description</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{searchedReport.description}</p>
+                        </div>
+                      )}
+                      <div>
+                        <h4 className="font-semibold mb-1 text-sm">Target ID</h4>
+                        <p className="text-sm text-muted-foreground font-mono">{searchedReport.targetId}</p>
+                      </div>
+                      {searchedReport.reviewNotes && (
+                        <div>
+                          <h4 className="font-semibold mb-1 text-sm">Review Notes</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{searchedReport.reviewNotes}</p>
+                        </div>
+                      )}
+                      <div className="text-xs text-muted-foreground pt-2 border-t">
+                        Report ID: <span className="font-mono">{searchedReport.id}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </CardContent>
+            </Card>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4">All Reports</h3>
+              {allReportsLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-32 w-full" />
+                  ))}
+                </div>
+              ) : allReports.length > 0 ? (
+                <div className="space-y-3">
+                  {allReports
+                    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+                    .map((report) => (
+                    <Card key={report.id} data-testid={`card-history-report-${report.id}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {getReportTypeIcon(report.reportType)}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm">
+                                  {report.reportType.charAt(0).toUpperCase() + report.reportType.slice(1)} Report
+                                </span>
+                                <Badge variant={
+                                  report.status === "pending" ? "secondary" :
+                                  report.status === "resolved" ? "default" :
+                                  report.status === "forwarded" ? "secondary" :
+                                  "outline"
+                                } className={
+                                  report.status === "pending" ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" :
+                                  report.status === "resolved" ? "bg-green-500/10 text-green-700 dark:text-green-400" :
+                                  report.status === "forwarded" ? "bg-blue-500/10 text-blue-700 dark:text-blue-400" :
+                                  ""
+                                }>
+                                  {report.status.charAt(0).toUpperCase() + report.status.slice(1)}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {report.reason} · {report.createdAt ? formatDistanceToNow(new Date(report.createdAt), { addSuffix: true }) : "Unknown"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono shrink-0">
+                            {report.id.slice(0, 8)}...
+                          </div>
+                        </div>
+                        {report.description && (
+                          <p className="text-sm text-muted-foreground mt-2 line-clamp-2 break-words">
+                            {report.description}
+                          </p>
+                        )}
+                        {report.reviewNotes && (
+                          <div className="mt-2 pt-2 border-t">
+                            <p className="text-xs text-muted-foreground">
+                              <strong>Review notes:</strong> {report.reviewNotes}
+                            </p>
+                          </div>
+                        )}
+                        <div className="mt-2 pt-2 border-t">
+                          <p className="text-xs text-muted-foreground font-mono">
+                            ID: {report.id}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-12">
+                    <div className="text-center">
+                      <History className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                      <h3 className="text-lg font-semibold mb-2">No reports yet</h3>
+                      <p className="text-muted-foreground">
+                        Report history will appear here
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        </TabsContent>
       </Tabs>
 
       <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
@@ -1493,7 +1714,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={reportReviewDialogOpen} onOpenChange={setReportReviewDialogOpen}>
-        <DialogContent data-testid="dialog-review-report">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-review-report">
           <DialogHeader>
             <DialogTitle>Review Report</DialogTitle>
             <DialogDescription>
@@ -1502,11 +1723,11 @@ export default function ModerationPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             {selectedReport && (
-              <div className="p-3 bg-muted/50 rounded-md space-y-2">
-                <p className="text-sm"><strong>Type:</strong> {selectedReport.reportType}</p>
-                <p className="text-sm"><strong>Reason:</strong> {selectedReport.reason}</p>
+              <div className="p-3 bg-muted/50 rounded-md space-y-2 overflow-hidden">
+                <p className="text-sm break-words"><strong>Type:</strong> {selectedReport.reportType}</p>
+                <p className="text-sm break-words"><strong>Reason:</strong> {selectedReport.reason}</p>
                 {selectedReport.description && (
-                  <p className="text-sm"><strong>Details:</strong> {selectedReport.description}</p>
+                  <p className="text-sm break-words"><strong>Details:</strong> {selectedReport.description}</p>
                 )}
               </div>
             )}
@@ -1590,7 +1811,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={disciplinaryDialogOpen} onOpenChange={setDisciplinaryDialogOpen}>
-        <DialogContent data-testid="dialog-disciplinary-action">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-disciplinary-action">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-destructive" />

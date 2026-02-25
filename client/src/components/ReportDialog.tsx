@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
 import { Flag, AlertTriangle, Bug, Users, ArrowLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
@@ -274,15 +275,15 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
               {effectiveType === "user" && allowTypeSelection && (
                 <div className="space-y-2">
                   <Label htmlFor="targetUsername">Who are you reporting? (their user ID)</Label>
-                  <Textarea
+                  <Input
                     id="targetUsername"
-                    placeholder="Enter the user ID of the person you're reporting (found on their profile)..."
+                    type="number"
+                    placeholder="Enter user ID number (found on their profile)"
                     value={targetUsername}
                     onChange={(e) => setTargetUsername(e.target.value)}
-                    rows={1}
-                    className="resize-none"
                     data-testid="input-report-target"
                   />
+                  <p className="text-xs text-muted-foreground">You can find a user's ID on their profile page</p>
                 </div>
               )}
 

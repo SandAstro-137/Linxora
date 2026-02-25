@@ -5965,7 +5965,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     }
   });
 
-  app.get("/api/reports/pending", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+  app.get("/api/reports/pending", requireRole("moderator", "head_of_moderation", "founder", "staff"), async (req, res) => {
     try {
       const reports = await storage.getPendingReports();
       res.json(reports);
@@ -5978,6 +5978,18 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     try {
       const reports = await storage.getReports({ reporterId: req.session.userId });
       res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/reports/:id", requireRole("moderator", "head_of_moderation", "founder", "staff"), async (req, res) => {
+    try {
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+      res.json(report);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
