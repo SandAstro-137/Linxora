@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
-import { Flag, AlertTriangle, Bug, Users, ArrowLeft } from "lucide-react";
+import { Flag, AlertTriangle, Bug, Users, ArrowLeft, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 interface ReportDialogProps {
@@ -79,7 +79,9 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
   const [selectedType, setSelectedType] = useState<"bug" | "user">(reportType === "bug" ? "bug" : "user");
   const [reason, setReason] = useState("");
   const [description, setDescription] = useState("");
-  const [targetUsername, setTargetUsername] = useState("");
+  const [targetUserId, setTargetUserId] = useState("");
+  const [validatingUser, setValidatingUser] = useState(false);
+  const [userValidationError, setUserValidationError] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -87,7 +89,8 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
       setSelectedType(reportType === "bug" ? "bug" : "user");
       setReason("");
       setDescription("");
-      setTargetUsername("");
+      setTargetUserId("");
+      setUserValidationError("");
     }
   }, [open, allowTypeSelection, reportType]);
 
@@ -95,8 +98,23 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
 
   const resolvedTargetId = () => {
     if (effectiveType === "bug") return "platform";
-    if (allowTypeSelection && effectiveType === "user") return targetUsername.trim() || "unknown";
+    if (allowTypeSelection && effectiveType === "user") return targetUserId.trim() || "unknown";
     return targetId;
+  };
+
+  const handleUserIdChange = (value: string) => {
+    const digitsOnly = value.replace(/[^0-9]/g, "");
+    setTargetUserId(digitsOnly);
+    setUserValidationError("");
+  };
+
+  const handleUserIdKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const allowedKeys = ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab", "Home", "End"];
+    if (allowedKeys.includes(e.key)) return;
+    if (e.ctrlKey || e.metaKey) return;
+    if (!/^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+    }
   };
 
   const submitReportMutation = useMutation({
@@ -123,14 +141,32 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
     },
   });
 
-  const handleSubmit = () => {
-    if (effectiveType === "user" && allowTypeSelection && !targetUsername.trim()) {
-      toast({
-        title: "Please identify the user",
-        description: "Enter the user ID of the person you're reporting",
-        variant: "destructive",
-      });
-      return;
+  const handleSubmit = async () => {
+    if (effectiveType === "user" && allowTypeSelection) {
+      if (!targetUserId.trim()) {
+        toast({
+          title: "Please identify the user",
+          description: "Enter the user ID of the person you're reporting",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setValidatingUser(true);
+      setUserValidationError("");
+      try {
+        const res = await fetch(`/api/users/by-userid/${targetUserId.trim()}`, { credentials: "include" });
+        if (!res.ok) {
+          setUserValidationError("No user found with that ID. Please check and try again.");
+          setValidatingUser(false);
+          return;
+        }
+      } catch {
+        setUserValidationError("Could not verify user. Please try again.");
+        setValidatingUser(false);
+        return;
+      }
+      setValidatingUser(false);
     }
     if (!reason) {
       toast({
@@ -274,16 +310,28 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
 
               {effectiveType === "user" && allowTypeSelection && (
                 <div className="space-y-2">
-                  <Label htmlFor="targetUsername">Who are you reporting? (their user ID)</Label>
+                  <Label htmlFor="targetUserId">Who are you reporting? (their user ID)</Label>
                   <Input
-                    id="targetUsername"
-                    type="number"
+                    id="targetUserId"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     placeholder="Enter user ID number (found on their profile)"
-                    value={targetUsername}
-                    onChange={(e) => setTargetUsername(e.target.value)}
+                    value={targetUserId}
+                    onChange={(e) => handleUserIdChange(e.target.value)}
+                    onKeyDown={handleUserIdKeyDown}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData("text");
+                      if (!/^\d+$/.test(pasted)) {
+                        e.preventDefault();
+                        handleUserIdChange(pasted);
+                      }
+                    }}
                     data-testid="input-report-target"
                   />
                   <p className="text-xs text-muted-foreground">You can find a user's ID on their profile page</p>
+                  {userValidationError && (
+                    <p className="text-xs text-destructive">{userValidationError}</p>
+                  )}
                 </div>
               )}
 
@@ -328,12 +376,21 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
               </Button>
               <Button 
                 onClick={handleSubmit} 
-                disabled={submitReportMutation.isPending || !reason || !description.trim() || (effectiveType === "user" && allowTypeSelection && !targetUsername.trim())}
+                disabled={submitReportMutation.isPending || validatingUser || !reason || !description.trim() || (effectiveType === "user" && allowTypeSelection && !targetUserId.trim())}
                 variant="destructive"
                 data-testid="button-submit-report"
               >
-                <Flag className="h-4 w-4 mr-1" />
-                {submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
+                {validatingUser ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <Flag className="h-4 w-4 mr-1" />
+                    {submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </>

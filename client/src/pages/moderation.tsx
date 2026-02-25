@@ -1714,7 +1714,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={reportReviewDialogOpen} onOpenChange={setReportReviewDialogOpen}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-review-report">
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-review-report">
           <DialogHeader>
             <DialogTitle>Review Report</DialogTitle>
             <DialogDescription>
@@ -1723,11 +1723,11 @@ export default function ModerationPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             {selectedReport && (
-              <div className="p-3 bg-muted/50 rounded-md space-y-2 overflow-hidden">
+              <div className="p-3 bg-muted/50 rounded-md space-y-2">
                 <p className="text-sm break-words"><strong>Type:</strong> {selectedReport.reportType}</p>
                 <p className="text-sm break-words"><strong>Reason:</strong> {selectedReport.reason}</p>
                 {selectedReport.description && (
-                  <p className="text-sm break-words"><strong>Details:</strong> {selectedReport.description}</p>
+                  <p className="text-sm break-words whitespace-pre-wrap"><strong>Details:</strong> {selectedReport.description}</p>
                 )}
               </div>
             )}
@@ -1811,7 +1811,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={disciplinaryDialogOpen} onOpenChange={setDisciplinaryDialogOpen}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-disciplinary-action">
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-disciplinary-action">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-destructive" />

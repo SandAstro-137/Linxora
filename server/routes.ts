@@ -5893,6 +5893,19 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         reporterId: userId,
       });
 
+      // For user reports with numeric targetId, resolve to internal UUID
+      if (validatedData.reportType === "user" && validatedData.targetId !== "platform") {
+        const numericId = parseInt(validatedData.targetId);
+        if (!isNaN(numericId) && numericId > 0) {
+          const targetUser = await storage.getUserByUserId(numericId);
+          if (targetUser) {
+            validatedData.targetId = targetUser.id;
+          } else {
+            return res.status(404).json({ error: "No user found with that ID. Please check the user ID and try again." });
+          }
+        }
+      }
+
       // Prevent duplicate: can't report same target with same type while one is pending
       const duplicateReport = pendingReports.find(
         r => r.targetId === validatedData.targetId && r.reportType === validatedData.reportType
@@ -7664,6 +7677,28 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         return res.status(400).json({ error: "You cannot message yourself" });
       }
 
+      res.json({
+        id: user.id,
+        userId: user.userId,
+        username: user.username,
+        avatar: user.avatar,
+        role: user.role,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/by-userid/:userId", requireAuth, async (req, res) => {
+    try {
+      const numericId = parseInt(req.params.userId);
+      if (isNaN(numericId) || numericId < 1) {
+        return res.status(400).json({ error: "Invalid user ID" });
+      }
+      const user = await storage.getUserByUserId(numericId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
       res.json({
         id: user.id,
         userId: user.userId,
