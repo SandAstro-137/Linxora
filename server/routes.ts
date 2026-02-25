@@ -5893,23 +5893,6 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         reporterId: userId,
       });
 
-      // For user reports, try to resolve username to user ID if targetId doesn't match a known user
-      if (validatedData.reportType === "user" && validatedData.targetId !== "platform") {
-        const directUser = await storage.getUser(validatedData.targetId);
-        if (!directUser) {
-          // Try to find user by username
-          const allUsers = await storage.getUsers();
-          const matchedUser = allUsers.find(u => 
-            u.username.toLowerCase() === validatedData.targetId.toLowerCase() ||
-            u.discordId === validatedData.targetId
-          );
-          if (matchedUser) {
-            validatedData.targetId = matchedUser.id;
-          }
-          // If no match found, store the original text — moderators can investigate
-        }
-      }
-
       // Prevent duplicate: can't report same target with same type while one is pending
       const duplicateReport = pendingReports.find(
         r => r.targetId === validatedData.targetId && r.reportType === validatedData.reportType
@@ -6054,7 +6037,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
             relatedId: report.id,
             sourceType: "report",
             sourceId: report.id,
-            redirectUrl: "/moderation?tab=reports",
+            redirectUrl: "/moderation?tab=forwarded-bugs",
           });
         }
       }

@@ -126,7 +126,7 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
     if (effectiveType === "user" && allowTypeSelection && !targetUsername.trim()) {
       toast({
         title: "Please identify the user",
-        description: "Enter the username or user ID of the person you're reporting",
+        description: "Enter the user ID of the person you're reporting",
         variant: "destructive",
       });
       return;
@@ -273,10 +273,10 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
 
               {effectiveType === "user" && allowTypeSelection && (
                 <div className="space-y-2">
-                  <Label htmlFor="targetUsername">Who are you reporting? (their username or user ID)</Label>
+                  <Label htmlFor="targetUsername">Who are you reporting? (their user ID)</Label>
                   <Textarea
                     id="targetUsername"
-                    placeholder="Enter the username or user ID of the person you're reporting..."
+                    placeholder="Enter the user ID of the person you're reporting (found on their profile)..."
                     value={targetUsername}
                     onChange={(e) => setTargetUsername(e.target.value)}
                     rows={1}

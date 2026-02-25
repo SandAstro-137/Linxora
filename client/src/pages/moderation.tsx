@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -118,6 +118,12 @@ export default function ModerationPage() {
 
   const { data: roleUpgradeRequests = [], isLoading: upgradesLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/pending"],
+  });
+
+  const isLeadership = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
+  const { data: forwardedBugs = [], isLoading: forwardedBugsLoading } = useQuery<Report[]>({
+    queryKey: ["/api/reports/forwarded-bugs"],
+    enabled: isLeadership,
   });
 
   const [upgradeReviewNotes, setUpgradeReviewNotes] = useState<Record<string, string>>({});
@@ -497,6 +503,17 @@ export default function ModerationPage() {
               </Badge>
             )}
           </TabsTrigger>
+          {isLeadership && (
+            <TabsTrigger value="forwarded-bugs" data-testid="tab-forwarded-bugs">
+              <Forward className="w-4 h-4 mr-1" />
+              Forwarded Bugs
+              {forwardedBugs.length > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {forwardedBugs.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="jobs">
@@ -1236,6 +1253,85 @@ export default function ModerationPage() {
             </div>
           )}
         </TabsContent>
+
+        {isLeadership && (
+          <TabsContent value="forwarded-bugs">
+            {forwardedBugsLoading ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-48 w-full" />
+                ))}
+              </div>
+            ) : forwardedBugs.length > 0 ? (
+              <div className="space-y-4">
+                {forwardedBugs.map((bug) => (
+                  <Card key={bug.id} data-testid={`card-forwarded-bug-${bug.id}`}>
+                    <CardHeader>
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Bug className="w-4 h-4 text-destructive" />
+                            <CardTitle className="text-lg">
+                              {bug.reason.split("_").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
+                            </CardTitle>
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            <Badge variant="outline">Bug Report</Badge>
+                            <Badge variant="secondary" className="bg-blue-500/10 text-blue-700 dark:text-blue-400">
+                              Forwarded
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      <CardDescription className="mt-2">
+                        Forwarded {bug.forwardedAt ? formatDistanceToNow(new Date(bug.forwardedAt), { addSuffix: true }) : "Unknown"}
+                        {" · "}
+                        Originally reported {bug.createdAt ? formatDistanceToNow(new Date(bug.createdAt), { addSuffix: true }) : "Unknown"}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {bug.description && (
+                        <div>
+                          <h4 className="font-semibold mb-2">Bug Description</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                            {bug.description}
+                          </p>
+                        </div>
+                      )}
+
+                      {bug.reviewNotes && (
+                        <div>
+                          <h4 className="font-semibold mb-2">Moderator Notes</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                            {bug.reviewNotes}
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 pt-2 flex-wrap">
+                        <div className="text-xs text-muted-foreground">
+                          Report ID: <span className="font-mono">{bug.id}</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="py-12">
+                  <div className="text-center">
+                    <Bug className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                    <h3 className="text-lg font-semibold mb-2">No forwarded bugs</h3>
+                    <p className="text-muted-foreground">
+                      No bug reports have been forwarded by moderators yet
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        )}
       </Tabs>
 
       <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
