@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Flag, AlertTriangle, Bug, Users, ArrowLeft, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth-context";
 
 interface ReportDialogProps {
   open: boolean;
@@ -75,6 +76,7 @@ const BUG_FOLLOWUP_QUESTIONS: Record<string, string> = {
 
 export function ReportDialog({ open, onOpenChange, targetId, reportType, targetName, allowTypeSelection }: ReportDialogProps) {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [step, setStep] = useState<"type_select" | "details">(allowTypeSelection ? "type_select" : "details");
   const [selectedType, setSelectedType] = useState<"bug" | "user">(reportType === "bug" ? "bug" : "user");
   const [reason, setReason] = useState("");
@@ -149,6 +151,11 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
           description: "Enter the user ID of the person you're reporting",
           variant: "destructive",
         });
+        return;
+      }
+
+      if (currentUser && String(currentUser.userId) === targetUserId.trim()) {
+        setUserValidationError("You cannot report yourself.");
         return;
       }
 

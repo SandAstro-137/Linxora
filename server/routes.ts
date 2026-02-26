@@ -102,6 +102,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Check account status before allowing login
+      if (user.accountStatus === 'banned') {
+        return res.status(403).json({ 
+          error: 'Your account has been permanently banned.',
+          accountStatus: 'banned'
+        });
+      }
+      if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
+        return res.status(403).json({ 
+          error: `Your account is suspended until ${new Date(user.suspendedUntil).toLocaleDateString()}`,
+          accountStatus: 'suspended',
+          suspendedUntil: user.suspendedUntil,
+          reason: user.suspendedReason
+        });
+      }
+      // If suspension has expired, clear it
+      if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) <= new Date()) {
+        user = (await storage.updateUser(user.id, { 
+          accountStatus: 'active', 
+          suspendedUntil: null, 
+          suspendedReason: null 
+        }))!;
+      }
+
       req.session.userId = user.id;
       req.session.userRole = user.role;
       res.json(user);

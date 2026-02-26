@@ -15,10 +15,11 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { TutorialModal } from "@/components/TutorialModal";
-import { HelpCircle, AlertTriangle } from "lucide-react";
+import { HelpCircle, AlertTriangle, ShieldAlert, LogOut, UserPlus, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { format } from "date-fns";
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -285,8 +286,119 @@ function Router() {
   );
 }
 
+function SuspendedScreen() {
+  const { suspensionInfo, logout, clearSuspension, refetchUser } = useAuth();
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!suspensionInfo) return null;
+
+  const suspendedUntil = new Date(suspensionInfo.suspendedUntil);
+  const isExpired = suspendedUntil <= now;
+
+  const formatTimeRemaining = () => {
+    if (isExpired) return "Your suspension has expired. You may try logging in again.";
+    const diff = suspendedUntil.getTime() - now.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const parts = [];
+    if (days > 0) parts.push(`${days} day${days !== 1 ? "s" : ""}`);
+    if (hours > 0) parts.push(`${hours} hour${hours !== 1 ? "s" : ""}`);
+    if (minutes > 0) parts.push(`${minutes} minute${minutes !== 1 ? "s" : ""}`);
+    return parts.length > 0 ? parts.join(", ") + " remaining" : "Less than a minute remaining";
+  };
+
+  const handleSwitchAccount = async () => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    clearSuspension();
+    window.location.href = "/";
+  };
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-background p-4">
+      <Card className="max-w-md w-full">
+        <CardHeader className="text-center space-y-4">
+          <div className="mx-auto p-4 rounded-full bg-destructive/10 w-fit">
+            <ShieldAlert className="h-10 w-10 text-destructive" />
+          </div>
+          <CardTitle className="text-xl" data-testid="text-suspended-title">Account Suspended</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <div className="p-4 bg-muted/50 rounded-md space-y-3">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Suspension Lifts</p>
+                  <p className="text-sm text-muted-foreground" data-testid="text-suspension-until">
+                    {format(suspendedUntil, "MMMM d, yyyy 'at' h:mm a")} ET
+                  </p>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground" data-testid="text-suspension-remaining">
+                {formatTimeRemaining()}
+              </p>
+            </div>
+
+            {suspensionInfo.reason && (
+              <div className="p-4 bg-muted/50 rounded-md">
+                <p className="text-sm font-medium mb-1">Reason</p>
+                <p className="text-sm text-muted-foreground" data-testid="text-suspension-reason">
+                  {suspensionInfo.reason}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            {isExpired && (
+              <Button
+                className="w-full gap-2"
+                onClick={() => {
+                  clearSuspension();
+                  refetchUser();
+                }}
+                data-testid="button-try-login"
+              >
+                Try Logging In Again
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              className="w-full gap-2"
+              onClick={handleSwitchAccount}
+              data-testid="button-switch-account"
+            >
+              <UserPlus className="h-4 w-4" />
+              Switch Account
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full gap-2 text-muted-foreground"
+              onClick={logout}
+              data-testid="button-log-off"
+            >
+              <LogOut className="h-4 w-4" />
+              Log Off
+            </Button>
+          </div>
+
+          <p className="text-xs text-center text-muted-foreground">
+            If you believe this was a mistake, please contact support after your suspension is lifted.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function AppContent() {
-  const { user, refetchUser } = useAuth();
+  const { user, refetchUser, suspensionInfo } = useAuth();
   const { toast } = useToast();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -319,6 +431,10 @@ function AppContent() {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
   };
+
+  if (suspensionInfo) {
+    return <SuspendedScreen />;
+  }
 
   if (!user) {
     return <Router />;

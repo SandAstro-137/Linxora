@@ -1714,7 +1714,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={reportReviewDialogOpen} onOpenChange={setReportReviewDialogOpen}>
-        <DialogContent className="sm:max-w-lg" data-testid="dialog-review-report">
+        <DialogContent className="sm:max-w-2xl" data-testid="dialog-review-report">
           <DialogHeader>
             <DialogTitle>Review Report</DialogTitle>
             <DialogDescription>
@@ -1811,7 +1811,7 @@ export default function ModerationPage() {
       </Dialog>
 
       <Dialog open={disciplinaryDialogOpen} onOpenChange={setDisciplinaryDialogOpen}>
-        <DialogContent className="sm:max-w-lg" data-testid="dialog-disciplinary-action">
+        <DialogContent className="sm:max-w-2xl" data-testid="dialog-disciplinary-action">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-destructive" />
