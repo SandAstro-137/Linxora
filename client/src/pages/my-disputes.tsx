@@ -78,7 +78,7 @@ export default function MyDisputesPage() {
     },
   });
 
-  const inProgressDisputes = disputes.filter(d => d.status === "in_progress");
+  const inProgressDisputes = disputes.filter(d => d.status === "under_review" || d.status === "in_progress");
   const resolvedDisputes = disputes.filter(d => d.status === "resolved");
 
   if (isLoading) {
@@ -128,7 +128,7 @@ export default function MyDisputesPage() {
                     )}
                     <Badge variant="outline">
                       <Clock className="w-3 h-3 mr-1" />
-                      In Progress
+                      Under Review
                     </Badge>
                   </div>
                 </div>

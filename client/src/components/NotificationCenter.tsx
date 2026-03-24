@@ -207,6 +207,10 @@ export function NotificationCenter() {
         setLocation("/pto");
         return;
       
+      case "dispute_opened":
+        setLocation("/moderation?tab=disputes");
+        return;
+      
       case "job_approved":
       case "job_rejected":
       case "job_request":
@@ -232,7 +236,7 @@ export function NotificationCenter() {
           setLocation(`/user/${sourceId}`);
           break;
         case "dispute":
-          setLocation(`/moderation`);
+          setLocation(`/moderation?tab=disputes`);
           break;
         default:
           setLocation("/notifications");

@@ -200,6 +200,7 @@ export default function ModerationPage() {
       apiRequest("POST", `/api/disputes/${disputeId}/claim`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes/mine"] });
       toast({
         title: "Dispute claimed",
         description: "You are now handling this dispute.",

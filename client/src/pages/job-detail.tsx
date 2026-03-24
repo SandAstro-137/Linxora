@@ -1988,19 +1988,22 @@ export default function JobDetailPage() {
                       <div>
                         <p className="text-sm font-medium mb-1">Proof Links:</p>
                         <div className="space-y-1">
-                          {submissions[0].proofLinks.map((link: string, i: number) => (
-                            <a
-                              key={i}
-                              href={link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-sm text-primary hover:underline flex items-center gap-1"
-                              data-testid={`link-proof-${i}`}
-                            >
-                              <Link className="w-3 h-3" />
-                              {link}
-                            </a>
-                          ))}
+                          {submissions[0].proofLinks.map((link: string, i: number) => {
+                            const href = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+                            return (
+                              <a
+                                key={i}
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-primary hover:underline flex items-center gap-1"
+                                data-testid={`link-proof-${i}`}
+                              >
+                                <Link className="w-3 h-3" />
+                                {link}
+                              </a>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
