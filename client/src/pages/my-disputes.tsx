@@ -50,9 +50,9 @@ export default function MyDisputesPage() {
   const resolveDisputeMutation = useMutation({
     mutationFn: async (data: { disputeId: string; resolution: string; freelancerAmount: string; customerRefund: string }) => {
       const res = await apiRequest("POST", `/api/disputes/${data.disputeId}/resolve`, {
-        resolution: data.resolution,
-        freelancerAmount: data.freelancerAmount,
-        customerRefund: data.customerRefund,
+        resolutionNotes: data.resolution,
+        freelancerAmount: parseFloat(data.freelancerAmount),
+        customerRefund: parseFloat(data.customerRefund),
       });
       return res.json();
     },

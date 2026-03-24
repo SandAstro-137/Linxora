@@ -216,14 +216,14 @@ export default function ModerationPage() {
   });
 
   const resolveDisputeMutation = useMutation({
-    mutationFn: ({ disputeId, resolution, freelancerAmount, customerRefund }: { 
+    mutationFn: ({ disputeId, resolution, freelancerAmount, customerRefund }: {
       disputeId: string; 
       resolution: string; 
       freelancerAmount: string; 
       customerRefund: string;
     }) =>
       apiRequest("POST", `/api/disputes/${disputeId}/resolve`, { 
-        resolution, 
+        resolutionNotes: resolution, 
         freelancerAmount: parseFloat(freelancerAmount), 
         customerRefund: parseFloat(customerRefund) 
       }),
