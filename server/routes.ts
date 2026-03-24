@@ -1314,8 +1314,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Count completed jobs
         const completedJobs = assignedJobs.filter(j => j.status === "completed").length;
         
-        // Calculate completion percentage (avoid division by zero)
-        const totalJobs = assignedJobs.length;
+        // Calculate completion percentage — include terminal non-completion states in denominator
+        const countableStatuses = ["claimed", "in_progress", "completed", "dispute", "cancelled", "expired"];
+        const countableJobs = assignedJobs.filter(j => countableStatuses.includes(j.status));
+        const totalJobs = countableJobs.length;
         const completionPercentage = totalJobs > 0 
           ? ((completedJobs / totalJobs) * 100).toFixed(2)
           : "0.00";
@@ -2022,7 +2024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     for (const j of allJobs) {
       if (j.freelancerId === freelancerId || j.collaborators?.includes(freelancerId)) {
-        if (["claimed", "in_progress", "completed"].includes(j.status)) {
+        if (["claimed", "in_progress", "completed", "dispute", "cancelled", "expired"].includes(j.status)) {
           assignedJobsMap.set(j.id, j);
         }
       }

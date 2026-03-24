@@ -857,7 +857,7 @@ export default function ModerationPage() {
                           asChild
                           data-testid={`button-view-user-${report.id}`}
                         >
-                          <Link href={`/profile/${report.targetId}`}>
+                          <Link href={`/user/${report.targetId}`}>
                             <User className="w-4 h-4 mr-1" />
                             View Reported User
                           </Link>

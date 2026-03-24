@@ -145,7 +145,7 @@ export default function MyDisputesPage() {
                   {dispute.customerUsername && (
                     <div>
                       <span className="text-muted-foreground">Customer:</span>{" "}
-                      <Link href={`/profile/${dispute.customerId}`} className="hover:underline" data-testid={`link-customer-${dispute.id}`}>
+                      <Link href={`/user/${dispute.customerId}`} className="hover:underline" data-testid={`link-customer-${dispute.id}`}>
                         {dispute.customerUsername}
                       </Link>
                     </div>
@@ -153,7 +153,7 @@ export default function MyDisputesPage() {
                   {dispute.freelancerUsername && (
                     <div>
                       <span className="text-muted-foreground">Freelancer:</span>{" "}
-                      <Link href={`/profile/${dispute.freelancerId}`} className="hover:underline" data-testid={`link-freelancer-${dispute.id}`}>
+                      <Link href={`/user/${dispute.freelancerId}`} className="hover:underline" data-testid={`link-freelancer-${dispute.id}`}>
                         {dispute.freelancerUsername}
                       </Link>
                     </div>
