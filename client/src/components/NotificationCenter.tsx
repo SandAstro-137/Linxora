@@ -143,7 +143,11 @@ export function NotificationCenter() {
         return;
       
       case "job_recommendation":
-        setLocation("/incoming-recommendations");
+        if (user?.role === "customer" && sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else {
+          setLocation("/incoming-recommendations");
+        }
         return;
       
       case "recommendation_declined":

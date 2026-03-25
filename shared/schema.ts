@@ -1212,3 +1212,47 @@ export const insertCancellationNegotiationSchema = createInsertSchema(cancellati
 
 export type InsertCancellationNegotiation = z.infer<typeof insertCancellationNegotiationSchema>;
 export type CancellationNegotiation = typeof cancellationNegotiations.$inferSelect;
+
+// Group Chats
+export const groupChats = pgTable("group_chats", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  creatorId: varchar("creator_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGroupChatSchema = createInsertSchema(groupChats).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertGroupChat = z.infer<typeof insertGroupChatSchema>;
+export type GroupChat = typeof groupChats.$inferSelect;
+
+export const groupChatMembers = pgTable("group_chat_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  groupId: varchar("group_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  joinedAt: timestamp("joined_at").defaultNow(),
+});
+
+export const insertGroupChatMemberSchema = createInsertSchema(groupChatMembers).omit({
+  id: true,
+  joinedAt: true,
+});
+export type InsertGroupChatMember = z.infer<typeof insertGroupChatMemberSchema>;
+export type GroupChatMember = typeof groupChatMembers.$inferSelect;
+
+export const groupChatMessages = pgTable("group_chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  groupId: varchar("group_id").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGroupChatMessageSchema = createInsertSchema(groupChatMessages).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertGroupChatMessage = z.infer<typeof insertGroupChatMessageSchema>;
+export type GroupChatMessage = typeof groupChatMessages.$inferSelect;

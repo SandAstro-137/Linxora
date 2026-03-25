@@ -1388,7 +1388,7 @@ export default function JobDetailPage() {
   const isEligibleToClaim = job.status === "active" && user?.role === "freelancer";
   const isCustomer = job.customerId === user?.id;
   const isFreelancerOwner = job.freelancerId === user?.id;
-  const canOfferTeam = isJobTaken && !isFreelancerOwner;
+  const canOfferTeam = isJobTaken && !isFreelancerOwner && !isCustomer;
   const canCustomerInvite = isCustomer && (job.status === "active" || job.status === "claimed" || job.status === "in_progress");
   const isTeamMember = 
     user?.id === job.customerId || 

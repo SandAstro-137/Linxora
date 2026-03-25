@@ -2737,7 +2737,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const notes = await storage.getTeamNotes(req.params.jobId);
-      res.json(notes);
+      const enrichedNotes = await Promise.all(
+        notes.map(async (note) => {
+          const author = await storage.getUser(note.authorId);
+          return {
+            ...note,
+            authorUsername: author?.username || null,
+            authorAvatar: author?.avatar || null,
+          };
+        })
+      );
+      res.json(enrichedNotes);
     } catch (error) {
       console.error("Error fetching team notes:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -3034,13 +3044,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const messages = await storage.getTeamMessages(req.params.id);
       
-      // Enrich messages with user role
+      // Enrich messages with user info
       const enrichedMessages = await Promise.all(
         messages.map(async (msg) => {
           const sender = await storage.getUser(msg.senderId);
           return {
             ...msg,
             role: sender?.role || null,
+            username: sender?.username || null,
+            avatar: sender?.avatar || null,
           };
         })
       );
@@ -8096,6 +8108,193 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     });
   }
   
+  // =================== Group Chat Routes ===================
+
+  // Get all group chats for the authenticated user
+  app.get("/api/group-chats", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const groups = await storage.getGroupChatsForUser(userId);
+      const enriched = await Promise.all(
+        groups.map(async (g) => {
+          const members = await storage.getGroupChatMembers(g.id);
+          const memberUsers = await Promise.all(
+            members.map(async (m) => {
+              const u = await storage.getUser(m.userId);
+              return u ? { id: u.id, username: u.username, avatar: u.avatar } : null;
+            })
+          );
+          const lastMsgs = await storage.getGroupChatMessages(g.id);
+          const lastMsg = lastMsgs[lastMsgs.length - 1] || null;
+          return {
+            ...g,
+            members: memberUsers.filter(Boolean),
+            lastMessage: lastMsg,
+          };
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching group chats:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Create a new group chat
+  app.post("/api/group-chats", requireAuth, async (req, res) => {
+    try {
+      const { name, memberIds } = z.object({
+        name: z.string().min(1).max(100),
+        memberIds: z.array(z.string()).min(1),
+      }).parse(req.body);
+
+      const userId = req.session.userId!;
+      const group = await storage.createGroupChat({ name, creatorId: userId });
+
+      // Add creator + members
+      const allMemberIds = Array.from(new Set([userId, ...memberIds]));
+      await Promise.all(allMemberIds.map(mid => storage.addGroupChatMember({ groupId: group.id, userId: mid })));
+
+      res.status(201).json(group);
+    } catch (error) {
+      console.error("Error creating group chat:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get group chat details + members
+  app.get("/api/group-chats/:id", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+
+      const members = await storage.getGroupChatMembers(group.id);
+      const isMember = members.some(m => m.userId === userId);
+      if (!isMember) return res.status(403).json({ error: "Not a member of this group" });
+
+      const memberUsers = await Promise.all(
+        members.map(async (m) => {
+          const u = await storage.getUser(m.userId);
+          return u ? { id: u.id, username: u.username, avatar: u.avatar, role: u.role } : null;
+        })
+      );
+      res.json({ ...group, members: memberUsers.filter(Boolean) });
+    } catch (error) {
+      console.error("Error fetching group chat:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Rename a group chat (creator only)
+  app.patch("/api/group-chats/:id", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can rename this group" });
+      const { name } = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
+      const updated = await storage.updateGroupChat(group.id, { name });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error renaming group chat:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Add member to group chat (creator only)
+  app.post("/api/group-chats/:id/members", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can add members" });
+      const { userId: newMemberId } = z.object({ userId: z.string() }).parse(req.body);
+      const targetUser = await storage.getUser(newMemberId);
+      if (!targetUser) return res.status(404).json({ error: "User not found" });
+      const existing = await storage.getGroupChatMembers(group.id);
+      if (existing.some(m => m.userId === newMemberId)) return res.status(400).json({ error: "User is already a member" });
+      await storage.addGroupChatMember({ groupId: group.id, userId: newMemberId });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error adding group member:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Remove member from group chat (creator only, can't remove self)
+  app.delete("/api/group-chats/:id/members/:userId", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can remove members" });
+      if (req.params.userId === userId) return res.status(400).json({ error: "Cannot remove yourself" });
+      await storage.removeGroupChatMember(group.id, req.params.userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error removing group member:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Leave a group chat (any member)
+  app.delete("/api/group-chats/:id/leave", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group not found" });
+      await storage.removeGroupChatMember(group.id, userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error leaving group chat:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get messages in a group chat
+  app.get("/api/group-chats/:id/messages", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      const members = await storage.getGroupChatMembers(group.id);
+      if (!members.some(m => m.userId === userId)) return res.status(403).json({ error: "Not a member" });
+      const messages = await storage.getGroupChatMessages(group.id);
+      const enriched = await Promise.all(
+        messages.map(async (msg) => {
+          const sender = await storage.getUser(msg.senderId);
+          return {
+            ...msg,
+            senderUsername: sender?.username || null,
+            senderAvatar: sender?.avatar || null,
+          };
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching group messages:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Send a message to a group chat
+  app.post("/api/group-chats/:id/messages", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      const members = await storage.getGroupChatMembers(group.id);
+      if (!members.some(m => m.userId === userId)) return res.status(403).json({ error: "Not a member" });
+      const { message } = z.object({ message: z.string().min(1).max(2000) }).parse(req.body);
+      const msg = await storage.createGroupChatMessage({ groupId: group.id, senderId: userId, message });
+      res.status(201).json(msg);
+    } catch (error) {
+      console.error("Error sending group message:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Set up WebSocket server for real-time price broadcasts
   const wss = new WebSocketServer({ server: httpServer, path: "/ws/prices" });
   

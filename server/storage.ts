@@ -75,6 +75,12 @@ import {
   type InsertCustomerReview,
   type CancellationNegotiation,
   type InsertCancellationNegotiation,
+  type GroupChat,
+  type InsertGroupChat,
+  type GroupChatMember,
+  type InsertGroupChatMember,
+  type GroupChatMessage,
+  type InsertGroupChatMessage,
   EscrowStatus,
   JobFreelancerStatus,
   JobSubmissionStatus,
@@ -321,6 +327,17 @@ export interface IStorage {
   getCancellationNegotiationByJob(jobId: string): Promise<CancellationNegotiation | undefined>;
   createCancellationNegotiation(negotiation: InsertCancellationNegotiation): Promise<CancellationNegotiation>;
   updateCancellationNegotiation(id: string, updates: Partial<CancellationNegotiation>): Promise<CancellationNegotiation | undefined>;
+
+  // Group Chat operations
+  getGroupChatsForUser(userId: string): Promise<GroupChat[]>;
+  getGroupChat(id: string): Promise<GroupChat | undefined>;
+  createGroupChat(chat: InsertGroupChat): Promise<GroupChat>;
+  updateGroupChat(id: string, updates: Partial<GroupChat>): Promise<GroupChat | undefined>;
+  getGroupChatMembers(groupId: string): Promise<GroupChatMember[]>;
+  addGroupChatMember(member: InsertGroupChatMember): Promise<GroupChatMember>;
+  removeGroupChatMember(groupId: string, userId: string): Promise<void>;
+  getGroupChatMessages(groupId: string): Promise<GroupChatMessage[]>;
+  createGroupChatMessage(message: InsertGroupChatMessage): Promise<GroupChatMessage>;
 }
 
 export class MemStorage implements IStorage {
@@ -364,6 +381,9 @@ export class MemStorage implements IStorage {
   private userBansMap: Map<string, UserBan>;
   private customerReviewsMap: Map<string, CustomerReview>;
   private cancellationNegotiationsMap: Map<string, CancellationNegotiation>;
+  private groupChatsMap: Map<string, GroupChat>;
+  private groupChatMembersMap: Map<string, GroupChatMember>;
+  private groupChatMessagesMap: Map<string, GroupChatMessage>;
 
   constructor() {
     this.users = new Map();
@@ -406,6 +426,9 @@ export class MemStorage implements IStorage {
     this.userBansMap = new Map();
     this.customerReviewsMap = new Map();
     this.cancellationNegotiationsMap = new Map();
+    this.groupChatsMap = new Map();
+    this.groupChatMembersMap = new Map();
+    this.groupChatMessagesMap = new Map();
   }
 
   // User operations
@@ -1937,6 +1960,81 @@ export class MemStorage implements IStorage {
     const updated = { ...negotiation, ...updates, updatedAt: new Date() };
     this.cancellationNegotiationsMap.set(id, updated);
     return updated;
+  }
+
+  // Group Chat operations
+  async getGroupChatsForUser(userId: string): Promise<GroupChat[]> {
+    const memberEntries = Array.from(this.groupChatMembersMap.values()).filter(m => m.userId === userId);
+    const groupIds = memberEntries.map(m => m.groupId);
+    return groupIds.map(id => this.groupChatsMap.get(id)).filter(Boolean) as GroupChat[];
+  }
+
+  async getGroupChat(id: string): Promise<GroupChat | undefined> {
+    return this.groupChatsMap.get(id);
+  }
+
+  async createGroupChat(chat: InsertGroupChat): Promise<GroupChat> {
+    const id = randomUUID();
+    const newChat: GroupChat = {
+      id,
+      name: chat.name,
+      creatorId: chat.creatorId,
+      createdAt: new Date(),
+    };
+    this.groupChatsMap.set(id, newChat);
+    return newChat;
+  }
+
+  async updateGroupChat(id: string, updates: Partial<GroupChat>): Promise<GroupChat | undefined> {
+    const chat = this.groupChatsMap.get(id);
+    if (!chat) return undefined;
+    const updated = { ...chat, ...updates };
+    this.groupChatsMap.set(id, updated);
+    return updated;
+  }
+
+  async getGroupChatMembers(groupId: string): Promise<GroupChatMember[]> {
+    return Array.from(this.groupChatMembersMap.values()).filter(m => m.groupId === groupId);
+  }
+
+  async addGroupChatMember(member: InsertGroupChatMember): Promise<GroupChatMember> {
+    const id = randomUUID();
+    const newMember: GroupChatMember = {
+      id,
+      groupId: member.groupId,
+      userId: member.userId,
+      joinedAt: new Date(),
+    };
+    this.groupChatMembersMap.set(id, newMember);
+    return newMember;
+  }
+
+  async removeGroupChatMember(groupId: string, userId: string): Promise<void> {
+    for (const [key, member] of this.groupChatMembersMap.entries()) {
+      if (member.groupId === groupId && member.userId === userId) {
+        this.groupChatMembersMap.delete(key);
+        break;
+      }
+    }
+  }
+
+  async getGroupChatMessages(groupId: string): Promise<GroupChatMessage[]> {
+    return Array.from(this.groupChatMessagesMap.values())
+      .filter(m => m.groupId === groupId)
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async createGroupChatMessage(message: InsertGroupChatMessage): Promise<GroupChatMessage> {
+    const id = randomUUID();
+    const newMessage: GroupChatMessage = {
+      id,
+      groupId: message.groupId,
+      senderId: message.senderId,
+      message: message.message,
+      createdAt: new Date(),
+    };
+    this.groupChatMessagesMap.set(id, newMessage);
+    return newMessage;
   }
 }
 
