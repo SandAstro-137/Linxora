@@ -670,6 +670,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerDiscordId: customer?.discordId,
         collaboratorData: collaboratorData.filter(Boolean),
         profitSplits,
+        teamMemberIds: allMemberIds,
       };
 
       res.json(enrichedJob);
@@ -4126,6 +4127,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============ FOLLOW ROUTES ============
+
+  app.post("/api/users/:id/follow", requireAuth, async (req, res) => {
+    try {
+      const followerId = req.session.userId!;
+      const followingId = req.params.id;
+      if (followerId === followingId) return res.status(400).json({ error: "Cannot follow yourself" });
+      const target = await storage.getUser(followingId);
+      if (!target) return res.status(404).json({ error: "User not found" });
+      const follow = await storage.followUser(followerId, followingId);
+      res.json(follow);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/users/:id/follow", requireAuth, async (req, res) => {
+    try {
+      const followerId = req.session.userId!;
+      const followingId = req.params.id;
+      await storage.unfollowUser(followerId, followingId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/:id/followers", requireAuth, async (req, res) => {
+    try {
+      const followers = await storage.getFollowers(req.params.id);
+      const enriched = await Promise.all(
+        followers.map(async (f) => {
+          const user = await storage.getUser(f.followerId);
+          return user ? { id: user.id, username: user.username, avatar: user.avatar, followedAt: f.createdAt } : null;
+        })
+      );
+      res.json(enriched.filter(Boolean));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/:id/following", requireAuth, async (req, res) => {
+    try {
+      const following = await storage.getFollowing(req.params.id);
+      const enriched = await Promise.all(
+        following.map(async (f) => {
+          const user = await storage.getUser(f.followingId);
+          return user ? { id: user.id, username: user.username, avatar: user.avatar, followedAt: f.createdAt } : null;
+        })
+      );
+      res.json(enriched.filter(Boolean));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============ BLOCK ROUTES ============
+
+  app.post("/api/users/:id/block", requireAuth, async (req, res) => {
+    try {
+      const blockerId = req.session.userId!;
+      const blockedId = req.params.id;
+      if (blockerId === blockedId) return res.status(400).json({ error: "Cannot block yourself" });
+      const target = await storage.getUser(blockedId);
+      if (!target) return res.status(404).json({ error: "User not found" });
+      const block = await storage.blockUser(blockerId, blockedId);
+      // Also unfollow each other when blocking
+      await storage.unfollowUser(blockerId, blockedId);
+      await storage.unfollowUser(blockedId, blockerId);
+      res.json(block);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/users/:id/block", requireAuth, async (req, res) => {
+    try {
+      const blockerId = req.session.userId!;
+      const blockedId = req.params.id;
+      await storage.unblockUser(blockerId, blockedId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/blocked", requireAuth, async (req, res) => {
+    try {
+      const blocked = await storage.getBlockedUsers(req.session.userId!);
+      const enriched = await Promise.all(
+        blocked.map(async (b) => {
+          const user = await storage.getUser(b.blockedId);
+          return user ? { id: user.id, username: user.username, avatar: user.avatar, blockedAt: b.createdAt } : null;
+        })
+      );
+      res.json(enriched.filter(Boolean));
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/users/search", requireAuth, async (req, res) => {
     try {
       const { userId } = req.query;
@@ -7008,9 +7111,52 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+      const requesterId = req.session.userId!;
+      const requester = await storage.getUser(requesterId);
 
-      // Calculate user status
-      const status = await calculateUserStatus(user);
+      // Check showOnlineStatus preference before revealing status
+      const profilePrefs = await storage.getUserPreferences(user.id);
+      const showOnline = profilePrefs?.showOnlineStatus !== false;
+      // Moderators/above can always see status
+      const requesterCanSeeStatus = requester && ["moderator", "head_of_moderation", "founder", "staff"].includes(requester.role);
+
+      let status;
+      if (showOnline || requesterCanSeeStatus) {
+        status = await calculateUserStatus(user);
+      } else {
+        status = { onlineStatus: "offline", workStatus: null, displayStatus: "Offline" };
+      }
+
+      // Determine email visibility
+      const emailVisibility = profilePrefs?.emailVisibility || "none";
+      let visibleEmail: string | null = null;
+      if (user.email && emailVisibility !== "none") {
+        if (emailVisibility === "all") {
+          visibleEmail = user.email;
+        } else if (emailVisibility === "friends") {
+          const areFriends = await storage.areFriends(requesterId, user.id);
+          if (areFriends) visibleEmail = user.email;
+        } else if (emailVisibility === "associates") {
+          // Associates = friends OR past/present job collaborators
+          const areFriends = await storage.areFriends(requesterId, user.id);
+          const areConnected = await storage.areUsersConnected(requesterId, user.id);
+          if (areFriends || areConnected) visibleEmail = user.email;
+        }
+      }
+
+      // Friends and followers counts
+      const friends = await storage.getFriends(user.id);
+      const followerCount = await storage.getFollowerCount(user.id);
+      const followingCount = await storage.getFollowingCount(user.id);
+
+      // Is requester following this user?
+      const isFollowing = requesterId !== user.id ? await storage.isFollowing(requesterId, user.id) : false;
+      // Is requester blocked by or has blocked this user?
+      const hasBlocked = requesterId !== user.id ? await storage.isBlocked(requesterId, user.id) : false;
+
+      // Friend request status between requester and profile user
+      const friendRequest = requesterId !== user.id ? await storage.getFriendRequestBetweenUsers(requesterId, user.id) : null;
+      const areFriends = requesterId !== user.id ? await storage.areFriends(requesterId, user.id) : false;
 
       // Return public profile info with safe defaults
       const ratingValue = parseFloat(user.rating?.toString() || "0");
@@ -7030,6 +7176,16 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         specialization: user.specialization || null,
         bio: user.bio || null,
         status: status,
+        email: visibleEmail,
+        friendCount: friends.length,
+        followerCount,
+        followingCount,
+        isFollowing,
+        hasBlocked,
+        areFriends,
+        friendRequestStatus: friendRequest ? friendRequest.status : null,
+        friendRequestId: friendRequest ? friendRequest.id : null,
+        friendRequestFromMe: friendRequest ? friendRequest.fromUserId === requesterId : null,
       };
 
       // For freelancers, include their completed job history
@@ -7829,9 +7985,20 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         return res.status(404).json({ error: "Recipient not found" });
       }
 
+      // Check if sender is blocked by receiver
+      const isBlockedByReceiver = await storage.isBlocked(receiverId, senderId);
+      if (isBlockedByReceiver) {
+        return res.status(403).json({ error: "You cannot send messages to this user." });
+      }
+
       // Check receiver's privacy settings
+      // Moderators and above can bypass "allowMessagesFromUnknown" restrictions
+      const senderUser = await storage.getUser(senderId);
+      const bypassRoles = ["moderator", "head_of_moderation", "founder", "staff"];
+      const senderCanBypass = senderUser && bypassRoles.includes(senderUser.role);
+
       const receiverPrefs = await storage.getUserPreferences(receiverId);
-      if (receiverPrefs && receiverPrefs.allowMessagesFromUnknown === false) {
+      if (!senderCanBypass && receiverPrefs && receiverPrefs.allowMessagesFromUnknown === false) {
         const areConnected = await storage.areUsersConnected(senderId, receiverId);
         if (!areConnected) {
           return res.status(403).json({ error: "This user is not accepting messages from unknown users." });
@@ -8215,6 +8382,13 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       const existing = await storage.getGroupChatMembers(group.id);
       if (existing.some(m => m.userId === newMemberId)) return res.status(400).json({ error: "User is already a member" });
       await storage.addGroupChatMember({ groupId: group.id, userId: newMemberId });
+      // System message
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: `${targetUser.username} joined the chat`,
+        isSystemMessage: true,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error("Error adding group member:", error);
@@ -8230,7 +8404,16 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       if (!group) return res.status(404).json({ error: "Group chat not found" });
       if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can remove members" });
       if (req.params.userId === userId) return res.status(400).json({ error: "Cannot remove yourself" });
+      const removedUser = await storage.getUser(req.params.userId);
+      const remover = await storage.getUser(userId);
       await storage.removeGroupChatMember(group.id, req.params.userId);
+      // System message
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: `${remover?.username || "Creator"} kicked ${removedUser?.username || "a member"} from the chat`,
+        isSystemMessage: true,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error("Error removing group member:", error);
@@ -8244,7 +8427,15 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       const userId = req.session.userId!;
       const group = await storage.getGroupChat(req.params.id);
       if (!group) return res.status(404).json({ error: "Group not found" });
+      const leavingUser = await storage.getUser(userId);
       await storage.removeGroupChatMember(group.id, userId);
+      // System message
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: `${leavingUser?.username || "A member"} left the chat`,
+        isSystemMessage: true,
+      });
       res.json({ success: true });
     } catch (error) {
       console.error("Error leaving group chat:", error);

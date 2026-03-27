@@ -838,6 +838,8 @@ export const userPreferences = pgTable("user_preferences", {
   showOnlineStatus: boolean("show_online_status").default(true),
   allowDirectMessages: boolean("allow_direct_messages").default(true),
   allowMessagesFromUnknown: boolean("allow_messages_from_unknown").default(true),
+  // Email visibility: "none" | "friends" | "associates" | "all"
+  emailVisibility: text("email_visibility").default("none"),
   // Account status
   accountDeactivated: boolean("account_deactivated").default(false),
   deactivatedAt: timestamp("deactivated_at"),
@@ -1247,6 +1249,7 @@ export const groupChatMessages = pgTable("group_chat_messages", {
   groupId: varchar("group_id").notNull(),
   senderId: varchar("sender_id").notNull(),
   message: text("message").notNull(),
+  isSystemMessage: boolean("is_system_message").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1256,3 +1259,33 @@ export const insertGroupChatMessageSchema = createInsertSchema(groupChatMessages
 });
 export type InsertGroupChatMessage = z.infer<typeof insertGroupChatMessageSchema>;
 export type GroupChatMessage = typeof groupChatMessages.$inferSelect;
+
+// User Follows table
+export const userFollows = pgTable("user_follows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  followerId: varchar("follower_id").notNull(),
+  followingId: varchar("following_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertUserFollowSchema = createInsertSchema(userFollows).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertUserFollow = z.infer<typeof insertUserFollowSchema>;
+export type UserFollow = typeof userFollows.$inferSelect;
+
+// User Blocks table
+export const userBlocks = pgTable("user_blocks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  blockerId: varchar("blocker_id").notNull(),
+  blockedId: varchar("blocked_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertUserBlockSchema = createInsertSchema(userBlocks).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertUserBlock = z.infer<typeof insertUserBlockSchema>;
+export type UserBlock = typeof userBlocks.$inferSelect;

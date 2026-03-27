@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award, Flag } from "lucide-react";
+import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award, Flag, UserCheck, UserX, Bell, BellOff, Users, Mail } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { useState } from "react";
@@ -37,6 +37,16 @@ interface PublicProfile {
   specialization: string | null;
   bio: string | null;
   status: UserStatus;
+  email: string | null;
+  friendCount: number;
+  followerCount: number;
+  followingCount: number;
+  isFollowing: boolean;
+  hasBlocked: boolean;
+  areFriends: boolean;
+  friendRequestStatus: string | null;
+  friendRequestId: string | null;
+  friendRequestFromMe: boolean | null;
   recentCompletedJobs?: {
     id: string;
     title: string;
@@ -153,12 +163,78 @@ export default function UserProfilePage() {
       setFreelancerMessage("");
     },
     onError: (error: Error) => {
-      toast({
-        title: "Failed to send recommendation",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Failed to send recommendation", description: error.message, variant: "destructive" });
     },
+  });
+
+  const friendRequestMutation = useMutation({
+    mutationFn: async (toUserId: string) => {
+      const res = await apiRequest("POST", "/api/friend-requests", { toUserId });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Friend request sent" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const cancelFriendRequestMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      const res = await apiRequest("POST", `/api/friend-requests/${requestId}/cancel`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Friend request cancelled" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const acceptFriendRequestMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      const res = await apiRequest("POST", `/api/friend-requests/${requestId}/accept`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Friend request accepted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const followMutation = useMutation({
+    mutationFn: async ({ id, isFollowing }: { id: string; isFollowing: boolean }) => {
+      if (isFollowing) {
+        const res = await apiRequest("DELETE", `/api/users/${id}/follow`);
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", `/api/users/${id}/follow`);
+        return res.json();
+      }
+    },
+    onSuccess: (_, vars) => {
+      toast({ title: vars.isFollowing ? "Unfollowed" : "Following" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const blockMutation = useMutation({
+    mutationFn: async ({ id, isBlocked }: { id: string; isBlocked: boolean }) => {
+      if (isBlocked) {
+        const res = await apiRequest("DELETE", `/api/users/${id}/block`);
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", `/api/users/${id}/block`);
+        return res.json();
+      }
+    },
+    onSuccess: (_, vars) => {
+      toast({ title: vars.isBlocked ? "User unblocked" : "User blocked", description: vars.isBlocked ? undefined : "This user can no longer message you." });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const handleRecommend = () => {
@@ -170,6 +246,8 @@ export default function UserProfilePage() {
       freelancerMessage: freelancerMessage || undefined,
     });
   };
+
+  const isOwnProfile = currentUser?.id === profile?.id;
 
   if (isLoading) {
     return (
@@ -201,6 +279,58 @@ export default function UserProfilePage() {
       </div>
     );
   }
+
+  const renderFriendButton = () => {
+    if (isOwnProfile) return null;
+    if (profile.areFriends) {
+      return (
+        <Badge variant="secondary" className="flex items-center gap-1 px-3 py-1.5">
+          <UserCheck className="w-3.5 h-3.5" />
+          Friends
+        </Badge>
+      );
+    }
+    if (profile.friendRequestStatus === "pending") {
+      if (profile.friendRequestFromMe) {
+        return (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => profile.friendRequestId && cancelFriendRequestMutation.mutate(profile.friendRequestId)}
+            disabled={cancelFriendRequestMutation.isPending}
+            data-testid="button-cancel-friend-request"
+          >
+            <UserX className="w-4 h-4 mr-2" />
+            Cancel Request
+          </Button>
+        );
+      } else {
+        return (
+          <Button
+            size="sm"
+            onClick={() => profile.friendRequestId && acceptFriendRequestMutation.mutate(profile.friendRequestId)}
+            disabled={acceptFriendRequestMutation.isPending}
+            data-testid="button-accept-friend-request"
+          >
+            <UserCheck className="w-4 h-4 mr-2" />
+            Accept Request
+          </Button>
+        );
+      }
+    }
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => friendRequestMutation.mutate(profile.id)}
+        disabled={friendRequestMutation.isPending}
+        data-testid="button-send-friend-request"
+      >
+        <UserPlus className="w-4 h-4 mr-2" />
+        Add Friend
+      </Button>
+    );
+  };
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
@@ -258,6 +388,18 @@ export default function UserProfilePage() {
                   User ID: {profile.userId}
                 </CardDescription>
               </div>
+              {/* Friends / Followers / Following counts */}
+              <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                <span data-testid="text-friend-count">
+                  <strong className="text-foreground">{profile.friendCount}</strong> Friends
+                </span>
+                <span data-testid="text-follower-count">
+                  <strong className="text-foreground">{profile.followerCount}</strong> Followers
+                </span>
+                <span data-testid="text-following-count">
+                  <strong className="text-foreground">{profile.followingCount}</strong> Following
+                </span>
+              </div>
               {profile.specialization && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {profile.specialization}
@@ -267,6 +409,7 @@ export default function UserProfilePage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Action buttons */}
           <div className="flex flex-wrap gap-2">
             <Link href={`/messages/${profile.id}`}>
               <Button size="sm" data-testid="button-send-message">
@@ -274,8 +417,32 @@ export default function UserProfilePage() {
                 Send Message
               </Button>
             </Link>
-            
-            {currentUser?.role === "freelancer" && profile.role === "freelancer" && currentUser.id !== profile.id && (
+
+            {!isOwnProfile && renderFriendButton()}
+
+            {!isOwnProfile && (
+              <Button
+                size="sm"
+                variant={profile.isFollowing ? "secondary" : "outline"}
+                onClick={() => followMutation.mutate({ id: profile.id, isFollowing: profile.isFollowing })}
+                disabled={followMutation.isPending}
+                data-testid="button-follow"
+              >
+                {profile.isFollowing ? (
+                  <>
+                    <BellOff className="w-4 h-4 mr-2" />
+                    Unfollow
+                  </>
+                ) : (
+                  <>
+                    <Bell className="w-4 h-4 mr-2" />
+                    Follow
+                  </>
+                )}
+              </Button>
+            )}
+
+            {currentUser?.role === "freelancer" && profile.role === "freelancer" && !isOwnProfile && (
               <Dialog open={recommendDialogOpen} onOpenChange={setRecommendDialogOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm" variant="outline" data-testid="button-recommend">
@@ -348,13 +515,48 @@ export default function UserProfilePage() {
               </Dialog>
             )}
 
-            {currentUser && currentUser.id !== profile.id && (
-              <Button size="sm" variant="outline" onClick={() => setReportDialogOpen(true)} data-testid="button-report-user">
-                <Flag className="w-4 h-4 mr-2" />
-                Report User
-              </Button>
+            {!isOwnProfile && (
+              <>
+                <Button
+                  size="sm"
+                  variant={profile.hasBlocked ? "destructive" : "outline"}
+                  onClick={() => blockMutation.mutate({ id: profile.id, isBlocked: profile.hasBlocked })}
+                  disabled={blockMutation.isPending}
+                  data-testid="button-block"
+                >
+                  {profile.hasBlocked ? (
+                    <>
+                      <UserCheck className="w-4 h-4 mr-2" />
+                      Unblock
+                    </>
+                  ) : (
+                    <>
+                      <UserX className="w-4 h-4 mr-2" />
+                      Block
+                    </>
+                  )}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setReportDialogOpen(true)} data-testid="button-report-user">
+                  <Flag className="w-4 h-4 mr-2" />
+                  Report
+                </Button>
+              </>
             )}
           </div>
+
+          {/* Email if visible */}
+          {profile.email && (
+            <>
+              <Separator />
+              <div className="flex items-center gap-2 text-sm">
+                <Mail className="w-4 h-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Contact:</span>
+                <a href={`mailto:${profile.email}`} className="font-medium hover:underline" data-testid="text-email">
+                  {profile.email}
+                </a>
+              </div>
+            </>
+          )}
 
           {profile.bio && (
             <>
@@ -401,6 +603,11 @@ export default function UserProfilePage() {
               </p>
               <p className="text-xs text-muted-foreground">Member Since</p>
             </div>
+            <div className="text-center p-3 bg-muted rounded-lg">
+              <Users className="w-5 h-5 mx-auto mb-1 text-purple-500" />
+              <p className="text-lg font-bold">{profile.friendCount}</p>
+              <p className="text-xs text-muted-foreground">Friends</p>
+            </div>
           </div>
 
           {profile.recentCompletedJobs && profile.recentCompletedJobs.length > 0 && (
@@ -428,7 +635,7 @@ export default function UserProfilePage() {
         </CardContent>
       </Card>
 
-      {profile && currentUser && currentUser.id !== profile.id && (
+      {profile && currentUser && !isOwnProfile && (
         <ReportDialog
           open={reportDialogOpen}
           onOpenChange={setReportDialogOpen}

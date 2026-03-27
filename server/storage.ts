@@ -81,6 +81,10 @@ import {
   type InsertGroupChatMember,
   type GroupChatMessage,
   type InsertGroupChatMessage,
+  type UserFollow,
+  type InsertUserFollow,
+  type UserBlock,
+  type InsertUserBlock,
   EscrowStatus,
   JobFreelancerStatus,
   JobSubmissionStatus,
@@ -338,6 +342,21 @@ export interface IStorage {
   removeGroupChatMember(groupId: string, userId: string): Promise<void>;
   getGroupChatMessages(groupId: string): Promise<GroupChatMessage[]>;
   createGroupChatMessage(message: InsertGroupChatMessage): Promise<GroupChatMessage>;
+
+  // Follow operations
+  followUser(followerId: string, followingId: string): Promise<UserFollow>;
+  unfollowUser(followerId: string, followingId: string): Promise<void>;
+  isFollowing(followerId: string, followingId: string): Promise<boolean>;
+  getFollowers(userId: string): Promise<UserFollow[]>;
+  getFollowing(userId: string): Promise<UserFollow[]>;
+  getFollowerCount(userId: string): Promise<number>;
+  getFollowingCount(userId: string): Promise<number>;
+
+  // Block operations
+  blockUser(blockerId: string, blockedId: string): Promise<UserBlock>;
+  unblockUser(blockerId: string, blockedId: string): Promise<void>;
+  isBlocked(blockerId: string, blockedId: string): Promise<boolean>;
+  getBlockedUsers(blockerId: string): Promise<UserBlock[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -384,6 +403,8 @@ export class MemStorage implements IStorage {
   private groupChatsMap: Map<string, GroupChat>;
   private groupChatMembersMap: Map<string, GroupChatMember>;
   private groupChatMessagesMap: Map<string, GroupChatMessage>;
+  private userFollowsMap: Map<string, UserFollow>;
+  private userBlocksMap: Map<string, UserBlock>;
 
   constructor() {
     this.users = new Map();
@@ -429,6 +450,8 @@ export class MemStorage implements IStorage {
     this.groupChatsMap = new Map();
     this.groupChatMembersMap = new Map();
     this.groupChatMessagesMap = new Map();
+    this.userFollowsMap = new Map();
+    this.userBlocksMap = new Map();
   }
 
   // User operations
@@ -2031,10 +2054,85 @@ export class MemStorage implements IStorage {
       groupId: message.groupId,
       senderId: message.senderId,
       message: message.message,
+      isSystemMessage: message.isSystemMessage ?? false,
       createdAt: new Date(),
     };
     this.groupChatMessagesMap.set(id, newMessage);
     return newMessage;
+  }
+
+  // Follow operations
+  async followUser(followerId: string, followingId: string): Promise<UserFollow> {
+    const existing = Array.from(this.userFollowsMap.values()).find(
+      f => f.followerId === followerId && f.followingId === followingId
+    );
+    if (existing) return existing;
+    const id = randomUUID();
+    const follow: UserFollow = { id, followerId, followingId, createdAt: new Date() };
+    this.userFollowsMap.set(id, follow);
+    return follow;
+  }
+
+  async unfollowUser(followerId: string, followingId: string): Promise<void> {
+    for (const [key, f] of this.userFollowsMap.entries()) {
+      if (f.followerId === followerId && f.followingId === followingId) {
+        this.userFollowsMap.delete(key);
+        break;
+      }
+    }
+  }
+
+  async isFollowing(followerId: string, followingId: string): Promise<boolean> {
+    return Array.from(this.userFollowsMap.values()).some(
+      f => f.followerId === followerId && f.followingId === followingId
+    );
+  }
+
+  async getFollowers(userId: string): Promise<UserFollow[]> {
+    return Array.from(this.userFollowsMap.values()).filter(f => f.followingId === userId);
+  }
+
+  async getFollowing(userId: string): Promise<UserFollow[]> {
+    return Array.from(this.userFollowsMap.values()).filter(f => f.followerId === userId);
+  }
+
+  async getFollowerCount(userId: string): Promise<number> {
+    return Array.from(this.userFollowsMap.values()).filter(f => f.followingId === userId).length;
+  }
+
+  async getFollowingCount(userId: string): Promise<number> {
+    return Array.from(this.userFollowsMap.values()).filter(f => f.followerId === userId).length;
+  }
+
+  // Block operations
+  async blockUser(blockerId: string, blockedId: string): Promise<UserBlock> {
+    const existing = Array.from(this.userBlocksMap.values()).find(
+      b => b.blockerId === blockerId && b.blockedId === blockedId
+    );
+    if (existing) return existing;
+    const id = randomUUID();
+    const block: UserBlock = { id, blockerId, blockedId, createdAt: new Date() };
+    this.userBlocksMap.set(id, block);
+    return block;
+  }
+
+  async unblockUser(blockerId: string, blockedId: string): Promise<void> {
+    for (const [key, b] of this.userBlocksMap.entries()) {
+      if (b.blockerId === blockerId && b.blockedId === blockedId) {
+        this.userBlocksMap.delete(key);
+        break;
+      }
+    }
+  }
+
+  async isBlocked(blockerId: string, blockedId: string): Promise<boolean> {
+    return Array.from(this.userBlocksMap.values()).some(
+      b => b.blockerId === blockerId && b.blockedId === blockedId
+    );
+  }
+
+  async getBlockedUsers(blockerId: string): Promise<UserBlock[]> {
+    return Array.from(this.userBlocksMap.values()).filter(b => b.blockerId === blockerId);
   }
 }
 

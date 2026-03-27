@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -490,6 +491,10 @@ export default function SettingsPage() {
     updateSettingsMutation.mutate({ [key]: value });
   };
 
+  const updateSetting = (key: keyof UserPreferences, value: string | boolean | number) => {
+    updateSettingsMutation.mutate({ [key]: value });
+  };
+
   const handleEmailChange = () => {
     if (!newEmail.trim()) {
       toast({ title: "Error", description: "Please enter an email address.", variant: "destructive" });
@@ -806,6 +811,37 @@ export default function SettingsPage() {
               onCheckedChange={(checked) => toggleSetting("allowMessagesFromUnknown", checked)}
               data-testid="switch-allow-unknown-messages"
             />
+          </div>
+          <Separator />
+          <div className="space-y-3">
+            <div>
+              <Label>Email Visibility on Profile</Label>
+              <p className="text-sm text-muted-foreground">Choose who can see your email address on your profile. Email must be verified to change this setting.</p>
+            </div>
+            {!user?.emailVerified ? (
+              <div className="flex items-center gap-2 p-3 rounded-md bg-muted">
+                <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                <p className="text-sm text-muted-foreground">
+                  Please verify your email address to control email visibility. Currently set to <strong>No one</strong>.
+                </p>
+              </div>
+            ) : (
+              <Select
+                value={(settings as any)?.emailVisibility ?? "none"}
+                onValueChange={(value) => updateSetting("emailVisibility" as keyof UserPreferences, value)}
+                data-testid="select-email-visibility"
+              >
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Select who can see your email" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No one</SelectItem>
+                  <SelectItem value="friends">Friends only</SelectItem>
+                  <SelectItem value="associates">Friends &amp; Associates</SelectItem>
+                  <SelectItem value="all">Everyone</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </CardContent>
       </Card>

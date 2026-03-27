@@ -52,6 +52,7 @@ interface EnrichedJob {
     percentage: number;
     amount: string;
   }>;
+  teamMemberIds?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -80,8 +81,8 @@ interface TeamTask {
 interface TeamMessage {
   id: string;
   jobId: string;
-  userId: string;
-  message: string;
+  senderId: string;
+  content: string;
   createdAt: Date;
   username?: string;
   avatar?: string;
@@ -1008,9 +1009,9 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                         })}
                       </span>
                     </div>
-                    <p className="text-sm">{message.message}</p>
+                    <p className="text-sm">{message.content}</p>
                   </div>
-                  {message.userId === user?.id && (
+                  {message.senderId === user?.id && (
                     <Button
                       size="icon"
                       variant="ghost"
@@ -1390,26 +1391,31 @@ export default function JobDetailPage() {
   const isFreelancerOwner = job.freelancerId === user?.id;
   const canOfferTeam = isJobTaken && !isFreelancerOwner && !isCustomer;
   const canCustomerInvite = isCustomer && (job.status === "active" || job.status === "claimed" || job.status === "in_progress");
-  const isTeamMember = 
-    user?.id === job.customerId || 
+  const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
+  
+  const isFreelancerByAssignment = 
     user?.id === job.freelancerId || 
     job.collaborators?.includes(user?.id || "") ||
+    job.teamMemberIds?.includes(user?.id || "") ||
     false;
 
-  const isFreelancerOnJob = 
-    (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
-    (job.status === "claimed" || job.status === "in_progress");
+  const isTeamMember = 
+    user?.id === job.customerId || 
+    isFreelancerByAssignment;
 
-  // Customer or freelancer can access workspace when job is active
+  const isFreelancerOnJob = 
+    isFreelancerByAssignment &&
+    activeJobStatuses.includes(job.status.toLowerCase());
+
   // Workspace is freelancer-team only (not customers)
   const canAccessWorkspace = 
-    (user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
-    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
+    isFreelancerByAssignment &&
+    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer" || job.status === "submitted");
 
   // Chat is for both customers and freelancers
   const canAccessChat = 
-    (isCustomer || user?.id === job.freelancerId || job.collaborators?.includes(user?.id || "")) &&
-    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer");
+    (isCustomer || isFreelancerByAssignment) &&
+    (job.status === "claimed" || job.status === "in_progress" || job.status === "awaiting_customer" || job.status === "submitted");
 
   const getTabGridCols = () => {
     // Overview (1) + Team (if member) + Workspace (if freelancer) + Chat (if customer or freelancer)

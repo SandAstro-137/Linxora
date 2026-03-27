@@ -90,6 +90,7 @@ interface GroupChatMessage {
   groupId: string;
   senderId: string;
   message: string;
+  isSystemMessage?: boolean;
   createdAt: string;
   senderUsername: string | null;
   senderAvatar: string | null;
@@ -887,6 +888,19 @@ export default function MessagesPage() {
                 ) : (
                   <div className="space-y-3">
                     {groupMessages.map((msg) => {
+                      if (msg.isSystemMessage) {
+                        return (
+                          <div
+                            key={msg.id}
+                            className="flex justify-center"
+                            data-testid={`group-system-msg-${msg.id}`}
+                          >
+                            <span className="text-xs text-muted-foreground bg-muted rounded-full px-3 py-1">
+                              {msg.message}
+                            </span>
+                          </div>
+                        );
+                      }
                       const isMe = msg.senderId === user.id;
                       return (
                         <div
