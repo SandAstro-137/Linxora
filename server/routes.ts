@@ -7992,16 +7992,51 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       }
 
       // Check receiver's privacy settings
-      // Moderators and above can bypass "allowMessagesFromUnknown" restrictions
+      // Moderators and above can bypass all DM restrictions
       const senderUser = await storage.getUser(senderId);
       const bypassRoles = ["moderator", "head_of_moderation", "founder", "staff"];
       const senderCanBypass = senderUser && bypassRoles.includes(senderUser.role);
 
-      const receiverPrefs = await storage.getUserPreferences(receiverId);
-      if (!senderCanBypass && receiverPrefs && receiverPrefs.allowMessagesFromUnknown === false) {
-        const areConnected = await storage.areUsersConnected(senderId, receiverId);
-        if (!areConnected) {
-          return res.status(403).json({ error: "This user is not accepting messages from unknown users." });
+      if (!senderCanBypass) {
+        const receiverPrefs = await storage.getUserPreferences(receiverId);
+        // allowDirectMessages is a tiered text: "everyone"|"friends_and_associates"|"friends"|"associates"|"none"
+        // Fallback to legacy boolean handling if value is boolean true/false
+        const dmSetting = (receiverPrefs?.allowDirectMessages as string) ?? "everyone";
+
+        if (dmSetting === "none") {
+          return res.status(403).json({ error: "This user is not accepting direct messages." });
+        }
+
+        if (dmSetting !== "everyone") {
+          const isFriend = await storage.areFriends(senderId, receiverId);
+          const isConnected = await storage.areUsersConnected(senderId, receiverId);
+
+          // "associates" = share a job or have prior messages (areUsersConnected includes friends,
+          //  but we treat it as "connected" which covers all associate-type relationships)
+          // For "associates" we check isConnected (which includes jobs + prior messages + friends)
+          // For "friends" we check only isFriend
+          // For "friends_and_associates" we check isFriend OR isConnected (same as isConnected)
+
+          let allowed = false;
+          if (dmSetting === "friends") {
+            allowed = isFriend;
+          } else if (dmSetting === "associates") {
+            // associates = connected through job or prior messages (not requiring friendship)
+            // areUsersConnected already includes jobs + prior messages + friends
+            allowed = isConnected;
+          } else if (dmSetting === "friends_and_associates") {
+            allowed = isFriend || isConnected;
+          }
+
+          if (!allowed) {
+            if (dmSetting === "friends") {
+              return res.status(403).json({ error: "This user only accepts messages from friends." });
+            } else if (dmSetting === "associates") {
+              return res.status(403).json({ error: "This user only accepts messages from people they've worked with or messaged before." });
+            } else {
+              return res.status(403).json({ error: "This user's messaging settings do not allow you to contact them." });
+            }
+          }
         }
       }
 

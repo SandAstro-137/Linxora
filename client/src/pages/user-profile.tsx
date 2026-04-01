@@ -203,6 +203,19 @@ export default function UserProfilePage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const unfriendMutation = useMutation({
+    mutationFn: async (friendId: string) => {
+      const res = await apiRequest("DELETE", `/api/friends/${friendId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Removed from friends" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/friends"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const followMutation = useMutation({
     mutationFn: async ({ id, isFollowing }: { id: string; isFollowing: boolean }) => {
       if (isFollowing) {
@@ -284,10 +297,16 @@ export default function UserProfilePage() {
     if (isOwnProfile) return null;
     if (profile.areFriends) {
       return (
-        <Badge variant="secondary" className="flex items-center gap-1 px-3 py-1.5">
-          <UserCheck className="w-3.5 h-3.5" />
-          Friends
-        </Badge>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => unfriendMutation.mutate(profile.id)}
+          disabled={unfriendMutation.isPending}
+          data-testid="button-unfriend"
+        >
+          <UserX className="w-4 h-4 mr-2" />
+          Unfriend
+        </Button>
       );
     }
     if (profile.friendRequestStatus === "pending") {

@@ -928,7 +928,7 @@ export class MemStorage implements IStorage {
       notificationSoundEnabled: prefs.notificationSoundEnabled ?? true,
       deleteConfirmationEnabled: prefs.deleteConfirmationEnabled ?? true,
       showOnlineStatus: prefs.showOnlineStatus ?? true,
-      allowDirectMessages: prefs.allowDirectMessages ?? true,
+      allowDirectMessages: prefs.allowDirectMessages ?? "everyone",
       allowMessagesFromUnknown: prefs.allowMessagesFromUnknown ?? true,
       accountDeactivated: prefs.accountDeactivated ?? false,
       deactivatedAt: null,

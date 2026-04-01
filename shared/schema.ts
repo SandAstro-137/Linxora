@@ -836,7 +836,9 @@ export const userPreferences = pgTable("user_preferences", {
   deleteConfirmationEnabled: boolean("delete_confirmation_enabled").default(true),
   // Privacy settings
   showOnlineStatus: boolean("show_online_status").default(true),
-  allowDirectMessages: boolean("allow_direct_messages").default(true),
+  // Who can DM you: "everyone" | "friends_and_associates" | "friends" | "associates" | "none"
+  allowDirectMessages: text("allow_direct_messages").default("everyone"),
+  // Kept for schema compat, logic now merged into allowDirectMessages tiers
   allowMessagesFromUnknown: boolean("allow_messages_from_unknown").default(true),
   // Email visibility: "none" | "friends" | "associates" | "all"
   emailVisibility: text("email_visibility").default("none"),

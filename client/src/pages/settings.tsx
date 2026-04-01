@@ -787,30 +787,31 @@ export default function SettingsPage() {
             />
           </div>
           <Separator />
-          <div className="flex items-center justify-between">
+          <div className="space-y-3">
             <div>
-              <Label htmlFor="allow-dms">Allow Direct Messages</Label>
-              <p className="text-sm text-muted-foreground">Allow other users to send you direct messages</p>
+              <Label>Who Can Send You Direct Messages</Label>
+              <p className="text-sm text-muted-foreground">Control who is allowed to start a direct message conversation with you</p>
             </div>
-            <Switch
-              id="allow-dms"
-              checked={settings?.allowDirectMessages ?? true}
-              onCheckedChange={(checked) => toggleSetting("allowDirectMessages", checked)}
-              data-testid="switch-allow-dms"
-            />
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="allow-unknown-messages">Allow Messages from Unknown Users</Label>
-              <p className="text-sm text-muted-foreground">When off, only people you've worked with, messaged before, or added as friends can contact you</p>
-            </div>
-            <Switch
-              id="allow-unknown-messages"
-              checked={settings?.allowMessagesFromUnknown ?? true}
-              onCheckedChange={(checked) => toggleSetting("allowMessagesFromUnknown", checked)}
-              data-testid="switch-allow-unknown-messages"
-            />
+            <Select
+              value={(settings?.allowDirectMessages as string) ?? "everyone"}
+              onValueChange={(value) => updateSetting("allowDirectMessages" as keyof UserPreferences, value)}
+              data-testid="select-allow-dms"
+            >
+              <SelectTrigger className="w-full sm:w-72">
+                <SelectValue placeholder="Select who can message you" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="everyone">Everyone</SelectItem>
+                <SelectItem value="friends_and_associates">Friends &amp; Associates</SelectItem>
+                <SelectItem value="friends">Friends only</SelectItem>
+                <SelectItem value="associates">Associates only</SelectItem>
+                <SelectItem value="none">No one</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              <strong>Associates</strong> are people you share a job with or have exchanged messages with before.
+              Moderators and staff can always message you regardless of this setting.
+            </p>
           </div>
           <Separator />
           <div className="space-y-3">

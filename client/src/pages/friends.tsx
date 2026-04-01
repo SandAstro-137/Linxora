@@ -249,13 +249,17 @@ export default function FriendsPage() {
                   data-testid={`search-result-${user.id}`}
                 >
                   <div className="flex items-center gap-3">
-                    <Avatar>
-                      <AvatarImage src={user.avatar || undefined} />
-                      <AvatarFallback>{user.username.charAt(0).toUpperCase()}</AvatarFallback>
-                    </Avatar>
+                    <Link href={`/user/${user.id}`}>
+                      <Avatar className="cursor-pointer">
+                        <AvatarImage src={user.avatar || undefined} />
+                        <AvatarFallback>{user.username.charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                    </Link>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">{user.username}</span>
+                        <Link href={`/user/${user.id}`} className="font-medium hover:underline">
+                          {user.username}
+                        </Link>
                         <Badge variant={getRoleBadgeVariant(user.role)} className="text-xs">
                           {getRoleDisplay(user.role)}
                         </Badge>
@@ -342,12 +346,13 @@ export default function FriendsPage() {
                         </Link>
                         <Button
                           size="sm"
-                          variant="ghost"
+                          variant="outline"
                           onClick={() => removeFriendMutation.mutate(friend.friendId)}
                           disabled={removeFriendMutation.isPending}
                           data-testid={`button-remove-friend-${friend.friendId}`}
                         >
-                          <UserMinus className="w-4 h-4" />
+                          <UserMinus className="w-4 h-4 mr-1" />
+                          Unfriend
                         </Button>
                       </div>
                     </div>
@@ -380,15 +385,29 @@ export default function FriendsPage() {
                       data-testid={`incoming-request-${request.id}`}
                     >
                       <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarImage src={request.fromUser?.avatar || undefined} />
-                          <AvatarFallback>
-                            {request.fromUser?.username?.charAt(0).toUpperCase() || "?"}
-                          </AvatarFallback>
-                        </Avatar>
+                        {request.fromUser?.id ? (
+                          <Link href={`/user/${request.fromUser.id}`}>
+                            <Avatar className="cursor-pointer">
+                              <AvatarImage src={request.fromUser?.avatar || undefined} />
+                              <AvatarFallback>
+                                {request.fromUser?.username?.charAt(0).toUpperCase() || "?"}
+                              </AvatarFallback>
+                            </Avatar>
+                          </Link>
+                        ) : (
+                          <Avatar>
+                            <AvatarFallback>?</AvatarFallback>
+                          </Avatar>
+                        )}
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{request.fromUser?.username || "Unknown"}</span>
+                            {request.fromUser?.id ? (
+                              <Link href={`/user/${request.fromUser.id}`} className="font-medium hover:underline">
+                                {request.fromUser?.username || "Unknown"}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{request.fromUser?.username || "Unknown"}</span>
+                            )}
                             {request.fromUser?.role && (
                               <Badge variant={getRoleBadgeVariant(request.fromUser.role)} className="text-xs">
                                 {getRoleDisplay(request.fromUser.role)}
@@ -451,15 +470,29 @@ export default function FriendsPage() {
                       data-testid={`outgoing-request-${request.id}`}
                     >
                       <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarImage src={request.toUser?.avatar || undefined} />
-                          <AvatarFallback>
-                            {request.toUser?.username?.charAt(0).toUpperCase() || "?"}
-                          </AvatarFallback>
-                        </Avatar>
+                        {request.toUser?.id ? (
+                          <Link href={`/user/${request.toUser.id}`}>
+                            <Avatar className="cursor-pointer">
+                              <AvatarImage src={request.toUser?.avatar || undefined} />
+                              <AvatarFallback>
+                                {request.toUser?.username?.charAt(0).toUpperCase() || "?"}
+                              </AvatarFallback>
+                            </Avatar>
+                          </Link>
+                        ) : (
+                          <Avatar>
+                            <AvatarFallback>?</AvatarFallback>
+                          </Avatar>
+                        )}
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{request.toUser?.username || "Unknown"}</span>
+                            {request.toUser?.id ? (
+                              <Link href={`/user/${request.toUser.id}`} className="font-medium hover:underline">
+                                {request.toUser?.username || "Unknown"}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{request.toUser?.username || "Unknown"}</span>
+                            )}
                             {request.toUser?.role && (
                               <Badge variant={getRoleBadgeVariant(request.toUser.role)} className="text-xs">
                                 {getRoleDisplay(request.toUser.role)}
