@@ -777,7 +777,7 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="show-online-status">Show Online Status</Label>
-              <p className="text-sm text-muted-foreground">Let others see when you're online</p>
+              <p className="text-sm text-muted-foreground">Let others see when you're online(Suggested when you aren't actively working)</p>
             </div>
             <Switch
               id="show-online-status"
