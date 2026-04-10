@@ -139,9 +139,9 @@ export type CancellationStatusType = typeof CancellationStatus[keyof typeof Canc
 export const LEVEL_PAYOUTS = {
   1: 0.60,
   2: 0.70,
-  3: 0.75,
-  4: 0.80,
-  5: 0.85
+  3: 0.80,
+  4: 0.85,
+  5: 0.90
 } as const;
 
 export function getLevelPayout(level: number): number {

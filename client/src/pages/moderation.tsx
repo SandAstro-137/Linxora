@@ -510,15 +510,17 @@ export default function ModerationPage() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="pto" data-testid="tab-pto">
-            <Calendar className="w-4 h-4 mr-1" />
-            PTO Requests
-            {pendingPTORequests && pendingPTORequests.length > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {pendingPTORequests.length}
-              </Badge>
-            )}
-          </TabsTrigger>
+          {(user?.role === "head_of_moderation" || user?.role === "founder") && (
+            <TabsTrigger value="pto" data-testid="tab-pto">
+              <Calendar className="w-4 h-4 mr-1" />
+              PTO Requests
+              {pendingPTORequests && pendingPTORequests.length > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {pendingPTORequests.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="disputes" data-testid="tab-disputes">
             <Gavel className="w-4 h-4 mr-1" />
             Disputes
@@ -961,6 +963,7 @@ export default function ModerationPage() {
           )}
         </TabsContent>
 
+        {(user?.role === "head_of_moderation" || user?.role === "founder") && (
         <TabsContent value="pto">
           {ptoLoading ? (
             <div className="space-y-4">
@@ -1042,6 +1045,7 @@ export default function ModerationPage() {
             </Card>
           )}
         </TabsContent>
+        )}
 
         <TabsContent value="disputes">
           {disputesLoading ? (

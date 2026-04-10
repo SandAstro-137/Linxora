@@ -82,7 +82,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Full refund (budget + premium) **credited back to wallet** on cancellation or moderator rejection
     - On completion: no further charge (already paid), freelancer receives level-based portion of budget only, premium stays with Linxora
     - On dispute: premium goes to Linxora, customerRefund portion credited back to wallet, freelancer gets their split
-    - Level-based freelancer payouts: Level 1=60%, Level 2=70%, Level 3=75%, Level 4=80%, Level 5=85%
+    - Level-based freelancer payouts: Level 1=60%, Level 2=70%, Level 3=80%, Level 4=85%, Level 5=90%
     - Platform retains difference as fee
     - Multi-freelancer jobs split payment equally, then apply level percentage
     - Transaction records created for all charges and refunds (escrow_lock, refund types)

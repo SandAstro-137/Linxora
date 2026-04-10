@@ -157,6 +157,7 @@ export interface IStorage {
   markNotificationAsRead(id: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
   deleteNotification(id: string): Promise<void>;
+  deleteAllNotifications(userId: string): Promise<void>;
 
   // User Preferences operations
   getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
@@ -914,6 +915,14 @@ export class MemStorage implements IStorage {
     this.notifications.delete(id);
   }
 
+  async deleteAllNotifications(userId: string): Promise<void> {
+    for (const [id, notif] of this.notifications.entries()) {
+      if (notif.userId === userId) {
+        this.notifications.delete(id);
+      }
+    }
+  }
+
   // User Preferences operations
   async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
     return Array.from(this.userPreferences.values()).find((p) => p.userId === userId);
@@ -1396,9 +1405,15 @@ export class MemStorage implements IStorage {
   }
 
   async getJobRequestByJobAndFreelancer(jobId: string, freelancerId: string): Promise<JobRequest | undefined> {
-    return Array.from(this.jobRequests.values()).find(
+    const matches = Array.from(this.jobRequests.values()).filter(
       (r) => r.jobId === jobId && r.freelancerId === freelancerId
     );
+    if (matches.length === 0) return undefined;
+    // Prefer the pending request if one exists (handles re-apply after withdraw)
+    const pending = matches.find(r => r.status === "pending");
+    if (pending) return pending;
+    // Otherwise return the most recently created
+    return matches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
   }
 
   async createJobRequest(insertRequest: InsertJobRequest): Promise<JobRequest> {

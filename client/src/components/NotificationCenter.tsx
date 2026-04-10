@@ -80,6 +80,14 @@ export function NotificationCenter() {
     },
   });
 
+  const clearAllMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", "/api/notifications", {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    },
+  });
+
   const deleteNotificationMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/notifications/${id}`, {}),
     onSuccess: () => {
@@ -337,20 +345,34 @@ export function NotificationCenter() {
         </PopoverTrigger>
         <PopoverContent className="w-96 p-0" align="end" data-testid="panel-notifications">
           <div className="p-4 border-b">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-lg font-semibold" data-testid="text-notifications-title">
                 Notifications
               </h3>
-              {unreadCount > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => markAllAsReadMutation.mutate()}
-                  data-testid="button-mark-all-read"
-                >
-                  Mark all read
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                {unreadCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => markAllAsReadMutation.mutate()}
+                    disabled={markAllAsReadMutation.isPending}
+                    data-testid="button-mark-all-read"
+                  >
+                    Mark all read
+                  </Button>
+                )}
+                {notifications.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => clearAllMutation.mutate()}
+                    disabled={clearAllMutation.isPending}
+                    data-testid="button-clear-all-notifications"
+                  >
+                    Clear all
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 

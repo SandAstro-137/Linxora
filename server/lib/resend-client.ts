@@ -44,10 +44,11 @@ export async function getResendClient() {
 export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
   const { client, fromEmail } = await getResendClient();
   
-  // Get the app URL from environment or construct from request
-  const appUrl = process.env.REPLIT_DEV_DOMAIN 
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : process.env.REPLIT_DEPLOYMENT_URL || 'http://localhost:5000';
+  // Get the app URL - use custom domain in production, dev domain in development
+  const appUrl = process.env.APP_BASE_URL
+    || (process.env.REPLIT_DEPLOYMENT_URL ? 'https://linxora.co' : null)
+    || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : null)
+    || 'http://localhost:5000';
   
   const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
   

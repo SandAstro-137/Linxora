@@ -535,15 +535,19 @@ function PublicTeamViewer({ job, isCustomer }: { job: EnrichedJob; isCustomer?: 
                 data-testid="team-lead-member"
               >
                 <div className="flex items-center gap-3">
-                  <Avatar className="h-10 w-10">
-                    <AvatarImage src={leadFreelancer.avatar || undefined} />
-                    <AvatarFallback>
-                      {leadFreelancer.username.charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
+                  <RouterLink href={`/user/${leadFreelancer.id}`}>
+                    <Avatar className="h-10 w-10 cursor-pointer">
+                      <AvatarImage src={leadFreelancer.avatar || undefined} />
+                      <AvatarFallback>
+                        {leadFreelancer.username.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  </RouterLink>
                   <div>
-                    <p className="font-medium">{leadFreelancer.username}</p>
-                    <Badge variant="secondary" className="text-xs">Lead Freelancer</Badge>
+                    <RouterLink href={`/user/${leadFreelancer.id}`} className="font-medium hover:underline">
+                      {leadFreelancer.username}
+                    </RouterLink>
+                    <div><Badge variant="secondary" className="text-xs">Lead Freelancer</Badge></div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -577,14 +581,18 @@ function PublicTeamViewer({ job, isCustomer }: { job: EnrichedJob; isCustomer?: 
                   data-testid={`team-collaborator-${index}`}
                 >
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10">
-                      <AvatarImage src={collaborator.avatar || undefined} />
-                      <AvatarFallback>
-                        {collaborator.username.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
+                    <RouterLink href={`/user/${collaborator.id}`}>
+                      <Avatar className="h-10 w-10 cursor-pointer">
+                        <AvatarImage src={collaborator.avatar || undefined} />
+                        <AvatarFallback>
+                          {collaborator.username.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                    </RouterLink>
                     <div>
-                      <p className="font-medium">{collaborator.username}</p>
+                      <RouterLink href={`/user/${collaborator.id}`} className="font-medium hover:underline">
+                        {collaborator.username}
+                      </RouterLink>
                       {collaborator.specialization && (
                         <p className="text-sm text-muted-foreground">
                           {collaborator.specialization}
@@ -842,19 +850,27 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Input
-              placeholder="Task title..."
-              value={newTaskTitle}
-              onChange={(e) => setNewTaskTitle(e.target.value)}
-              data-testid="input-new-task-title"
-            />
-            <Textarea
-              placeholder="Task description (optional)..."
-              value={newTaskDesc}
-              onChange={(e) => setNewTaskDesc(e.target.value)}
-              className="min-h-20"
-              data-testid="textarea-new-task-desc"
-            />
+            <div className="space-y-1">
+              <Input
+                placeholder="Task title..."
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value.slice(0, 30))}
+                maxLength={30}
+                data-testid="input-new-task-title"
+              />
+              <p className="text-xs text-muted-foreground text-right">{newTaskTitle.length}/30</p>
+            </div>
+            <div className="space-y-1">
+              <Textarea
+                placeholder="Task description (optional)..."
+                value={newTaskDesc}
+                onChange={(e) => setNewTaskDesc(e.target.value.slice(0, 55))}
+                maxLength={55}
+                className="min-h-20"
+                data-testid="textarea-new-task-desc"
+              />
+              <p className="text-xs text-muted-foreground text-right">{newTaskDesc.length}/55</p>
+            </div>
             <Button
               onClick={() => createTaskMutation.mutate()}
               disabled={!newTaskTitle.trim() || createTaskMutation.isPending}

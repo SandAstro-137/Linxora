@@ -142,9 +142,8 @@ const freelancerSteps: OnboardingStep[] = [
         <p>Set up your profile:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Go to Profile to set your working hours</li>
-          <li>Your level (1-5) determines payout percentage: Level 1 = 60%, Level 5 = 85%</li>
+          <li>Your level (1-5) determines payout percentage: Level 1 = 60%, Level 2 = 70%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%</li>
           <li>Level up by completing more jobs successfully</li>
-          <li>Request PTO when you need time off</li>
         </ul>
       </div>
     ),

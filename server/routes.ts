@@ -4399,8 +4399,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all pending PTO requests for moderators
-  app.get("/api/pto/pending", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+  // Get all pending PTO requests for head of moderation and founder only
+  app.get("/api/pto/pending", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const allRequests = await storage.getAllPTORequests();
       const pendingRequests = allRequests.filter(r => r.status === "pending");
@@ -4421,8 +4421,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Approve PTO request
-  app.post("/api/pto/:id/approve", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+  // Approve PTO request - head of moderation and founder only
+  app.post("/api/pto/:id/approve", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const request = await storage.updatePTORequest(req.params.id, { status: "approved" });
       if (!request) {
@@ -4446,8 +4446,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Reject PTO request
-  app.post("/api/pto/:id/reject", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+  // Reject PTO request - head of moderation and founder only
+  app.post("/api/pto/:id/reject", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const request = await storage.updatePTORequest(req.params.id, { status: "rejected" });
       if (!request) {
@@ -4471,7 +4471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/pto", requireAuth, async (req, res) => {
+  app.post("/api/pto", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const validated = insertPTORequestSchema.parse(req.body);
       const user = await storage.getUser(req.session.userId!);
@@ -4479,7 +4479,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate PTO constraints
       const startDate = new Date(validated.startDate);
       const endDate = new Date(validated.endDate);
-      const now = new Date();
       
       // End date must be on or after start date (allow same-day PTO)
       if (endDate < startDate) {
@@ -4504,17 +4503,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         freelancerId: req.session.userId!,
       });
 
-      // Get all admins and moderators
+      // Notify head of moderation and founder only
       const allUsers = await storage.getUsers();
-      const admins = allUsers.filter(u => u.role === "staff" || u.role === "moderator");
+      const reviewers = allUsers.filter(u => u.role === "head_of_moderation" || u.role === "founder");
 
-      // Send notification to each admin/moderator
-      for (const admin of admins) {
+      for (const reviewer of reviewers) {
         await storage.createNotification({
-          userId: admin.id,
+          userId: reviewer.id,
           type: "pto_request",
-          title: "New PTO Request",
-          message: `${user?.username || "A freelancer"} has requested PTO from ${validated.startDate} to ${validated.endDate}`,
+          title: "New Moderator PTO Request",
+          message: `${user?.username || "A moderator"} has requested PTO from ${validated.startDate} to ${validated.endDate}`,
           relatedId: request.id,
           sourceType: "system",
           sourceId: request.id,
@@ -5437,6 +5435,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/notifications/:id", requireAuth, async (req, res) => {
     try {
       await storage.deleteNotification(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Clear all notifications for the authenticated user
+  app.delete("/api/notifications", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteAllNotifications(req.session.userId!);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });

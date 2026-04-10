@@ -24,7 +24,6 @@ function RolePreviewDialog({ targetRole }: { targetRole: "freelancer" | "moderat
     { icon: <Star className="w-5 h-5 text-yellow-500" />, title: "Profile & Reviews", description: "Build your reputation with ratings and reviews from completed jobs" },
     { icon: <Users className="w-5 h-5 text-blue-500" />, title: "Team Collaboration", description: "Work with other freelancers on team jobs with automatic profit splitting" },
     { icon: <MessageSquare className="w-5 h-5 text-purple-500" />, title: "Direct Messaging", description: "Communicate directly with customers and team members" },
-    { icon: <ClipboardList className="w-5 h-5 text-orange-500" />, title: "PTO Management", description: "Request and manage paid time off" },
   ];
 
   const moderatorFeatures = [
@@ -33,7 +32,7 @@ function RolePreviewDialog({ targetRole }: { targetRole: "freelancer" | "moderat
     { icon: <FileText className="w-5 h-5 text-primary" />, title: "Report Review", description: "Handle user reports for jobs, messages, and users" },
     { icon: <ClipboardList className="w-5 h-5 text-orange-500" />, title: "Task Assignments", description: "Receive and complete tasks assigned by Head of Moderation" },
     { icon: <Star className="w-5 h-5 text-yellow-500" />, title: "Meeting Scheduling", description: "Get invited to team meetings and participate in moderation discussions" },
-    { icon: <DollarSign className="w-5 h-5 text-green-500" />, title: "Vault Access", description: "View the moderation vault and team fund allocations" },
+    { icon: <DollarSign className="w-5 h-5 text-green-500" />, title: "Paid Position", description: "You will be paid for the work you do from the moderation department's team vault" },
   ];
 
   const features = targetRole === "freelancer" ? freelancerFeatures : moderatorFeatures;
