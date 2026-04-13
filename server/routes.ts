@@ -468,10 +468,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { search, category, minBudget, maxBudget } = req.query;
       
-      // Get jobs available for freelancers to apply (pending_acceptance or legacy "active" status)
+      // Get jobs visible on the browse page (open jobs + claimed/in-progress for transparency)
       const allJobs = await storage.getJobs({});
       let jobs = allJobs.filter(j => 
-        j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active"
+        j.status === JobStatus.PENDING_ACCEPTANCE ||
+        j.status === JobStatus.CLAIMED ||
+        j.status === JobStatus.IN_PROGRESS ||
+        j.status === "active"
       );
       
       // Apply category filter
@@ -5395,7 +5398,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Notifications routes
   app.get("/api/notifications", requireAuth, async (req, res) => {
     try {
-      const notifications = await storage.getNotifications(req.session.userId!);
+      const includeAll = req.query.all === "true";
+      const notifications = await storage.getNotifications(req.session.userId!, includeAll);
       res.json(notifications);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -5445,6 +5449,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/notifications", requireAuth, async (req, res) => {
     try {
       await storage.deleteAllNotifications(req.session.userId!);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Dismiss a single notification from bell popover (hides from popover, keeps in log)
+  app.put("/api/notifications/:id/dismiss", requireAuth, async (req, res) => {
+    try {
+      await storage.dismissNotification(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Dismiss all notifications from bell popover (hides from popover, keeps in log)
+  app.put("/api/notifications/dismiss-all", requireAuth, async (req, res) => {
+    try {
+      await storage.dismissAllNotifications(req.session.userId!);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });

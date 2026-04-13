@@ -285,20 +285,32 @@ export default function CurrentJobPage() {
                 <>
                   <Separator />
                   <div>
-                    <h3 className="font-semibold mb-3">Your Earnings</h3>
-                    <div className="space-y-2">
-                      {enrichedJob.profitSplits.map((split) => (
-                        <div
-                          key={split.userId}
-                          className="flex items-center justify-between p-2 bg-muted rounded"
-                          data-testid={`profit-split-${split.userId}`}
-                        >
-                          <span className="font-medium">{split.username}</span>
-                          <span className="text-sm">
-                            ${Number(split.amount || 0).toFixed(2)} ({Number(split.percentage || 0).toFixed(0)}%)
-                          </span>
-                        </div>
-                      ))}
+                    <h3 className="font-semibold mb-1">Earnings Breakdown</h3>
+                    <p className="text-xs text-muted-foreground mb-3">Estimated payout per team member</p>
+                    <div className="space-y-3">
+                      {enrichedJob.profitSplits.map((split) => {
+                        const pct = Number(split.percentage || 0);
+                        return (
+                          <div
+                            key={split.userId}
+                            className="space-y-1"
+                            data-testid={`profit-split-${split.userId}`}
+                          >
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="font-medium">{split.username}</span>
+                              <span className="text-muted-foreground">
+                                ${Number(split.amount || 0).toFixed(2)} <span className="text-xs">({pct.toFixed(0)}%)</span>
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary"
+                                style={{ width: `${Math.min(pct, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </>

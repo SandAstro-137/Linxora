@@ -510,7 +510,7 @@ export default function ModerationPage() {
               </Badge>
             )}
           </TabsTrigger>
-          {(user?.role === "head_of_moderation" || user?.role === "founder") && (
+          {(currentUser?.role === "head_of_moderation" || currentUser?.role === "founder") && (
             <TabsTrigger value="pto" data-testid="tab-pto">
               <Calendar className="w-4 h-4 mr-1" />
               PTO Requests
@@ -963,7 +963,7 @@ export default function ModerationPage() {
           )}
         </TabsContent>
 
-        {(user?.role === "head_of_moderation" || user?.role === "founder") && (
+        {(currentUser?.role === "head_of_moderation" || currentUser?.role === "founder") && (
         <TabsContent value="pto">
           {ptoLoading ? (
             <div className="space-y-4">

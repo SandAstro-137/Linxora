@@ -451,11 +451,13 @@ export const notifications = pgTable("notifications", {
   sourceId: varchar("source_id"),
   redirectUrl: text("redirect_url"),
   read: boolean("read").default(false),
+  dismissed: boolean("dismissed").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertNotificationSchema = createInsertSchema(notifications).omit({
   id: true,
+  dismissed: true,
   createdAt: true,
 });
 

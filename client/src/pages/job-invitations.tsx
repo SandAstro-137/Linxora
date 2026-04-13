@@ -231,14 +231,16 @@ export default function JobInvitationsPage() {
                     <p className="text-sm font-medium mb-2">Current Team Members:</p>
                     <div className="flex flex-wrap gap-2">
                       {invitation.teamMembers.map((member) => (
-                        <div key={member.id} className="flex items-center gap-2 bg-background p-2 rounded-md border">
-                          <Avatar className="h-6 w-6">
-                            <AvatarImage src={member.avatar || undefined} />
-                            <AvatarFallback className="text-xs">{member.username.charAt(0).toUpperCase()}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-sm">{member.username}</span>
-                          <Badge variant="outline" className="text-xs">Lvl {member.level}</Badge>
-                        </div>
+                        <Link key={member.id} href={`/user/${member.id}`} onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2 bg-background p-2 rounded-md border hover-elevate cursor-pointer">
+                            <Avatar className="h-6 w-6">
+                              <AvatarImage src={member.avatar || undefined} />
+                              <AvatarFallback className="text-xs">{member.username.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm">{member.username}</span>
+                            <Badge variant="outline" className="text-xs">Lvl {member.level}</Badge>
+                          </div>
+                        </Link>
                       ))}
                     </div>
                   </div>

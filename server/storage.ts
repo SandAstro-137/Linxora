@@ -151,13 +151,15 @@ export interface IStorage {
   markDirectMessagesAsRead(senderId: string, receiverId: string): Promise<void>;
 
   // Notification operations
-  getNotifications(userId: string): Promise<Notification[]>;
+  getNotifications(userId: string, includeAll?: boolean): Promise<Notification[]>;
   getUnreadNotificationCount(userId: string): Promise<number>;
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationAsRead(id: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
   deleteNotification(id: string): Promise<void>;
   deleteAllNotifications(userId: string): Promise<void>;
+  dismissNotification(id: string): Promise<void>;
+  dismissAllNotifications(userId: string): Promise<void>;
 
   // User Preferences operations
   getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
@@ -866,9 +868,9 @@ export class MemStorage implements IStorage {
   }
 
   // Notification operations
-  async getNotifications(userId: string): Promise<Notification[]> {
+  async getNotifications(userId: string, includeAll = false): Promise<Notification[]> {
     return Array.from(this.notifications.values())
-      .filter((notif) => notif.userId === userId)
+      .filter((notif) => notif.userId === userId && (includeAll || !notif.dismissed))
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
@@ -885,6 +887,7 @@ export class MemStorage implements IStorage {
       id,
       relatedId: insertNotification.relatedId ?? null,
       read: insertNotification.read ?? false,
+      dismissed: false,
       sourceType: insertNotification.sourceType ?? null,
       sourceId: insertNotification.sourceId ?? null,
       redirectUrl: insertNotification.redirectUrl ?? null,
@@ -919,6 +922,21 @@ export class MemStorage implements IStorage {
     for (const [id, notif] of this.notifications.entries()) {
       if (notif.userId === userId) {
         this.notifications.delete(id);
+      }
+    }
+  }
+
+  async dismissNotification(id: string): Promise<void> {
+    const notification = this.notifications.get(id);
+    if (notification) {
+      this.notifications.set(id, { ...notification, dismissed: true, read: true });
+    }
+  }
+
+  async dismissAllNotifications(userId: string): Promise<void> {
+    for (const [id, notif] of this.notifications.entries()) {
+      if (notif.userId === userId && !notif.dismissed) {
+        this.notifications.set(id, { ...notif, dismissed: true, read: true });
       }
     }
   }

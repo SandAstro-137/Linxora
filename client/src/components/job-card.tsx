@@ -21,6 +21,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
       case "pending":
         return "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400";
       case "active":
+      case "pending_acceptance":
         return "bg-green-500/10 text-green-700 dark:text-green-400";
       case "claimed":
         return "bg-blue-500/10 text-blue-700 dark:text-blue-400";
@@ -30,6 +31,28 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
         return "bg-gray-500/10 text-gray-700 dark:text-gray-400";
       default:
         return "bg-gray-500/10 text-gray-700 dark:text-gray-400";
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "pending_acceptance":
+      case "active":
+        return "Open";
+      case "claimed":
+        return "Filled";
+      case "in_progress":
+        return "In Progress";
+      case "pending":
+        return "Pending";
+      case "completed":
+        return "Completed";
+      case "cancelled":
+        return "Cancelled";
+      case "dispute":
+        return "Dispute";
+      default:
+        return status;
     }
   };
 
@@ -49,7 +72,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
             </h3>
           </div>
           <Badge className={getStatusColor(job.status)} variant="secondary">
-            {job.status}
+            {getStatusLabel(job.status)}
           </Badge>
         </div>
         <Badge variant="outline" className="w-fit">

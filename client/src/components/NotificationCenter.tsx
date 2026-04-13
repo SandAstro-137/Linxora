@@ -81,7 +81,7 @@ export function NotificationCenter() {
   });
 
   const clearAllMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", "/api/notifications", {}),
+    mutationFn: () => apiRequest("PUT", "/api/notifications/dismiss-all", {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
@@ -89,7 +89,7 @@ export function NotificationCenter() {
   });
 
   const deleteNotificationMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/notifications/${id}`, {}),
+    mutationFn: (id: string) => apiRequest("PUT", `/api/notifications/${id}/dismiss`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
@@ -460,9 +460,9 @@ export function NotificationCenter() {
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Notification?</AlertDialogTitle>
+            <AlertDialogTitle>Dismiss Notification?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this notification? This action cannot be undone.
+              This will hide the notification from your bell. It will still be visible in your Notifications log.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex items-center space-x-2 py-2">
@@ -480,10 +480,9 @@ export function NotificationCenter() {
             <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               data-testid="button-confirm-delete"
             >
-              Delete
+              Dismiss
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

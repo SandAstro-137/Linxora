@@ -18,13 +18,14 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
 **Technical Implementations & Feature Specifications:**
 - **Authentication:** Discord OAuth for user authentication with role-based access control (Freelancer, Customer, Staff, Moderator).
 - **Job Board:**
-    - Browse and search approved jobs.
+    - Browse and search approved jobs. Browse page now includes `claimed` (Filled) and `in_progress` (In Progress) jobs for transparency — status badges clearly indicate availability. Only "Open" (pending_acceptance) jobs allow new applications.
     - Detailed job view with client information and requirements.
     - **Job Application Queue System:** Freelancers apply to jobs (max 5 pending applications). Customers review applicants, accepting or rejecting each. Upon acceptance, other pending applications are automatically cancelled.
     - Automated equal profit splitting among team members.
     - Customers can create job posts, subject to moderator approval.
     - Moderation queue for staff to approve, reject, or request changes to jobs, with customer notification and re-submission flow.
     - **My Applications Page:** Freelancers can view and manage their pending job applications (/my-applications), including withdrawing applications.
+    - **Earnings Breakdown:** In current-job.tsx, the "Your Earnings" section renamed to "Earnings Breakdown" with visual progress bars labeled by each team member's username.
 - **Wallet:**
     - Simple USD-based balance tracking.
     - Deposit and withdrawal functionality for testing.
@@ -45,7 +46,7 @@ The platform is built with a React frontend, an Express Node.js backend, and Mon
     - Content filtering and moderation on chat messages
     - Role badges and user status display
 - **Discord Integration:** Role synchronization, team collaboration notifications, and automatic posting of approved jobs via webhooks.
-- **Notification Center:** Comprehensive notification infrastructure with a bell icon, unread badge, and categorized alerts for messages, approvals, and system events.
+- **Notification Center:** Comprehensive notification infrastructure with a bell icon, unread badge, and categorized alerts for messages, approvals, and system events. Bell popover and Notifications log page are now separated: "Clear all" and individual X buttons in the bell DISMISS (hide) notifications from the bell without deleting them from the log. The Notifications page (`/notifications`) shows ALL notifications including dismissed ones (shown with "Cleared" badge and dimmed styling), acting as a permanent history log. "Mark all read" button is available separately on the log page. New routes: `PUT /api/notifications/:id/dismiss` and `PUT /api/notifications/dismiss-all`. Schema has a `dismissed` boolean field.
 - **Onboarding System:** Multi-step role-specific onboarding wizard for new users.
 - **Team Collaboration Suite:** Secure API endpoints for team notes, tasks, and real-time chat within job details.
 - **Smart Search System:** Levenshtein distance fuzzy matching, synonym expansion, and budget range filtering.

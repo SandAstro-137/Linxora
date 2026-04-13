@@ -2,7 +2,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Users, Briefcase } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Bell, Users, Briefcase, CheckCheck } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -12,6 +13,7 @@ interface Notification {
   title?: string;
   message: string;
   read: boolean;
+  dismissed?: boolean;
   createdAt: string;
   sourceType?: string | null;
   sourceId?: string | null;
@@ -24,13 +26,26 @@ export default function NotificationsPage() {
   const [, setLocation] = useLocation();
   
   const { data: notifications } = useQuery<Notification[]>({
-    queryKey: ["/api/notifications"],
+    queryKey: ["/api/notifications/log"],
+    queryFn: async () => {
+      const res = await fetch("/api/notifications?all=true", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
   });
 
   const markAsReadMutation = useMutation({
     mutationFn: (id: string) => apiRequest("PUT", `/api/notifications/${id}/read`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/log"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    },
+  });
+
+  const markAllAsReadMutation = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/notifications/mark-all-read", {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/log"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
     },
   });
@@ -173,12 +188,26 @@ export default function NotificationsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Recent Activity</span>
+          <CardTitle className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span>Notification Log</span>
+              {notifications && notifications.filter((n) => !n.read).length > 0 && (
+                <Badge variant="secondary">
+                  {notifications.filter((n) => !n.read).length} unread
+                </Badge>
+              )}
+            </div>
             {notifications && notifications.filter((n) => !n.read).length > 0 && (
-              <Badge variant="secondary">
-                {notifications.filter((n) => !n.read).length} new
-              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => markAllAsReadMutation.mutate()}
+                disabled={markAllAsReadMutation.isPending}
+                data-testid="button-mark-all-read-log"
+              >
+                <CheckCheck className="w-4 h-4 mr-2" />
+                Mark all read
+              </Button>
             )}
           </CardTitle>
         </CardHeader>
@@ -189,8 +218,8 @@ export default function NotificationsPage() {
                 <Card
                   key={notification.id}
                   className={`border transition-colors cursor-pointer hover-elevate active-elevate-2 ${
-                    !notification.read ? "bg-accent/5" : ""
-                  }`}
+                    !notification.read && !notification.dismissed ? "bg-accent/5" : ""
+                  } ${notification.dismissed ? "opacity-60" : ""}`}
                   onClick={() => handleNotificationClick(notification)}
                   data-testid={`notification-${notification.id}`}
                 >
@@ -210,11 +239,18 @@ export default function NotificationsPage() {
                           })}
                         </p>
                       </div>
-                      {!notification.read && (
-                        <Badge variant="secondary" className="h-fit">
-                          New
-                        </Badge>
-                      )}
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {!notification.read && !notification.dismissed && (
+                          <Badge variant="secondary" className="h-fit">
+                            New
+                          </Badge>
+                        )}
+                        {notification.dismissed && (
+                          <Badge variant="outline" className="h-fit text-xs text-muted-foreground">
+                            Cleared
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
