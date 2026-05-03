@@ -762,6 +762,32 @@ export default function SettingsPage() {
               data-testid="switch-delete-confirmation"
             />
           </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="team-request-notifications">Team Request Notifications</Label>
+              <p className="text-sm text-muted-foreground">Receive notifications when someone requests to join your team</p>
+            </div>
+            <Switch
+              id="team-request-notifications"
+              checked={settings?.teamRequestNotificationsEnabled ?? true}
+              onCheckedChange={(checked) => toggleSetting("teamRequestNotificationsEnabled", checked)}
+              data-testid="switch-team-request-notifications"
+            />
+          </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="spam-filter">Spam Filter</Label>
+              <p className="text-sm text-muted-foreground">Automatically move job application notifications to your Spam tab</p>
+            </div>
+            <Switch
+              id="spam-filter"
+              checked={settings?.spamFilterEnabled ?? false}
+              onCheckedChange={(checked) => toggleSetting("spamFilterEnabled", checked)}
+              data-testid="switch-spam-filter"
+            />
+          </div>
         </CardContent>
       </Card>
 

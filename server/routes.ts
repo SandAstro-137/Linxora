@@ -1050,16 +1050,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: req.body.message || null,
       });
 
-      // Create notification for customer
-      await storage.createNotification({
-        userId: job.customerId,
-        type: "job_request",
-        title: "New job application",
-        message: `${user.username} has applied to work on your job: ${job.title}`,
-        relatedId: job.id,
-        sourceType: "job",
-        sourceId: job.id,
-      });
+      // Create notification for customer (if they have team request notifications enabled)
+      const customerPrefs = await storage.getUserPreferences(job.customerId);
+      const teamRequestEnabled = customerPrefs?.teamRequestNotificationsEnabled ?? true;
+      if (teamRequestEnabled) {
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "job_request",
+          title: "New job application",
+          message: `${user.username} has applied to work on your job: ${job.title}`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
 
       res.json({ success: true, request: jobRequest });
     } catch (error) {

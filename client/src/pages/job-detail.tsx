@@ -864,12 +864,12 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
               <Textarea
                 placeholder="Task description (optional)..."
                 value={newTaskDesc}
-                onChange={(e) => setNewTaskDesc(e.target.value.slice(0, 55))}
-                maxLength={55}
-                className="min-h-20"
+                onChange={(e) => setNewTaskDesc(e.target.value.slice(0, 300))}
+                maxLength={300}
+                className="min-h-20 whitespace-pre-wrap break-words"
                 data-testid="textarea-new-task-desc"
               />
-              <p className="text-xs text-muted-foreground text-right">{newTaskDesc.length}/55</p>
+              <p className="text-xs text-muted-foreground text-right">{newTaskDesc.length}/300</p>
             </div>
             <Button
               onClick={() => createTaskMutation.mutate()}
@@ -932,7 +932,7 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                       {task.title}
                     </p>
                     {task.description && (
-                      <p className="text-sm text-muted-foreground mt-1">
+                      <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">
                         {task.description}
                       </p>
                     )}
@@ -1218,7 +1218,7 @@ export default function JobDetailPage() {
   });
 
   const rejectWorkMutation = useMutation({
-    mutationFn: (feedback: string) => apiRequest("POST", `/api/jobs/${jobId}/reject-work`, { feedback }),
+    mutationFn: (feedback: string) => apiRequest("POST", `/api/jobs/${jobId}/reject-work`, { reason: feedback }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "submissions"] });
@@ -1606,14 +1606,18 @@ export default function JobDetailPage() {
                             data-testid={`team-member-${index}`}
                           >
                             <div className="flex items-center gap-3">
-                              <Avatar className="h-10 w-10">
-                                <AvatarImage src={collaborator.avatar || undefined} />
-                                <AvatarFallback>
-                                  {collaborator.username.charAt(0).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
+                              <RouterLink href={`/user/${collaborator.id}`}>
+                                <Avatar className="h-10 w-10 cursor-pointer">
+                                  <AvatarImage src={collaborator.avatar || undefined} />
+                                  <AvatarFallback>
+                                    {collaborator.username.charAt(0).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                              </RouterLink>
                               <div>
-                                <p className="font-medium">{collaborator.username}</p>
+                                <RouterLink href={`/user/${collaborator.id}`} className="font-medium hover:underline">
+                                  {collaborator.username}
+                                </RouterLink>
                                 {collaborator.specialization && (
                                   <p className="text-sm text-muted-foreground">
                                     {collaborator.specialization}
@@ -1643,6 +1647,9 @@ export default function JobDetailPage() {
 
             <TabsContent value="team" className="space-y-6 mt-6">
               <PublicTeamViewer job={job} isCustomer={isCustomer} />
+              {isCustomer && (
+                <JobRequestsViewer jobId={jobId!} isJobOwner={true} />
+              )}
             </TabsContent>
 
             {canAccessWorkspace && (

@@ -28,6 +28,12 @@ import { useAuth } from "@/lib/auth-context";
 import type { Notification, UserPreferences } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
+const SPAM_TYPES = ["job_request"];
+
+function isSpamNotification(n: Notification, spamFilterEnabled: boolean): boolean {
+  return spamFilterEnabled && SPAM_TYPES.includes(n.type);
+}
+
 export function NotificationCenter() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
@@ -103,16 +109,25 @@ export function NotificationCenter() {
     },
   });
 
-  const unreadCount = unreadData?.count ?? 0;
-  const showDeleteConfirmation = settings?.deleteConfirmationEnabled ?? true;
+  const spamFilterEnabled = settings?.spamFilterEnabled ?? false;
 
-  const messageNotifications = notifications.filter((n) => n.type === "chat_message");
-  const approvalNotifications = notifications.filter((n) =>
+  // Partition notifications
+  const spamNotifications = notifications.filter((n) => isSpamNotification(n, spamFilterEnabled));
+  const activeNotifications = notifications.filter((n) => !isSpamNotification(n, spamFilterEnabled));
+
+  const messageNotifications = activeNotifications.filter((n) => n.type === "chat_message");
+  const approvalNotifications = activeNotifications.filter((n) =>
     ["job_approved", "job_rejected", "cancellation_request", "invitation"].includes(n.type)
   );
-  const systemNotifications = notifications.filter(
+  const systemNotifications = activeNotifications.filter(
     (n) => !["chat_message", "job_approved", "job_rejected", "cancellation_request", "invitation"].includes(n.type)
   );
+
+  // Unread count excludes spam
+  const unreadCount = (unreadData?.count ?? 0) - spamNotifications.filter((n) => !n.read).length;
+  const displayUnreadCount = Math.max(0, unreadCount);
+
+  const showDeleteConfirmation = settings?.deleteConfirmationEnabled ?? true;
 
   const handleNotificationClick = (notification: Notification) => {
     if (!notification.read) {
@@ -121,7 +136,6 @@ export function NotificationCenter() {
     
     setOpen(false);
     
-    // PRIMARY: Use server-provided redirectUrl if available (most reliable)
     if (notification.redirectUrl) {
       setLocation(notification.redirectUrl);
       return;
@@ -131,7 +145,6 @@ export function NotificationCenter() {
     const sourceType = notification.sourceType;
     const sourceId = notification.sourceId;
     
-    // Role upgrade notifications - check before switch
     if (notificationType === "role_upgrade") {
       const isStaff = user && ["moderator", "head_of_moderation", "founder"].includes(user.role);
       if (isStaff) {
@@ -142,14 +155,12 @@ export function NotificationCenter() {
       return;
     }
     
-    // Route based on notification type
     switch (notificationType) {
       case "invitation":
       case "recommendation_accepted":
       case "job_invitation":
         setLocation("/job-invitations");
         return;
-      
       case "job_recommendation":
         if (user?.role === "customer" && sourceId) {
           setLocation(`/jobs/${sourceId}`);
@@ -157,7 +168,6 @@ export function NotificationCenter() {
           setLocation("/incoming-recommendations");
         }
         return;
-      
       case "recommendation_declined":
       case "recommendation_success":
       case "invitation_accepted":
@@ -168,24 +178,19 @@ export function NotificationCenter() {
           setLocation("/current-job");
         }
         return;
-      
       case "friend_request":
       case "friend_accepted":
         setLocation("/friends");
         return;
-      
       case "moderation":
         setLocation("/moderation");
         return;
-      
       case "report":
         setLocation("/moderation?tab=reports");
         return;
-      
       case "forwarded_bug":
         setLocation("/moderation?tab=reports");
         return;
-      
       case "direct_message":
         if (sourceId) {
           setLocation(`/messages/${sourceId}`);
@@ -193,7 +198,6 @@ export function NotificationCenter() {
           setLocation("/messages");
         }
         return;
-      
       case "chat_message":
         if (sourceId) {
           setLocation(`/jobs/${sourceId}`);
@@ -203,26 +207,21 @@ export function NotificationCenter() {
           setLocation("/current-job");
         }
         return;
-      
       case "meeting_invitation":
       case "meeting_reminder":
       case "meeting_rsvp":
         setLocation("/meetings");
         return;
-      
       case "pto_request":
         setLocation("/moderation");
         return;
-      
       case "pto_approved":
       case "pto_rejected":
         setLocation("/pto");
         return;
-      
       case "dispute_opened":
         setLocation("/moderation?tab=disputes");
         return;
-      
       case "job_approved":
       case "job_rejected":
       case "job_request":
@@ -238,7 +237,6 @@ export function NotificationCenter() {
         return;
     }
     
-    // Fallback to sourceType-based routing
     if (sourceType && sourceId) {
       switch (sourceType) {
         case "job":
@@ -326,19 +324,21 @@ export function NotificationCenter() {
     </div>
   );
 
+  const tabCount = spamFilterEnabled ? 5 : 4;
+
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button variant="ghost" size="icon" className="relative" data-testid="button-notifications">
             <Bell className="h-5 w-5" />
-            {unreadCount > 0 && (
+            {displayUnreadCount > 0 && (
               <Badge
                 variant="destructive"
                 className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
                 data-testid="badge-unread-count"
               >
-                {unreadCount > 99 ? "99+" : unreadCount}
+                {displayUnreadCount > 99 ? "99+" : displayUnreadCount}
               </Badge>
             )}
           </Button>
@@ -350,7 +350,7 @@ export function NotificationCenter() {
                 Notifications
               </h3>
               <div className="flex items-center gap-1">
-                {unreadCount > 0 && (
+                {displayUnreadCount > 0 && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -361,7 +361,7 @@ export function NotificationCenter() {
                     Mark all read
                   </Button>
                 )}
-                {notifications.length > 0 && (
+                {activeNotifications.length > 0 && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -377,47 +377,61 @@ export function NotificationCenter() {
           </div>
 
           <Tabs defaultValue="all" className="w-full">
-            <TabsList className="w-full grid grid-cols-4 rounded-none border-b" data-testid="tabs-notifications">
-              <TabsTrigger value="all" data-testid="tab-all">
+            <TabsList
+              className={`w-full grid rounded-none border-b text-xs`}
+              style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}
+              data-testid="tabs-notifications"
+            >
+              <TabsTrigger value="all" className="text-xs px-1" data-testid="tab-all">
                 All
-                {unreadCount > 0 && (
-                  <Badge variant="secondary" className="ml-1" data-testid="badge-all-count">
-                    {unreadCount}
+                {displayUnreadCount > 0 && (
+                  <Badge variant="secondary" className="ml-1 text-[10px] px-1" data-testid="badge-all-count">
+                    {displayUnreadCount}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="messages" data-testid="tab-messages">
-                Messages
+              <TabsTrigger value="messages" className="text-xs px-1" data-testid="tab-messages">
+                Msgs
                 {messageNotifications.filter((n) => !n.read).length > 0 && (
-                  <Badge variant="secondary" className="ml-1" data-testid="badge-messages-count">
+                  <Badge variant="secondary" className="ml-1 text-[10px] px-1" data-testid="badge-messages-count">
                     {messageNotifications.filter((n) => !n.read).length}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="approvals" data-testid="tab-approvals">
-                Approvals
+              <TabsTrigger value="approvals" className="text-xs px-1" data-testid="tab-approvals">
+                Jobs
                 {approvalNotifications.filter((n) => !n.read).length > 0 && (
-                  <Badge variant="secondary" className="ml-1" data-testid="badge-approvals-count">
+                  <Badge variant="secondary" className="ml-1 text-[10px] px-1" data-testid="badge-approvals-count">
                     {approvalNotifications.filter((n) => !n.read).length}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="system" data-testid="tab-system">
+              <TabsTrigger value="system" className="text-xs px-1" data-testid="tab-system">
                 System
                 {systemNotifications.filter((n) => !n.read).length > 0 && (
-                  <Badge variant="secondary" className="ml-1" data-testid="badge-system-count">
+                  <Badge variant="secondary" className="ml-1 text-[10px] px-1" data-testid="badge-system-count">
                     {systemNotifications.filter((n) => !n.read).length}
                   </Badge>
                 )}
               </TabsTrigger>
+              {spamFilterEnabled && (
+                <TabsTrigger value="spam" className="text-xs px-1" data-testid="tab-spam">
+                  Spam
+                  {spamNotifications.filter((n) => !n.read).length > 0 && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1" data-testid="badge-spam-count">
+                      {spamNotifications.filter((n) => !n.read).length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <ScrollArea className="h-[400px]" data-testid="scroll-notifications">
               <TabsContent value="all" className="m-0">
-                {notifications.length === 0 ? (
+                {activeNotifications.length === 0 ? (
                   <EmptyState message="No notifications yet" />
                 ) : (
-                  notifications.map((notification) => (
+                  activeNotifications.map((notification) => (
                     <NotificationItem key={notification.id} notification={notification} />
                   ))
                 )}
@@ -435,7 +449,7 @@ export function NotificationCenter() {
 
               <TabsContent value="approvals" className="m-0">
                 {approvalNotifications.length === 0 ? (
-                  <EmptyState message="No approval notifications" />
+                  <EmptyState message="No job notifications" />
                 ) : (
                   approvalNotifications.map((notification) => (
                     <NotificationItem key={notification.id} notification={notification} />
@@ -452,6 +466,18 @@ export function NotificationCenter() {
                   ))
                 )}
               </TabsContent>
+
+              {spamFilterEnabled && (
+                <TabsContent value="spam" className="m-0">
+                  {spamNotifications.length === 0 ? (
+                    <EmptyState message="No spam notifications" />
+                  ) : (
+                    spamNotifications.map((notification) => (
+                      <NotificationItem key={notification.id} notification={notification} />
+                    ))
+                  )}
+                </TabsContent>
+              )}
             </ScrollArea>
           </Tabs>
         </PopoverContent>

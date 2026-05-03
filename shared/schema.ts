@@ -844,6 +844,9 @@ export const userPreferences = pgTable("user_preferences", {
   allowMessagesFromUnknown: boolean("allow_messages_from_unknown").default(true),
   // Email visibility: "none" | "friends" | "associates" | "all"
   emailVisibility: text("email_visibility").default("none"),
+  // Notification behavior
+  teamRequestNotificationsEnabled: boolean("team_request_notifications_enabled").default(true),
+  spamFilterEnabled: boolean("spam_filter_enabled").default(false),
   // Account status
   accountDeactivated: boolean("account_deactivated").default(false),
   deactivatedAt: timestamp("deactivated_at"),

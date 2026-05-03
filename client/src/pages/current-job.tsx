@@ -107,6 +107,15 @@ export default function CurrentJobPage() {
     },
   });
 
+  // Get pending join requests (visible to primary freelancer)
+  const isPrimaryFreelancer = currentJob && user && (currentJob as any).freelancerId === user.id;
+  const { data: joinRequests = [] } = useQuery<any[]>({
+    queryKey: ["/api/jobs", currentJob?.id, "requests"],
+    enabled: !!currentJob?.id && isPrimaryFreelancer,
+    refetchInterval: 15000,
+  });
+  const pendingJoinRequests = joinRequests.filter((r: any) => r.status === "pending");
+
   // Get team messages for freelancer-to-freelancer chat
   const { data: teamMessages = [] } = useQuery<TeamMessage[]>({
     queryKey: ["/api/jobs", currentJob?.id, "team-messages"],
@@ -297,7 +306,15 @@ export default function CurrentJobPage() {
                             data-testid={`profit-split-${split.userId}`}
                           >
                             <div className="flex items-center justify-between text-sm">
-                              <span className="font-medium">{split.username}</span>
+                              {(() => {
+                                const collab = enrichedJob.collaboratorData?.find(c => c.id === split.userId);
+                                const name = collab?.username || split.userId;
+                                return (
+                                  <Link href={`/user/${split.userId}`} className="font-medium hover:underline">
+                                    {name}
+                                  </Link>
+                                );
+                              })()}
                               <span className="text-muted-foreground">
                                 ${Number(split.amount || 0).toFixed(2)} <span className="text-xs">({pct.toFixed(0)}%)</span>
                               </span>
@@ -504,12 +521,16 @@ export default function CurrentJobPage() {
                       className="flex items-center gap-3"
                       data-testid={`team-member-${collab.id}`}
                     >
-                      <Avatar className="w-8 h-8">
-                        <AvatarImage src={collab.avatar || undefined} />
-                        <AvatarFallback>{collab.username[0].toUpperCase()}</AvatarFallback>
-                      </Avatar>
+                      <Link href={`/user/${collab.id}`}>
+                        <Avatar className="w-8 h-8 cursor-pointer">
+                          <AvatarImage src={collab.avatar || undefined} />
+                          <AvatarFallback>{collab.username[0].toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                      </Link>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{collab.username}</p>
+                        <Link href={`/user/${collab.id}`} className="text-sm font-medium hover:underline truncate block">
+                          {collab.username}
+                        </Link>
                         {collab.specialization && (
                           <p className="text-xs text-muted-foreground truncate">
                             {collab.specialization}
@@ -519,6 +540,48 @@ export default function CurrentJobPage() {
                     </div>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {isPrimaryFreelancer && pendingJoinRequests.length > 0 && (
+            <Card data-testid="card-join-requests">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  Team Join Requests
+                  <Badge variant="secondary">{pendingJoinRequests.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Manage join requests from your job page
+                </p>
+                <div className="space-y-3">
+                  {pendingJoinRequests.map((request: any) => (
+                    <div key={request.id} className="flex items-center gap-3" data-testid={`join-request-${request.id}`}>
+                      <Avatar className="w-8 h-8">
+                        <AvatarImage src={request.freelancer?.avatar || undefined} />
+                        <AvatarFallback>
+                          {request.freelancer?.username?.[0]?.toUpperCase() || "?"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {request.freelancer?.username || "Freelancer"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Level {request.freelancer?.level || 1} &middot; {request.freelancer?.completedJobs || 0} jobs
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Link href={`/jobs/${currentJob?.id}`}>
+                  <Button variant="outline" size="sm" className="w-full mt-3" data-testid="button-manage-requests">
+                    Manage Requests
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           )}
