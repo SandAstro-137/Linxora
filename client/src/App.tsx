@@ -100,6 +100,7 @@ import UserProfilePage from "@/pages/user-profile";
 import JobInvitationsPage from "@/pages/job-invitations";
 import IncomingRecommendationsPage from "@/pages/incoming-recommendations";
 import LinoPage from "@/pages/lino";
+import CalendarPage from "@/pages/calendar";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
@@ -278,6 +279,11 @@ function Router() {
       <Route path="/lino">
         <ProtectedRoute>
           <LinoPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/calendar">
+        <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
+          <CalendarPage />
         </ProtectedRoute>
       </Route>
       <Route path="/verify-email" component={VerifyEmailPage} />

@@ -1,4 +1,4 @@
-import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug, Bot, Flag } from "lucide-react";
+import { Home, Briefcase, Wallet, User, Shield, Clock, Bell, PlusCircle, ArrowUpCircle, Users, Crown, CalendarDays, Calendar, MessageCircle, MessageSquare, Settings, Vault, UserPlus, FileText, Mail, Gavel, Bug, Bot, Flag } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -67,6 +67,7 @@ export function AppSidebar() {
     { title: "Friends", url: "/friends", icon: UserPlus },
     { title: "Team Room", url: "/team-room", icon: MessageCircle },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
+    { title: "Calendar", url: "/calendar", icon: Calendar },
     { title: "My Disputes", url: "/my-disputes", icon: Gavel },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
@@ -86,6 +87,7 @@ export function AppSidebar() {
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "Team Vault", url: "/vault", icon: Vault },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
+    { title: "Calendar", url: "/calendar", icon: Calendar },
     { title: "PTO Requests", url: "/pto", icon: Clock },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "My Disputes", url: "/my-disputes", icon: Gavel },
@@ -106,6 +108,7 @@ export function AppSidebar() {
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "Team Vault", url: "/vault", icon: Vault },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
+    { title: "Calendar", url: "/calendar", icon: Calendar },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "My Disputes", url: "/my-disputes", icon: Gavel },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
