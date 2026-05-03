@@ -86,6 +86,7 @@ export function AppSidebar() {
     { title: "Team Management", url: "/team-management", icon: Users },
     { title: "Team Vault", url: "/vault", icon: Vault },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
+    { title: "PTO Requests", url: "/pto", icon: Clock },
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "My Disputes", url: "/my-disputes", icon: Gavel },
     { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },

@@ -3898,6 +3898,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all moderators/staff for vault recipient list and Manage Funds
+  app.get("/api/team/moderators", requireRole("head_of_moderation", "founder"), async (_req, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      const modTeam = allUsers.filter(u => u.role === "moderator" || u.role === "staff");
+      res.json(modTeam);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get all weekly incomes
+  app.get("/api/moderation/weekly-income", requireRole("head_of_moderation", "founder"), async (_req, res) => {
+    try {
+      const incomes = await storage.getAllModeratorWeeklyIncomes();
+      res.json(incomes);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Set weekly income for a moderator
+  app.put("/api/moderation/weekly-income/:moderatorId", requireRole("head_of_moderation"), async (req, res) => {
+    try {
+      const { weeklyAmount } = req.body;
+      const amount = parseFloat(weeklyAmount);
+      if (isNaN(amount) || amount < 0) {
+        return res.status(400).json({ error: "Invalid weekly amount" });
+      }
+      const moderator = await storage.getUser(req.params.moderatorId);
+      if (!moderator || !["moderator", "staff"].includes(moderator.role)) {
+        return res.status(404).json({ error: "Moderator not found" });
+      }
+      await storage.setModeratorWeeklyIncome(req.params.moderatorId, amount, req.session.userId!);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Friend routes
   app.get("/api/friends", requireAuth, async (req, res) => {
     try {

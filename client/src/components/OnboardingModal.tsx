@@ -34,7 +34,6 @@ const moderatorSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Reviewing and approving new job posts</li>
           <li>Handling cancellation requests with fairness</li>
-          <li>Reviewing PTO requests from freelancers</li>
           <li>Maintaining platform quality standards</li>
         </ul>
       </div>
@@ -76,11 +75,11 @@ const moderatorSteps: OnboardingStep[] = [
     description: "Manage freelancer paid time off requests.",
     content: (
       <div className="space-y-4">
-        <p>Freelancers submit PTO requests for time away:</p>
+        <p>Handling disputes properly:</p>
         <ul className="list-disc pl-6 space-y-2">
-          <li>Review the dates and reason</li>
-          <li>Approve or reject based on workload and timing</li>
-          <li>Freelancers are notified of your decision</li>
+          <li>Do not sway in favor of either side</li>
+          <li>Act as a neutral third party, you are the jury and judge, so do not abuse power</li>
+          <li>If they feel you are unfair and provide sufficient evidence, you may be let go</li>
         </ul>
       </div>
     ),

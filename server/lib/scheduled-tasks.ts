@@ -319,6 +319,86 @@ async function updateFreelancerStats(freelancerId: string, incrementCompleted: b
   });
 }
 
+// ── Weekly income payouts (every Sunday at 1:00 PM ET) ───────────────────────
+let lastWeeklyPayoutSunday: string | null = null;
+
+function getEasternDate(now: Date): Date {
+  return new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+}
+
+export async function checkWeeklyPayouts(): Promise<void> {
+  const etDate = getEasternDate(new Date());
+  // Sunday = 0, check for 1 PM (13:xx)
+  if (etDate.getDay() !== 0 || etDate.getHours() !== 13) return;
+
+  const sundayKey = etDate.toDateString();
+  if (lastWeeklyPayoutSunday === sundayKey) return;
+  lastWeeklyPayoutSunday = sundayKey;
+
+  await runWeeklyPayouts();
+}
+
+async function runWeeklyPayouts(): Promise<void> {
+  try {
+    const incomes = await storage.getAllModeratorWeeklyIncomes();
+    if (incomes.length === 0) return;
+
+    const vault = await storage.getModerationVault();
+    const vaultBalance = parseFloat(vault.balance || "0");
+    const totalNeeded = incomes.reduce((sum, i) => sum + i.weeklyAmount, 0);
+
+    if (totalNeeded <= 0) return;
+
+    if (vaultBalance < totalNeeded) {
+      console.warn(`[WeeklyPayouts] Insufficient vault balance ($${vaultBalance.toFixed(2)}) for total payouts ($${totalNeeded.toFixed(2)}). Skipping.`);
+      return;
+    }
+
+    for (const income of incomes) {
+      if (income.weeklyAmount <= 0) continue;
+      const moderator = await storage.getUser(income.moderatorId);
+      if (!moderator) continue;
+
+      try {
+        const transaction = await storage.distributeFromVault(
+          income.weeklyAmount,
+          income.moderatorId,
+          "system",
+          "Weekly income payout"
+        );
+
+        let wallet = await storage.getWallet(income.moderatorId);
+        if (!wallet) {
+          wallet = await storage.createWallet({
+            userId: income.moderatorId,
+            walletAddress: `0x${Math.random().toString(36).substring(2, 15)}`,
+          });
+        }
+        const currentBalance = parseFloat(wallet.usdtBalance || "0");
+        await storage.updateWallet(income.moderatorId, {
+          usdtBalance: (currentBalance + income.weeklyAmount).toFixed(8),
+        });
+
+        await storage.createNotification({
+          userId: income.moderatorId,
+          type: "vault_distribution",
+          title: "Weekly Income Received",
+          message: `Your weekly income of $${income.weeklyAmount.toFixed(2)} has been deposited to your wallet.`,
+          relatedId: transaction.id,
+          sourceType: "system",
+          sourceId: transaction.id,
+        });
+      } catch (err) {
+        console.error(`[WeeklyPayouts] Failed payout for ${income.moderatorId}:`, err);
+      }
+    }
+
+    console.log(`[WeeklyPayouts] Completed weekly payouts for ${incomes.length} moderator(s).`);
+  } catch (error) {
+    console.error("[WeeklyPayouts] Error running weekly payouts:", error);
+  }
+}
+
 let taskRunnerInterval: NodeJS.Timeout | null = null;
 
 export function startScheduledTaskRunner(intervalMs: number = 60000) {
@@ -329,9 +409,11 @@ export function startScheduledTaskRunner(intervalMs: number = 60000) {
   console.log(`Starting scheduled task runner (interval: ${intervalMs}ms)`);
 
   runScheduledTasks();
+  checkWeeklyPayouts();
 
   taskRunnerInterval = setInterval(() => {
     runScheduledTasks();
+    checkWeeklyPayouts();
   }, intervalMs);
 }
 

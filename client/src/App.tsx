@@ -191,7 +191,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/pto">
-        <ProtectedRoute allowedRoles={["freelancer"]}>
+        <ProtectedRoute allowedRoles={["freelancer", "moderator", "head_of_moderation", "founder", "staff"]}>
           <PTOPage />
         </ProtectedRoute>
       </Route>

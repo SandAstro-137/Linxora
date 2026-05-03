@@ -257,6 +257,11 @@ export interface IStorage {
   distributeFromVault(amount: number, toUserId: string, distributedByUserId: string, note?: string): Promise<VaultTransaction>;
   getVaultTransactions(limit?: number): Promise<VaultTransaction[]>;
 
+  // Weekly Income operations
+  getModeratorWeeklyIncome(moderatorId: string): Promise<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date } | undefined>;
+  getAllModeratorWeeklyIncomes(): Promise<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }[]>;
+  setModeratorWeeklyIncome(moderatorId: string, weeklyAmount: number, setById: string): Promise<void>;
+
   // Friend operations
   getFriends(userId: string): Promise<Friend[]>;
   getFriendRequest(id: string): Promise<FriendRequest | undefined>;
@@ -408,6 +413,7 @@ export class MemStorage implements IStorage {
   private groupChatMessagesMap: Map<string, GroupChatMessage>;
   private userFollowsMap: Map<string, UserFollow>;
   private userBlocksMap: Map<string, UserBlock>;
+  private weeklyIncomesMap: Map<string, { moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }>;
 
   constructor() {
     this.users = new Map();
@@ -455,6 +461,7 @@ export class MemStorage implements IStorage {
     this.groupChatMessagesMap = new Map();
     this.userFollowsMap = new Map();
     this.userBlocksMap = new Map();
+    this.weeklyIncomesMap = new Map();
   }
 
   // User operations
@@ -2135,6 +2142,19 @@ export class MemStorage implements IStorage {
 
   async getFollowingCount(userId: string): Promise<number> {
     return Array.from(this.userFollowsMap.values()).filter(f => f.followerId === userId).length;
+  }
+
+  // Weekly Income operations
+  async getModeratorWeeklyIncome(moderatorId: string): Promise<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date } | undefined> {
+    return this.weeklyIncomesMap.get(moderatorId);
+  }
+
+  async getAllModeratorWeeklyIncomes(): Promise<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }[]> {
+    return Array.from(this.weeklyIncomesMap.values());
+  }
+
+  async setModeratorWeeklyIncome(moderatorId: string, weeklyAmount: number, setById: string): Promise<void> {
+    this.weeklyIncomesMap.set(moderatorId, { moderatorId, weeklyAmount, setById, updatedAt: new Date() });
   }
 
   // Block operations

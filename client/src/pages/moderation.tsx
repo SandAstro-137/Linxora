@@ -1,11 +1,11 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Job, CancellationRequest, Report, PTORequest } from "@shared/schema";
+import { Job, CancellationRequest, Report, PTORequest, User as UserType } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History, DollarSign, Wallet } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -130,6 +130,29 @@ export default function ModerationPage() {
   const { data: allReports = [], isLoading: allReportsLoading } = useQuery<Report[]>({
     queryKey: ["/api/reports"],
     enabled: isModerationTeam,
+  });
+
+  const isHeadOfModeration = currentUser?.role === "head_of_moderation";
+  const { data: modTeam = [] } = useQuery<UserType[]>({
+    queryKey: ["/api/team/moderators"],
+    enabled: isLeadership,
+  });
+  const { data: weeklyIncomes = [] } = useQuery<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: string }[]>({
+    queryKey: ["/api/moderation/weekly-income"],
+    enabled: isLeadership,
+  });
+  const [incomeInputs, setIncomeInputs] = useState<Record<string, string>>({});
+
+  const setWeeklyIncomeMutation = useMutation({
+    mutationFn: ({ moderatorId, weeklyAmount }: { moderatorId: string; weeklyAmount: string }) =>
+      apiRequest("PUT", `/api/moderation/weekly-income/${moderatorId}`, { weeklyAmount }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/moderation/weekly-income"] });
+      toast({ title: "Weekly income updated", description: "The moderator's weekly income has been set." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update", description: error?.message || "Please try again.", variant: "destructive" });
+    },
   });
 
   const [reportSearchId, setReportSearchId] = useState("");
@@ -554,6 +577,12 @@ export default function ModerationPage() {
             <History className="w-4 h-4 mr-1" />
             Report History
           </TabsTrigger>
+          {isHeadOfModeration && (
+            <TabsTrigger value="manage-funds" data-testid="tab-manage-funds">
+              <DollarSign className="w-4 h-4 mr-1" />
+              Manage Funds
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="jobs">
@@ -1558,6 +1587,126 @@ export default function ModerationPage() {
             </div>
           </div>
         </TabsContent>
+
+        {isHeadOfModeration && (
+          <TabsContent value="manage-funds">
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <DollarSign className="w-5 h-5 text-green-500" />
+                    Weekly Income Settings
+                  </CardTitle>
+                  <CardDescription>
+                    Set how much each moderator earns per week. Payouts are sent automatically every Sunday at 1:00 PM ET from the team vault.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {modTeam.length === 0 ? (
+                    <p className="text-center py-8 text-muted-foreground">No moderators or staff found.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {modTeam.map((mod) => {
+                        const existing = weeklyIncomes.find(i => i.moderatorId === mod.id);
+                        const inputVal = incomeInputs[mod.id] ?? (existing ? String(existing.weeklyAmount) : "");
+                        return (
+                          <div
+                            key={mod.id}
+                            className="flex flex-wrap items-center gap-4 p-4 rounded-md bg-muted/40"
+                            data-testid={`row-weekly-income-${mod.id}`}
+                          >
+                            <Avatar className="h-9 w-9 shrink-0">
+                              <AvatarImage src={mod.avatar || undefined} />
+                              <AvatarFallback>{mod.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{mod.username}</p>
+                              <div className="flex items-center gap-1">
+                                <Badge variant="outline" className="text-xs">{mod.role}</Badge>
+                                {existing && (
+                                  <span className="text-xs text-muted-foreground ml-1">
+                                    Current: ${existing.weeklyAmount.toFixed(2)}/week
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  value={inputVal}
+                                  onChange={(e) => setIncomeInputs(prev => ({ ...prev, [mod.id]: e.target.value }))}
+                                  className="pl-7 w-32"
+                                  data-testid={`input-weekly-income-${mod.id}`}
+                                />
+                              </div>
+                              <Button
+                                size="sm"
+                                onClick={() => setWeeklyIncomeMutation.mutate({ moderatorId: mod.id, weeklyAmount: inputVal })}
+                                disabled={!inputVal || setWeeklyIncomeMutation.isPending}
+                                data-testid={`button-set-income-${mod.id}`}
+                              >
+                                Set
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-blue-500" />
+                    Payout Summary
+                  </CardTitle>
+                  <CardDescription>Overview of configured weekly payouts</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {weeklyIncomes.length === 0 ? (
+                    <p className="text-center py-4 text-muted-foreground">No weekly incomes configured yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {weeklyIncomes.map((income) => {
+                        const mod = modTeam.find(m => m.id === income.moderatorId);
+                        return (
+                          <div key={income.moderatorId} className="flex items-center justify-between p-3 rounded-md bg-muted/40" data-testid={`summary-income-${income.moderatorId}`}>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src={mod?.avatar || undefined} />
+                                <AvatarFallback>{(mod?.username || "??").slice(0, 2).toUpperCase()}</AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">{mod?.username || income.moderatorId}</span>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-green-600">${income.weeklyAmount.toFixed(2)}<span className="text-xs text-muted-foreground font-normal">/week</span></p>
+                              <p className="text-xs text-muted-foreground">
+                                ${(income.weeklyAmount * 4).toFixed(2)}/month est.
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="pt-2 border-t flex justify-between items-center">
+                        <span className="text-sm font-medium text-muted-foreground">Total weekly payout</span>
+                        <span className="font-bold">
+                          ${weeklyIncomes.reduce((sum, i) => sum + i.weeklyAmount, 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        )}
       </Tabs>
 
       <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
