@@ -22,7 +22,8 @@ Linxora is built with a React frontend, an Express Node.js backend, and MongoDB 
 - **Freelancer Management:** Freelancer profiles display completed jobs, statistics, a leveling system, ratings/reviews, and PTO request management.
 - **Moderation & Staff Tools:**
     - **Moderation Queue:** For approving/rejecting job posts and managing user reports.
-    - **Moderator PTO System:** Allows all moderation roles to submit and manage PTO requests.
+    - **Moderator PTO System:** Allows all moderation roles to submit and manage PTO requests. When approved, the PTO is automatically added to the shared Team Calendar as a distinct amber-colored entry visible to all moderation staff.
+    - **Team Calendar:** A shared calendar tab in the moderation panel (moderators, head_of_moderation, founder). Month-view grid with day-click event creation, color-coded chips (blue = team event, amber = PTO), monthly events list with deletion, and 30-second auto-refresh. PTO approvals auto-populate it. Backend: `CalendarEvent` stored in `calendarEventsMap` with `GET/POST/DELETE /api/calendar/events`.
     - **Manage Funds Tab (Head of Moderation):** Enables setting and automatic weekly distribution of income to moderators and staff from the platform's vault.
     - **Moderator Task System:** Head of Moderation/Founder can assign personal or team-based tasks to moderators with priority and status tracking.
     - **Meeting & Calendar System:** Head of Moderation/Founder can schedule meetings for moderators, including RSVP functionality and notification system.

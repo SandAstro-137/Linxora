@@ -3938,6 +3938,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Calendar Event routes - accessible to moderation team
+  const calendarRoles = ["moderator", "head_of_moderation", "founder"] as const;
+
+  app.get("/api/calendar/events", requireRole(...calendarRoles), async (_req, res) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/calendar/events", requireRole(...calendarRoles), async (req, res) => {
+    try {
+      const { title, description, startTime, endTime } = req.body;
+      if (!title || !startTime || !endTime) {
+        return res.status(400).json({ error: "title, startTime, and endTime are required" });
+      }
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: "Invalid date format" });
+      }
+      if (end <= start) {
+        return res.status(400).json({ error: "End time must be after start time" });
+      }
+      const event = await storage.createCalendarEvent({
+        title: title.trim(),
+        description: (description || "").trim(),
+        startTime: start,
+        endTime: end,
+        createdBy: req.session.userId!,
+        type: "event",
+      });
+      res.json(event);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/calendar/events/:id", requireRole(...calendarRoles), async (req, res) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      const event = events.find(e => e.id === req.params.id);
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const user = await storage.getUser(req.session.userId!);
+      const isCreator = event.createdBy === req.session.userId;
+      const isLeader = user && ["head_of_moderation", "founder"].includes(user.role);
+      if (!isCreator && !isLeader) {
+        return res.status(403).json({ error: "You can only delete your own events" });
+      }
+      await storage.deleteCalendarEvent(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Friend routes
   app.get("/api/friends", requireAuth, async (req, res) => {
     try {
@@ -4486,7 +4544,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceType: "system",
         sourceId: request.id,
       });
-      
+
+      // Auto-add PTO to shared calendar
+      const requester = await storage.getUser(request.freelancerId);
+      const ptoTitle = `PTO: ${requester?.username || "Team Member"}`;
+      await storage.createCalendarEvent({
+        title: ptoTitle,
+        description: request.reason || "Approved PTO",
+        startTime: new Date(request.startDate + "T00:00:00"),
+        endTime: new Date(request.endDate + "T23:59:59"),
+        createdBy: req.session.userId!,
+        type: "pto",
+        ptoRequestId: request.id,
+      });
+
       res.json(request);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });

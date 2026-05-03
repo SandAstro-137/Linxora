@@ -93,6 +93,18 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description: string;
+  startTime: Date;
+  endTime: Date;
+  createdBy: string;
+  type: "event" | "pto";
+  ptoRequestId?: string;
+  createdAt: Date;
+}
+
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -262,6 +274,12 @@ export interface IStorage {
   getAllModeratorWeeklyIncomes(): Promise<{ moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }[]>;
   setModeratorWeeklyIncome(moderatorId: string, weeklyAmount: number, setById: string): Promise<void>;
 
+  // Calendar Event operations
+  getCalendarEvents(): Promise<CalendarEvent[]>;
+  createCalendarEvent(event: Omit<CalendarEvent, 'id' | 'createdAt'>): Promise<CalendarEvent>;
+  updateCalendarEvent(id: string, updates: Partial<CalendarEvent>): Promise<CalendarEvent | undefined>;
+  deleteCalendarEvent(id: string): Promise<void>;
+
   // Friend operations
   getFriends(userId: string): Promise<Friend[]>;
   getFriendRequest(id: string): Promise<FriendRequest | undefined>;
@@ -414,6 +432,7 @@ export class MemStorage implements IStorage {
   private userFollowsMap: Map<string, UserFollow>;
   private userBlocksMap: Map<string, UserBlock>;
   private weeklyIncomesMap: Map<string, { moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }>;
+  private calendarEventsMap: Map<string, CalendarEvent>;
 
   constructor() {
     this.users = new Map();
@@ -462,6 +481,7 @@ export class MemStorage implements IStorage {
     this.userFollowsMap = new Map();
     this.userBlocksMap = new Map();
     this.weeklyIncomesMap = new Map();
+    this.calendarEventsMap = new Map();
   }
 
   // User operations
@@ -2186,6 +2206,31 @@ export class MemStorage implements IStorage {
 
   async getBlockedUsers(blockerId: string): Promise<UserBlock[]> {
     return Array.from(this.userBlocksMap.values()).filter(b => b.blockerId === blockerId);
+  }
+
+  async getCalendarEvents(): Promise<CalendarEvent[]> {
+    return Array.from(this.calendarEventsMap.values()).sort(
+      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+  }
+
+  async createCalendarEvent(event: Omit<CalendarEvent, 'id' | 'createdAt'>): Promise<CalendarEvent> {
+    const id = randomUUID();
+    const newEvent: CalendarEvent = { ...event, id, createdAt: new Date() };
+    this.calendarEventsMap.set(id, newEvent);
+    return newEvent;
+  }
+
+  async updateCalendarEvent(id: string, updates: Partial<CalendarEvent>): Promise<CalendarEvent | undefined> {
+    const event = this.calendarEventsMap.get(id);
+    if (!event) return undefined;
+    const updated = { ...event, ...updates };
+    this.calendarEventsMap.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarEvent(id: string): Promise<void> {
+    this.calendarEventsMap.delete(id);
   }
 }
 
