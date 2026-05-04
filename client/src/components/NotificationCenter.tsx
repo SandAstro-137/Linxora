@@ -210,7 +210,11 @@ export function NotificationCenter() {
       case "meeting_invitation":
       case "meeting_reminder":
       case "meeting_rsvp":
+      case "meeting_scheduled":
         setLocation("/meetings");
+        return;
+      case "meeting_exemption_request":
+        setLocation("/team-management?tab=exemptions");
         return;
       case "pto_request":
         setLocation("/moderation");

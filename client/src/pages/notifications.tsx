@@ -60,9 +60,8 @@ export default function NotificationsPage() {
 
   const spamFilterEnabled = settings?.spamFilterEnabled ?? false;
 
-  const allActive = (notifications || []).filter((n) => !n.dismissed && !SPAM_TYPES.includes(n.type));
+  const allActive = (notifications || []).filter((n) => !SPAM_TYPES.includes(n.type));
   const spamNotifications = (notifications || []).filter((n) => SPAM_TYPES.includes(n.type));
-  const clearedNotifications = (notifications || []).filter((n) => n.dismissed);
 
   const unreadActive = allActive.filter((n) => !n.read).length;
 
@@ -140,7 +139,11 @@ export default function NotificationsPage() {
       case "meeting_invitation":
       case "meeting_reminder":
       case "meeting_rsvp":
+      case "meeting_scheduled":
         setLocation("/meetings");
+        return;
+      case "meeting_exemption_request":
+        setLocation("/team-management?tab=exemptions");
         return;
       case "pto_request":
         setLocation("/moderation");
@@ -275,12 +278,6 @@ export default function NotificationsPage() {
                   <Badge variant="secondary" className="ml-2">{spamNotifications.length}</Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="cleared" data-testid="tab-log-cleared">
-                Recently Cleared
-                {clearedNotifications.length > 0 && (
-                  <Badge variant="secondary" className="ml-2">{clearedNotifications.length}</Badge>
-                )}
-              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="all" className="space-y-3">
@@ -304,18 +301,6 @@ export default function NotificationsPage() {
                 </div>
               ) : (
                 spamNotifications.map((n) => <NotificationCard key={n.id} notification={n} />)
-              )}
-            </TabsContent>
-
-            <TabsContent value="cleared" className="space-y-3">
-              {clearedNotifications.length > 0 ? (
-                clearedNotifications.map((n) => <NotificationCard key={n.id} notification={n} showCleared />)
-              ) : (
-                <div className="text-center py-12">
-                  <Bell className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <h3 className="text-lg font-semibold mb-2">No cleared notifications</h3>
-                  <p className="text-muted-foreground">Notifications you clear from the bell will appear here</p>
-                </div>
               )}
             </TabsContent>
           </Tabs>

@@ -507,7 +507,7 @@ export default function ModerationPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
+        <TabsList className="flex flex-wrap h-auto gap-y-1">
           <TabsTrigger value="jobs" data-testid="tab-jobs">
             Pending Jobs
             {pendingJobs && pendingJobs.length > 0 && (

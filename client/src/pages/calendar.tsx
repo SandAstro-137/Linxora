@@ -26,7 +26,7 @@ interface CalendarEvent {
   startTime: string;
   endTime: string;
   createdBy: string;
-  type: "event" | "pto";
+  type: "event" | "pto" | "meeting";
   ptoRequestId?: string;
   createdAt: string;
 }
@@ -50,6 +50,7 @@ export default function CalendarPage() {
   const [newEventDesc, setNewEventDesc] = useState("");
   const [newEventStart, setNewEventStart] = useState("");
   const [newEventEnd, setNewEventEnd] = useState("");
+  const [viewingEvent, setViewingEvent] = useState<CalendarEvent | null>(null);
 
   const createEventMutation = useMutation({
     mutationFn: (data: { title: string; description: string; startTime: string; endTime: string }) =>
@@ -72,6 +73,7 @@ export default function CalendarPage() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/calendar/events/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      setViewingEvent(null);
       toast({ title: "Event deleted" });
     },
     onError: () => {
@@ -145,14 +147,16 @@ export default function CalendarPage() {
         {dayEvents.slice(0, 3).map(ev => (
           <div
             key={ev.id}
-            className={`text-xs rounded px-1.5 py-0.5 truncate font-medium cursor-default ${
+            className={`text-xs rounded px-1.5 py-0.5 truncate font-medium cursor-pointer ${
               ev.type === "pto"
                 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                : ev.type === "meeting"
+                ? "bg-green-500/20 text-green-700 dark:text-green-300"
                 : "bg-blue-500/20 text-blue-700 dark:text-blue-300"
             }`}
             title={ev.title}
             data-testid={`chip-event-${ev.id}`}
-            onClick={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setViewingEvent(ev); }}
           >
             {ev.title}
           </div>
@@ -188,7 +192,6 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">Team Calendar</h1>
@@ -202,7 +205,6 @@ export default function CalendarPage() {
         </Button>
       </div>
 
-      {/* Month Navigation + Legend */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Button
@@ -236,7 +238,7 @@ export default function CalendarPage() {
             Today
           </Button>
         </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-3 h-3 rounded-sm bg-blue-500/80" />
             Team Event
@@ -245,10 +247,13 @@ export default function CalendarPage() {
             <span className="inline-block w-3 h-3 rounded-sm bg-amber-500/80" />
             Approved PTO
           </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded-sm bg-green-500/80" />
+            Meeting
+          </span>
         </div>
       </div>
 
-      {/* Month Grid */}
       <Card>
         <CardContent className="p-0">
           <div className="grid grid-cols-7 border-b">
@@ -266,7 +271,6 @@ export default function CalendarPage() {
         </CardContent>
       </Card>
 
-      {/* Monthly Events List */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Events This Month</CardTitle>
@@ -282,22 +286,24 @@ export default function CalendarPage() {
                 return (
                   <div
                     key={ev.id}
-                    className="flex items-start justify-between gap-3 p-3 rounded-md bg-muted/40"
+                    className="flex items-start justify-between gap-3 p-3 rounded-md bg-muted/40 cursor-pointer hover-elevate"
                     data-testid={`row-event-${ev.id}`}
+                    onClick={() => setViewingEvent(ev)}
                   >
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       <span
                         className={`mt-1.5 shrink-0 w-2.5 h-2.5 rounded-full ${
-                          ev.type === "pto" ? "bg-amber-500" : "bg-blue-500"
+                          ev.type === "pto" ? "bg-amber-500" : ev.type === "meeting" ? "bg-green-500" : "bg-blue-500"
                         }`}
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium truncate">{ev.title}</span>
                           {ev.type === "pto" && (
-                            <Badge variant="outline" className="text-xs shrink-0">
-                              PTO
-                            </Badge>
+                            <Badge variant="outline" className="text-xs shrink-0">PTO</Badge>
+                          )}
+                          {ev.type === "meeting" && (
+                            <Badge variant="outline" className="text-xs shrink-0">Meeting</Badge>
                           )}
                         </div>
                         {ev.description && (
@@ -324,7 +330,7 @@ export default function CalendarPage() {
                         size="icon"
                         variant="ghost"
                         className="shrink-0"
-                        onClick={() => deleteEventMutation.mutate(ev.id)}
+                        onClick={e => { e.stopPropagation(); deleteEventMutation.mutate(ev.id); }}
                         disabled={deleteEventMutation.isPending}
                         data-testid={`button-delete-event-${ev.id}`}
                       >
@@ -338,6 +344,68 @@ export default function CalendarPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Event Detail Popup */}
+      <Dialog open={!!viewingEvent} onOpenChange={open => { if (!open) setViewingEvent(null); }}>
+        {viewingEvent && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 pr-8">
+                <span
+                  className={`shrink-0 w-3 h-3 rounded-full ${
+                    viewingEvent.type === "pto" ? "bg-amber-500" : viewingEvent.type === "meeting" ? "bg-green-500" : "bg-blue-500"
+                  }`}
+                />
+                {viewingEvent.title}
+              </DialogTitle>
+              {viewingEvent.type !== "event" && (
+                <div className="mt-1">
+                  <Badge variant="outline" className="text-xs">
+                    {viewingEvent.type === "pto" ? "PTO" : "Meeting"}
+                  </Badge>
+                </div>
+              )}
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {viewingEvent.description && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</p>
+                  <p className="text-sm">{viewingEvent.description}</p>
+                </div>
+              )}
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Time</p>
+                <p className="text-sm">
+                  {new Date(viewingEvent.startTime).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {new Date(viewingEvent.startTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                  {" "}&ndash;{" "}
+                  {new Date(viewingEvent.endTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                  {new Date(viewingEvent.startTime).toDateString() !== new Date(viewingEvent.endTime).toDateString() && (
+                    <> ({new Date(viewingEvent.endTime).toLocaleDateString("en-US", { month: "short", day: "numeric" })})</>
+                  )}
+                </p>
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              {canDelete(viewingEvent) && (
+                <Button
+                  variant="destructive"
+                  onClick={() => deleteEventMutation.mutate(viewingEvent.id)}
+                  disabled={deleteEventMutation.isPending}
+                  data-testid="button-delete-event-dialog"
+                >
+                  {deleteEventMutation.isPending ? "Deleting..." : "Delete Event"}
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setViewingEvent(null)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
 
       {/* Add Event Dialog */}
       <Dialog open={showAddEvent} onOpenChange={open => { setShowAddEvent(open); if (!open) { setNewEventTitle(""); setNewEventDesc(""); setNewEventStart(""); setNewEventEnd(""); } }}>

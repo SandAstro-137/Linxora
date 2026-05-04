@@ -1,0 +1,101 @@
+✅ TASK 1 — Event Description Popup
+When clicking a calendar event, show a popup with the event’s full description.
+
+Requirements:
+Clicking any event on the calendar should open a popup/modal.
+
+The popup must display:
+
+Event title
+
+Event description
+
+Start and end time
+
+Add an X button in the top‑right corner of the popup to close it.
+
+The popup should not affect the rest of the calendar UI.
+
+✅ TASK 2 — PTO Not Appearing on Calendar
+Fix PTO integration so approved PTO automatically appears on all calendars.
+
+Requirements:
+When Head of Moderation approves a PTO request:
+
+Add the PTO event to the calendar of:
+
+The moderator requesting PTO
+
+All moderators
+
+Head of Moderation
+
+Founder
+
+PTO events must appear immediately without requiring refresh.
+
+Fix the current bug where PTO does not appear at all.
+
+✅ TASK 3 — Meetings Not Updating on Calendar
+Fix the issue where meetings are not appearing or updating on the calendar.
+
+Requirements:
+All scheduled meetings must automatically appear on the calendar for:
+
+Moderators
+
+Head of Moderation
+
+Founder
+
+Meeting updates (time changes, cancellations, etc.) must sync instantly.
+
+Fix the current bug where meetings do not show for anyone.
+
+✅ TASK 4 — Notification Clicks Not Redirecting Correctly
+Fix notification routing for meeting exemptions and scheduled meetings.
+
+Requirements:
+When Head of Moderation clicks a meeting exemption request notification:
+
+Redirect to Team Management → Exemptions
+
+Fix the current “Job not found” error
+
+When clicking a meeting scheduled notification:
+
+Redirect to My Meetings
+
+All notification links must correctly route to their intended pages.
+
+✅ TASK 5 — Exemption Acceptance Not Updating RSVP
+Fix exemption approval so RSVP updates correctly.
+
+Requirements:
+When Head of Moderation accepts an exemption request:
+
+The RSVP for that meeting should change from Pending → Declined
+
+Fix the current bug where accepting an exemption deletes the request instead of updating RSVP.
+
+Ensure the exemption remains visible in logs/history.
+
+✅ TASK 6 — Role Slider Styling Bug
+Fix the UI styling issue where sliders for Head of Moderation and Founder appear white and incorrect.
+
+Requirements:
+Match slider styling to the other roles.
+
+Ensure consistent colors, hover states, and active states.
+
+Fix any CSS or component overrides causing the white appearance.
+
+✅ TASK 7 — Remove “Recently Cleared” Section in Notifications
+Remove the “Recently Cleared” section from the notification tab.
+
+Requirements:
+Delete the “Recently Cleared” area entirely.
+
+The notification tab should act as a full log without separation.
+
+Ensure no leftover UI gaps or broken layout after removal.

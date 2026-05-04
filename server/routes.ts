@@ -4548,11 +4548,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Auto-add PTO to shared calendar
       const requester = await storage.getUser(request.freelancerId);
       const ptoTitle = `PTO: ${requester?.username || "Team Member"}`;
+      const ptoStart = new Date(request.startDate);
+      ptoStart.setHours(0, 0, 0, 0);
+      const ptoEnd = new Date(request.endDate);
+      ptoEnd.setHours(23, 59, 59, 999);
       await storage.createCalendarEvent({
         title: ptoTitle,
         description: request.reason || "Approved PTO",
-        startTime: new Date(request.startDate + "T00:00:00"),
-        endTime: new Date(request.endDate + "T23:59:59"),
+        startTime: ptoStart,
+        endTime: ptoEnd,
         createdBy: req.session.userId!,
         type: "pto",
         ptoRequestId: request.id,
@@ -6764,14 +6768,25 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         // Notify each moderator
         await storage.createNotification({
           userId: moderatorId,
-          type: "system",
+          type: "meeting_scheduled",
           title: "Meeting Scheduled",
           message: `You have been invited to a meeting: ${title}`,
           relatedId: meeting.id,
-          sourceType: "system",
+          sourceType: "meeting",
           sourceId: meeting.id,
         });
       }
+
+      // Auto-add meeting to shared calendar
+      const meetingEnd = new Date(parsedDate.getTime() + (duration || 60) * 60 * 1000);
+      await storage.createCalendarEvent({
+        title: `Meeting: ${meeting.title}`,
+        description: meeting.description || "",
+        startTime: parsedDate,
+        endTime: meetingEnd,
+        createdBy: req.session.userId!,
+        type: "event",
+      });
 
       res.status(201).json(meeting);
     } catch (error) {
@@ -6968,11 +6983,11 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       for (const admin of admins) {
         await storage.createNotification({
           userId: admin.id,
-          type: "system",
+          type: "meeting_exemption_request",
           title: "Meeting Exemption Request",
           message: `${requester?.username || "A moderator"} has requested an exemption from "${meeting.title}"`,
           relatedId: exemption.id,
-          sourceType: "system",
+          sourceType: "exemption",
           sourceId: exemption.id,
         });
       }
@@ -7009,6 +7024,14 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         reviewNote: note?.trim() || null,
         reviewedAt: new Date(),
       });
+
+      // If approved, update RSVP to declined (exempted from attending)
+      if (approved) {
+        const rsvp = await storage.getMeetingRsvpByModerator(exemption.meetingId, exemption.moderatorId);
+        if (rsvp) {
+          await storage.updateMeetingRsvp(rsvp.id, { status: "declined", respondedAt: new Date() });
+        }
+      }
 
       // Notify the moderator
       const meeting = await storage.getModeratorMeeting(exemption.meetingId);
