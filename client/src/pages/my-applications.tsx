@@ -15,6 +15,15 @@ function formatToET(date: Date | string): string {
 }
 import { Link } from "wouter";
 
+interface MyJobRequestsResponse {
+  applications: JobRequestWithJob[];
+  stats: {
+    totalApplications: number;
+    accepted: number;
+    pending: number;
+  };
+}
+
 interface JobRequestWithJob {
   id: string;
   jobId: string;
@@ -54,9 +63,11 @@ function getStatusBadge(status: string) {
 export default function MyApplicationsPage() {
   const { toast } = useToast();
 
-  const { data: applications = [], isLoading } = useQuery<JobRequestWithJob[]>({
+  const { data, isLoading } = useQuery<MyJobRequestsResponse>({
     queryKey: ["/api/my-job-requests"],
   });
+  const applications = data?.applications ?? [];
+  const stats = data?.stats ?? { totalApplications: applications.length, accepted: 0, pending: 0 };
 
   const withdrawMutation = useMutation({
     mutationFn: async (jobId: string) => {
@@ -99,7 +110,7 @@ export default function MyApplicationsPage() {
           <CardContent className="pt-6">
             <div className="text-center">
               <div className="text-3xl font-bold text-yellow-600" data-testid="text-pending-count">
-                {pendingApplications.length}
+                {stats.pending}
               </div>
               <p className="text-sm text-muted-foreground">Pending</p>
             </div>
@@ -109,7 +120,7 @@ export default function MyApplicationsPage() {
           <CardContent className="pt-6">
             <div className="text-center">
               <div className="text-3xl font-bold text-green-600" data-testid="text-accepted-count">
-                {applications.filter(a => a.status === "accepted").length}
+                {stats.accepted}
               </div>
               <p className="text-sm text-muted-foreground">Accepted</p>
             </div>
@@ -119,7 +130,7 @@ export default function MyApplicationsPage() {
           <CardContent className="pt-6">
             <div className="text-center">
               <div className="text-3xl font-bold" data-testid="text-total-count">
-                {applications.length}
+                {stats.totalApplications}
               </div>
               <p className="text-sm text-muted-foreground">Total Applications</p>
             </div>

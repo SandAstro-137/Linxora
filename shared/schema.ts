@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -27,6 +27,8 @@ export const JobStatus = {
   CANCELLED: "cancelled",
   DISPUTE: "dispute",
   EXPIRED: "expired",
+  DEADLINE_REACHED: "deadline_reached", // Deadline passed while job is being worked; customer must decide
+  ENDED: "ended", // Customer chose to end the job; awaiting freelancer work-completion confirmation
   // Legacy statuses for backward compatibility
   PENDING: "pending",
   ACTIVE: "active",
@@ -137,16 +139,51 @@ export type CancellationStatusType = typeof CancellationStatus[keyof typeof Canc
 
 // Level payout percentages
 export const LEVEL_PAYOUTS = {
-  1: 0.60,
-  2: 0.70,
+  1: 0.65,
+  2: 0.75,
   3: 0.80,
   4: 0.85,
-  5: 0.90
+  5: 0.90,
+  6: 0.93,
+  7: 0.95,
+  8: 0.97
 } as const;
 
 export function getLevelPayout(level: number): number {
-  const clampedLevel = Math.max(1, Math.min(5, level)) as keyof typeof LEVEL_PAYOUTS;
+  const clampedLevel = Math.max(1, Math.min(8, level)) as keyof typeof LEVEL_PAYOUTS;
   return LEVEL_PAYOUTS[clampedLevel];
+}
+
+// Level progression is based on lifetime earnings (USD), not completed jobs.
+// Level 1 is the base level; each subsequent level unlocks at a cumulative earnings threshold.
+// Index i maps to the threshold for level i+1 (index 0 = base level 1).
+export const LEVEL_EARNINGS_THRESHOLDS = [0, 20, 50, 100, 250, 450, 750, 1500] as const; // levels 1..8
+
+export function getLevelFromEarnings(totalEarned: number): number {
+  if (totalEarned >= 1500) return 8;
+  if (totalEarned >= 750) return 7;
+  if (totalEarned >= 450) return 6;
+  if (totalEarned >= 250) return 5;
+  if (totalEarned >= 100) return 4;
+  if (totalEarned >= 50) return 3;
+  if (totalEarned >= 20) return 2;
+  return 1;
+}
+
+// Progress (0-100) toward the next level, measured as lifetime earnings relative
+// to the next level's cumulative threshold (e.g. $180 earned toward Level 4's $250 = 72%).
+export function getLevelProgressFromEarnings(totalEarned: number): number {
+  const level = getLevelFromEarnings(totalEarned);
+  if (level >= 8) return 100;
+  const nextThreshold = LEVEL_EARNINGS_THRESHOLDS[level];
+  return Math.min(100, Math.max(0, (totalEarned / nextThreshold) * 100));
+}
+
+// How much more the freelancer must earn to reach the next level (0 once maxed).
+export function getEarningsToNextLevel(totalEarned: number): number {
+  const level = getLevelFromEarnings(totalEarned);
+  if (level >= 8) return 0;
+  return Math.max(0, LEVEL_EARNINGS_THRESHOLDS[level] - totalEarned);
 }
 
 // Users table
@@ -163,12 +200,15 @@ export const users = pgTable("users", {
   role: text("role").notNull().default(UserRole.FREELANCER),
   level: integer("level").default(1),
   specialization: text("specialization"),
+  portfolio: text("portfolio"),
   workingHours: jsonb("working_hours").default(sql`'{}'::jsonb`),
   completedJobs: integer("completed_jobs").default(0),
+  totalJobs: integer("total_jobs").default(0),
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0"),
   onboardingCompleted: boolean("onboarding_completed").default(false),
   totalRatings: integer("total_ratings").default(0),
   completionPercentage: decimal("completion_percentage", { precision: 5, scale: 2 }).default("0"),
+  totalEarned: decimal("total_earned", { precision: 12, scale: 2 }).default("0"),
   blacklistedFreelancers: text("blacklisted_freelancers").array().default(sql`'{}'::text[]`),
   accountStatus: text("account_status").notNull().default(UserAccountStatus.ACTIVE),
   suspendedUntil: timestamp("suspended_until"),
@@ -211,8 +251,11 @@ export const jobs = pgTable("jobs", {
   budget: decimal("budget", { precision: 10, scale: 2 }).notNull(),
   requirements: text("requirements"),
   deadline: timestamp("deadline"),
+  lastDeadlineReminderAt: timestamp("last_deadline_reminder_at"), // Last freestylance deadline reminder sent
+  deadlineArrivalNotified: boolean("deadline_arrival_notified").default(false), // Customer notified once when deadline arrives
   status: text("status").notNull().default(JobStatus.DRAFT),
   freelancerId: varchar("freelancer_id"),
+  projectLeaderId: varchar("project_leader_id"), // Who is allowed to submit work; defaults to freelancerId (first freelancer to take the job)
   collaborators: text("collaborators").array().default(sql`ARRAY[]::text[]`),
   moderatorFeedback: text("moderator_feedback"),
   // New fields per spec
@@ -222,6 +265,7 @@ export const jobs = pgTable("jobs", {
   autoCompleteAt: timestamp("auto_complete_at"), // When auto-complete will trigger (4 days after submission)
   maxFreelancers: integer("max_freelancers").default(1), // For multi-freelancer jobs
   isLocked: boolean("is_locked").default(false), // Lock job during dispute
+  preDisputeStatus: text("pre_dispute_status"), // Job status before the dispute opened (restored on close)
   customerArchived: boolean("customer_archived").default(false), // Customer can hide completed jobs
   isPremium: boolean("is_premium").default(false),
   premiumAmount: text("premium_amount").default("0"),
@@ -237,15 +281,16 @@ export const insertJobSchema = createInsertSchema(jobs)
     updatedAt: true,
   })
   .extend({
-    deadline: z.coerce.date().optional().refine(
+    budget: z.string().refine((v) => {
+      const b = parseFloat(v);
+      return !Number.isNaN(b) && b >= 5;
+    }, { message: "Budget must be at least $5" }),
+    deadline: z.coerce.date().refine(
       (date) => {
-        if (!date) return true;
         const now = new Date();
-        const threeWeeksFromNow = new Date(now);
-        threeWeeksFromNow.setDate(now.getDate() + 21);
-        return date >= threeWeeksFromNow;
+        return date > now;
       },
-      { message: "Deadline must be at least 3 weeks from now" }
+      { message: "Deadline must be in the future" }
     ),
   });
 
@@ -381,6 +426,40 @@ export const insertCancellationRequestSchema = createInsertSchema(cancellationRe
 
 export type InsertCancellationRequest = z.infer<typeof insertCancellationRequestSchema>;
 export type CancellationRequest = typeof cancellationRequests.$inferSelect;
+
+// Abandon Request status — freelancer asks permission to leave a job.
+// Customer decides first; a customer decline forwards the request to moderation.
+export const AbandonStatus = {
+  PENDING_CUSTOMER: "pending_customer",
+  PENDING_MODERATOR: "pending_moderator",
+  APPROVED: "approved",
+  DECLINED: "declined",
+} as const;
+
+export type AbandonStatusType = typeof AbandonStatus[keyof typeof AbandonStatus];
+
+// Abandon Requests table
+export const abandonRequests = pgTable("abandon_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  reason: text("reason").notNull(),
+  links: text("links"),
+  proofUrl: text("proof_url"),
+  status: text("status").notNull().default(AbandonStatus.PENDING_CUSTOMER),
+  decidedBy: varchar("decided_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAbandonRequestSchema = createInsertSchema(abandonRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertAbandonRequest = z.infer<typeof insertAbandonRequestSchema>;
+export type AbandonRequest = typeof abandonRequests.$inferSelect;
 
 // Chat Messages table (job-specific chat)
 export const chatMessages = pgTable("chat_messages", {
@@ -533,16 +612,22 @@ export const insertTeamMessageSchema = createInsertSchema(teamMessages).omit({
 export type InsertTeamMessage = z.infer<typeof insertTeamMessageSchema>;
 export type TeamMessage = typeof teamMessages.$inferSelect;
 
-// Ratings table
-export const ratings = pgTable("ratings", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  jobId: varchar("job_id").notNull().unique(),
-  customerId: varchar("customer_id").notNull(),
-  freelancerId: varchar("freelancer_id").notNull(),
-  score: integer("score").notNull(),
-  review: text("review"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+// Ratings table (customer rates a freelancer; one rating per freelancer per job)
+export const ratings = pgTable(
+  "ratings",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    jobId: varchar("job_id").notNull(),
+    customerId: varchar("customer_id").notNull(),
+    freelancerId: varchar("freelancer_id").notNull(),
+    score: integer("score").notNull(),
+    review: text("review"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    jobFreelancerUnique: uniqueIndex("ratings_job_freelancer_unique").on(table.jobId, table.freelancerId),
+  }),
+);
 
 export const insertRatingSchema = createInsertSchema(ratings)
   .omit({
@@ -555,6 +640,29 @@ export const insertRatingSchema = createInsertSchema(ratings)
 
 export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
+
+// Customer Ratings table (freelancers rate the customer after a completed job)
+export const customerRatings = pgTable("customer_ratings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull().unique(),
+  freelancerId: varchar("freelancer_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  score: integer("score").notNull(),
+  review: text("review"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustomerRatingSchema = createInsertSchema(customerRatings)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    score: z.number().min(1).max(5),
+  });
+
+export type InsertCustomerRating = z.infer<typeof insertCustomerRatingSchema>;
+export type CustomerRating = typeof customerRatings.$inferSelect;
 
 // Role Upgrade Request status
 export const RoleUpgradeStatus = {
@@ -647,7 +755,9 @@ export const insertReportSchema = createInsertSchema(reports)
   })
   .extend({
     reportType: z.enum([ReportType.JOB, ReportType.USER, ReportType.MESSAGE, ReportType.BUG]),
-    reason: z.string().min(5, "Please provide a reason"),
+    // Reason values come from fixed UI dropdowns (e.g. "spam", "scam" are 4 chars),
+    // so don't force a 5-char minimum on the enum value itself.
+    reason: z.string().min(3, "Please provide a reason"),
   });
 
 export type InsertReport = z.infer<typeof insertReportSchema>;
@@ -922,6 +1032,10 @@ export const moderationVault = pgTable("moderation_vault", {
   balance: decimal("balance", { precision: 18, scale: 8 }).default("0"),
   totalDeposited: decimal("total_deposited", { precision: 18, scale: 8 }).default("0"),
   totalDistributed: decimal("total_distributed", { precision: 18, scale: 8 }).default("0"),
+  // How much of the vault came out of the company's earned platform fees.
+  // The founder can only move money the company actually holds, so this
+  // reduces the Company Held figure in the Company Vault dollar-for-dollar.
+  transferredFromCompany: decimal("transferred_from_company", { precision: 18, scale: 8 }).default("0"),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -1098,6 +1212,7 @@ export const disputes = pgTable("disputes", {
   jobId: varchar("job_id").notNull(),
   openedByUserId: varchar("opened_by_user_id").notNull(),
   reason: text("reason").notNull(),
+  category: text("category"),
   status: text("status").notNull().default(DisputeStatus.OPEN),
   moderatorId: varchar("moderator_id"),
   resolutionNotes: text("resolution_notes"),
@@ -1241,6 +1356,9 @@ export const groupChatMembers = pgTable("group_chat_members", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   groupId: varchar("group_id").notNull(),
   userId: varchar("user_id").notNull(),
+  // "member" (default) | "editor" — editors may rename the group, add members,
+  // and kick anyone except the owner and other editors.
+  role: text("role").default("member").notNull(),
   joinedAt: timestamp("joined_at").defaultNow(),
 });
 
@@ -1250,6 +1368,23 @@ export const insertGroupChatMemberSchema = createInsertSchema(groupChatMembers).
 });
 export type InsertGroupChatMember = z.infer<typeof insertGroupChatMemberSchema>;
 export type GroupChatMember = typeof groupChatMembers.$inferSelect;
+
+// Conversations a user has hidden (removed) from their Messages list.
+// Hidden per-user so the other person can still message them later (a new
+// message makes the conversation reappear naturally).
+export const hiddenConversations = pgTable("hidden_conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  partnerId: varchar("partner_id").notNull(),
+  hiddenAt: timestamp("hidden_at").defaultNow(),
+});
+
+export const insertHiddenConversationSchema = createInsertSchema(hiddenConversations).omit({
+  id: true,
+  hiddenAt: true,
+});
+export type InsertHiddenConversation = z.infer<typeof insertHiddenConversationSchema>;
+export type HiddenConversation = typeof hiddenConversations.$inferSelect;
 
 export const groupChatMessages = pgTable("group_chat_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1296,3 +1431,122 @@ export const insertUserBlockSchema = createInsertSchema(userBlocks).omit({
 });
 export type InsertUserBlock = z.infer<typeof insertUserBlockSchema>;
 export type UserBlock = typeof userBlocks.$inferSelect;
+
+// ============================================================
+// Project Leader Voting
+// ============================================================
+
+export const LeadershipVoteStatus = {
+  OPEN: "open",
+  PASSED: "passed",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+} as const;
+export type LeadershipVoteStatusType = typeof LeadershipVoteStatus[keyof typeof LeadershipVoteStatus];
+
+export const LeadershipVoteChoice = {
+  AGREE: "agree",
+  DISAPPROVE: "disapprove",
+} as const;
+export type LeadershipVoteChoiceType = typeof LeadershipVoteChoice[keyof typeof LeadershipVoteChoice];
+
+// A customer-initiated vote to change the project leader of a job
+export const leadershipVotes = pgTable("leadership_votes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  initiatedById: varchar("initiated_by_id").notNull(), // The customer who started the vote
+  candidateId: varchar("candidate_id").notNull(), // Proposed new project leader
+  status: text("status").notNull().default(LeadershipVoteStatus.OPEN),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  closedAt: timestamp("closed_at"),
+});
+
+export const insertLeadershipVoteSchema = createInsertSchema(leadershipVotes).omit({
+  id: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  closedAt: true,
+});
+export type InsertLeadershipVote = z.infer<typeof insertLeadershipVoteSchema>;
+export type LeadershipVote = typeof leadershipVotes.$inferSelect;
+
+// Individual (anonymous) ballots cast by freelancers on a job
+export const leadershipVoteCasts = pgTable("leadership_vote_casts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  voteId: varchar("vote_id").notNull(),
+  voterId: varchar("voter_id").notNull(),
+  choice: text("choice").notNull(), // agree | disapprove
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLeadershipVoteCastSchema = createInsertSchema(leadershipVoteCasts).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertLeadershipVoteCast = z.infer<typeof insertLeadershipVoteCastSchema>;
+export type LeadershipVoteCast = typeof leadershipVoteCasts.$inferSelect;
+
+// ============================================================
+// Moderator Meetings (court-room style group chat)
+// ============================================================
+
+export const MeetingStatus = {
+  ACTIVE: "active",
+  CLOSED: "closed",
+} as const;
+export type MeetingStatusType = typeof MeetingStatus[keyof typeof MeetingStatus];
+
+export const meetings = pgTable("meetings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  groupChatId: varchar("group_chat_id").notNull(),
+  moderatorId: varchar("moderator_id").notNull(),
+  status: text("status").notNull().default(MeetingStatus.ACTIVE),
+  mutedUserIds: text("muted_user_ids").array().default(sql`'{}'::text[]`), // Participants who cannot type
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMeetingSchema = createInsertSchema(meetings).omit({
+  id: true,
+  status: true,
+  mutedUserIds: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMeeting = z.infer<typeof insertMeetingSchema>;
+export type Meeting = typeof meetings.$inferSelect;
+
+// ============================================================
+// Money Requests (request cash from another user)
+// ============================================================
+
+export const MoneyRequestStatus = {
+  PENDING: "pending",
+  ACCEPTED: "accepted",
+  DECLINED: "declined",
+  CANCELLED: "cancelled",
+} as const;
+export type MoneyRequestStatusType = typeof MoneyRequestStatus[keyof typeof MoneyRequestStatus];
+
+export const moneyRequests = pgTable("money_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requesterId: varchar("requester_id").notNull(), // Who is requesting the money
+  recipientId: varchar("recipient_id").notNull(), // Who the money is requested from
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(), // USDT
+  message: text("message"),
+  status: text("status").notNull().default(MoneyRequestStatus.PENDING),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMoneyRequestSchema = createInsertSchema(moneyRequests).omit({
+  id: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMoneyRequest = z.infer<typeof insertMoneyRequestSchema>;
+export type MoneyRequest = typeof moneyRequests.$inferSelect;

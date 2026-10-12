@@ -13,6 +13,8 @@ import {
   type InsertInvitation,
   type CancellationRequest,
   type InsertCancellationRequest,
+  type AbandonRequest,
+  type InsertAbandonRequest,
   type ChatMessage,
   type InsertChatMessage,
   type DirectMessage,
@@ -27,6 +29,8 @@ import {
   type InsertTeamMessage,
   type Rating,
   type InsertRating,
+  type CustomerRating,
+  type InsertCustomerRating,
   type RoleUpgradeRequest,
   type InsertRoleUpgradeRequest,
   type Report,
@@ -81,10 +85,19 @@ import {
   type InsertGroupChatMember,
   type GroupChatMessage,
   type InsertGroupChatMessage,
+  type HiddenConversation,
   type UserFollow,
   type InsertUserFollow,
   type UserBlock,
   type InsertUserBlock,
+  type LeadershipVote,
+  type InsertLeadershipVote,
+  type LeadershipVoteCast,
+  type InsertLeadershipVoteCast,
+  type Meeting,
+  type InsertMeeting,
+  type MoneyRequest,
+  type InsertMoneyRequest,
   EscrowStatus,
   JobFreelancerStatus,
   JobSubmissionStatus,
@@ -118,6 +131,7 @@ export interface IStorage {
   getJob(id: string): Promise<Job | undefined>;
   getJobs(filters?: { status?: string; customerId?: string; freelancerId?: string; category?: string }): Promise<Job[]>;
   getJobsByStatus(status: string): Promise<Job[]>;
+  deleteJob(id: string): Promise<void>;
   createJob(job: InsertJob): Promise<Job>;
   updateJob(id: string, job: Partial<Job>): Promise<Job | undefined>;
   claimJob(jobId: string, freelancerId: string): Promise<Job | undefined>;
@@ -140,6 +154,8 @@ export interface IStorage {
 
   // Invitation operations
   getInvitations(userId: string): Promise<Invitation[]>;
+  getInvitationsByJob(jobId: string): Promise<Invitation[]>;
+  getInvitation(id: string): Promise<Invitation | undefined>;
   createInvitation(invitation: InsertInvitation): Promise<Invitation>;
   updateInvitation(id: string, invitation: Partial<Invitation>): Promise<Invitation | undefined>;
 
@@ -150,6 +166,13 @@ export interface IStorage {
   createCancellationRequest(request: InsertCancellationRequest): Promise<CancellationRequest>;
   updateCancellationRequest(id: string, request: Partial<CancellationRequest>): Promise<CancellationRequest | undefined>;
 
+  // Abandon Request operations
+  getAbandonRequest(id: string): Promise<AbandonRequest | undefined>;
+  getAbandonRequests(filters?: { jobId?: string; freelancerId?: string; status?: string }): Promise<AbandonRequest[]>;
+  getAllAbandonRequests(): Promise<AbandonRequest[]>;
+  createAbandonRequest(request: InsertAbandonRequest): Promise<AbandonRequest>;
+  updateAbandonRequest(id: string, request: Partial<AbandonRequest>): Promise<AbandonRequest | undefined>;
+
   // Chat Message operations (job-specific)
   getChatMessages(jobId: string): Promise<ChatMessage[]>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
@@ -159,6 +182,9 @@ export interface IStorage {
   getUserByUserId(userId: number): Promise<User | undefined>;
   getDirectMessages(userId1: string, userId2: string): Promise<DirectMessage[]>;
   getConversations(userId: string): Promise<{ partnerId: string; lastMessage: DirectMessage; unreadCount: number }[]>;
+  hideConversation(userId: string, partnerId: string): Promise<void>;
+  unhideConversation(userId: string, partnerId: string): Promise<void>;
+  getHiddenConversationPartners(userId: string): Promise<string[]>;
   createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage>;
   markDirectMessagesAsRead(senderId: string, receiverId: string): Promise<void>;
 
@@ -197,8 +223,15 @@ export interface IStorage {
 
   // Rating operations
   getRating(jobId: string): Promise<Rating | undefined>;
+  getRatingForFreelancer(jobId: string, freelancerId: string): Promise<Rating | undefined>;
   getRatingsByFreelancer(freelancerId: string): Promise<Rating[]>;
+  getRatingsByJob(jobId: string): Promise<Rating[]>;
   createRating(rating: InsertRating): Promise<Rating>;
+
+  // Customer Rating operations (freelancers rate customers)
+  getCustomerRating(jobId: string): Promise<CustomerRating | undefined>;
+  getCustomerRatings(customerId: string): Promise<CustomerRating[]>;
+  createCustomerRating(rating: InsertCustomerRating): Promise<CustomerRating>;
 
   // Role Upgrade Request operations
   getRoleUpgradeRequest(id: string): Promise<RoleUpgradeRequest | undefined>;
@@ -316,7 +349,9 @@ export interface IStorage {
   getJobFreelancers(jobId: string): Promise<JobFreelancer[]>;
   getJobFreelancersByFreelancer(freelancerId: string): Promise<JobFreelancer[]>;
   createJobFreelancer(jf: InsertJobFreelancer): Promise<JobFreelancer>;
+  deleteJobFreelancer(id: string): Promise<void>;
   updateJobFreelancer(id: string, updates: Partial<JobFreelancer>): Promise<JobFreelancer | undefined>;
+  removeJobFreelancer(jobId: string, freelancerId: string): Promise<void>;
 
   // Job Submission operations
   getJobSubmission(id: string): Promise<JobSubmission | undefined>;
@@ -366,8 +401,33 @@ export interface IStorage {
   getGroupChatMembers(groupId: string): Promise<GroupChatMember[]>;
   addGroupChatMember(member: InsertGroupChatMember): Promise<GroupChatMember>;
   removeGroupChatMember(groupId: string, userId: string): Promise<void>;
+  updateGroupChatMemberRole(groupId: string, userId: string, role: string): Promise<void>;
   getGroupChatMessages(groupId: string): Promise<GroupChatMessage[]>;
   createGroupChatMessage(message: InsertGroupChatMessage): Promise<GroupChatMessage>;
+  deleteGroupChat(groupId: string): Promise<void>;
+
+  // Leadership Vote operations
+  getLeadershipVote(id: string): Promise<LeadershipVote | undefined>;
+  getActiveLeadershipVoteByJob(jobId: string): Promise<LeadershipVote | undefined>;
+  createLeadershipVote(vote: InsertLeadershipVote): Promise<LeadershipVote>;
+  updateLeadershipVote(id: string, updates: Partial<LeadershipVote>): Promise<LeadershipVote | undefined>;
+  getLeadershipVoteCasts(voteId: string): Promise<LeadershipVoteCast[]>;
+  getLeadershipVoteCast(voteId: string, voterId: string): Promise<LeadershipVoteCast | undefined>;
+  createLeadershipVoteCast(cast: InsertLeadershipVoteCast): Promise<LeadershipVoteCast>;
+
+  // Moderator Meeting operations
+  getMeeting(id: string): Promise<Meeting | undefined>;
+  getMeetingByGroupChat(groupChatId: string): Promise<Meeting | undefined>;
+  getActiveMeetingByJob(jobId: string): Promise<Meeting | undefined>;
+  createMeeting(meeting: InsertMeeting): Promise<Meeting>;
+  updateMeeting(id: string, updates: Partial<Meeting>): Promise<Meeting | undefined>;
+  deleteMeeting(id: string): Promise<void>;
+
+  // Money Request operations
+  getMoneyRequest(id: string): Promise<MoneyRequest | undefined>;
+  getMoneyRequestsForUser(userId: string): Promise<MoneyRequest[]>;
+  createMoneyRequest(request: InsertMoneyRequest): Promise<MoneyRequest>;
+  updateMoneyRequest(id: string, updates: Partial<MoneyRequest>): Promise<MoneyRequest | undefined>;
 
   // Follow operations
   followUser(followerId: string, followingId: string): Promise<UserFollow>;
@@ -393,12 +453,14 @@ export class MemStorage implements IStorage {
   private ptoRequests: Map<string, PTORequest>;
   private invitations: Map<string, Invitation>;
   private cancellationRequests: Map<string, CancellationRequest>;
+  private abandonRequests: Map<string, AbandonRequest>;
   private chatMessages: Map<string, ChatMessage>;
   private notifications: Map<string, Notification>;
   private teamNotes: Map<string, TeamNote>;
   private teamTasks: Map<string, TeamTask>;
   private teamMessages: Map<string, TeamMessage>;
   private ratings: Map<string, Rating>;
+  private customerRatings: Map<string, CustomerRating>;
   private roleUpgradeRequests: Map<string, RoleUpgradeRequest>;
   private reports: Map<string, Report>;
   private moderatorTasks: Map<string, ModeratorTask>;
@@ -407,6 +469,7 @@ export class MemStorage implements IStorage {
   private teamRoomMessages: Map<string, TeamRoomMessage>;
   private directMessages: Map<string, DirectMessage>;
   private userPreferences: Map<string, UserPreferences>;
+  private hiddenConversationsMap: Map<string, HiddenConversation>;
   private emailVerificationTokens: Map<string, EmailVerificationToken>;
   private jobRequests: Map<string, JobRequest>;
   private moderationVault: ModerationVault | null;
@@ -429,6 +492,10 @@ export class MemStorage implements IStorage {
   private groupChatsMap: Map<string, GroupChat>;
   private groupChatMembersMap: Map<string, GroupChatMember>;
   private groupChatMessagesMap: Map<string, GroupChatMessage>;
+  private leadershipVotesMap: Map<string, LeadershipVote>;
+  private leadershipVoteCastsMap: Map<string, LeadershipVoteCast>;
+  private meetingsMap: Map<string, Meeting>;
+  private moneyRequestsMap: Map<string, MoneyRequest>;
   private userFollowsMap: Map<string, UserFollow>;
   private userBlocksMap: Map<string, UserBlock>;
   private weeklyIncomesMap: Map<string, { moderatorId: string; weeklyAmount: number; setById: string; updatedAt: Date }>;
@@ -444,12 +511,14 @@ export class MemStorage implements IStorage {
     this.ptoRequests = new Map();
     this.invitations = new Map();
     this.cancellationRequests = new Map();
+    this.abandonRequests = new Map();
     this.chatMessages = new Map();
     this.notifications = new Map();
     this.teamNotes = new Map();
     this.teamTasks = new Map();
     this.teamMessages = new Map();
     this.ratings = new Map();
+    this.customerRatings = new Map();
     this.roleUpgradeRequests = new Map();
     this.reports = new Map();
     this.moderatorTasks = new Map();
@@ -457,6 +526,7 @@ export class MemStorage implements IStorage {
     this.meetingRsvps = new Map();
     this.teamRoomMessages = new Map();
     this.userPreferences = new Map();
+    this.hiddenConversationsMap = new Map();
     this.emailVerificationTokens = new Map();
     this.jobRequests = new Map();
     this.moderationVault = null;
@@ -478,6 +548,10 @@ export class MemStorage implements IStorage {
     this.groupChatsMap = new Map();
     this.groupChatMembersMap = new Map();
     this.groupChatMessagesMap = new Map();
+    this.leadershipVotesMap = new Map();
+    this.leadershipVoteCastsMap = new Map();
+    this.meetingsMap = new Map();
+    this.moneyRequestsMap = new Map();
     this.userFollowsMap = new Map();
     this.userBlocksMap = new Map();
     this.weeklyIncomesMap = new Map();
@@ -530,15 +604,19 @@ export class MemStorage implements IStorage {
       pendingEmail: insertUser.pendingEmail ?? null,
       avatar: insertUser.avatar ?? null,
       specialization: insertUser.specialization ?? null,
+      portfolio: insertUser.portfolio ?? null,
       role: insertUser.role ?? "freelancer",
       level: insertUser.level ?? 1,
       completedJobs: insertUser.completedJobs ?? 0,
+      totalJobs: insertUser.totalJobs ?? 0,
       rating: insertUser.rating ?? "0",
       onboardingCompleted: insertUser.onboardingCompleted ?? skipOnboarding,
       totalRatings: insertUser.totalRatings ?? 0,
       completionPercentage: insertUser.completionPercentage ?? "0",
+      totalEarned: insertUser.totalEarned ?? "0",
       workingHours: insertUser.workingHours ?? {},
       blacklistedFreelancers: insertUser.blacklistedFreelancers ?? [],
+      lastActive: insertUser.lastActive ?? new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -596,6 +674,10 @@ export class MemStorage implements IStorage {
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
+  async deleteJob(id: string): Promise<void> {
+    this.jobs.delete(id);
+  }
+
   async createJob(insertJob: InsertJob): Promise<Job> {
     const id = randomUUID();
     const job: Job = {
@@ -605,6 +687,8 @@ export class MemStorage implements IStorage {
       freelancerId: insertJob.freelancerId ?? null,
       requirements: insertJob.requirements ?? null,
       deadline: insertJob.deadline ?? null,
+      lastDeadlineReminderAt: insertJob.lastDeadlineReminderAt ?? null,
+      deadlineArrivalNotified: insertJob.deadlineArrivalNotified ?? false,
       collaborators: insertJob.collaborators ?? [],
       moderatorFeedback: insertJob.moderatorFeedback ?? null,
       expiresAt: null,
@@ -734,6 +818,16 @@ export class MemStorage implements IStorage {
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
+  async getInvitationsByJob(jobId: string): Promise<Invitation[]> {
+    return Array.from(this.invitations.values())
+      .filter((inv) => inv.jobId === jobId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getInvitation(id: string): Promise<Invitation | undefined> {
+    return this.invitations.get(id);
+  }
+
   async createInvitation(insertInvitation: InsertInvitation): Promise<Invitation> {
     const id = randomUUID();
     const invitation: Invitation = {
@@ -804,6 +898,48 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  // Abandon Request operations
+  async getAbandonRequest(id: string): Promise<AbandonRequest | undefined> {
+    return this.abandonRequests.get(id);
+  }
+
+  async getAbandonRequests(filters?: { jobId?: string; freelancerId?: string; status?: string }): Promise<AbandonRequest[]> {
+    let requests = Array.from(this.abandonRequests.values());
+    if (filters?.jobId) requests = requests.filter(r => r.jobId === filters.jobId);
+    if (filters?.freelancerId) requests = requests.filter(r => r.freelancerId === filters.freelancerId);
+    if (filters?.status) requests = requests.filter(r => r.status === filters.status);
+    return requests.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getAllAbandonRequests(): Promise<AbandonRequest[]> {
+    return Array.from(this.abandonRequests.values())
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createAbandonRequest(insertRequest: InsertAbandonRequest): Promise<AbandonRequest> {
+    const id = randomUUID();
+    const request: AbandonRequest = {
+      ...insertRequest,
+      id,
+      links: insertRequest.links ?? null,
+      proofUrl: insertRequest.proofUrl ?? null,
+      status: insertRequest.status ?? "pending_customer",
+      decidedBy: insertRequest.decidedBy ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.abandonRequests.set(id, request);
+    return request;
+  }
+
+  async updateAbandonRequest(id: string, updates: Partial<AbandonRequest>): Promise<AbandonRequest | undefined> {
+    const request = this.abandonRequests.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.abandonRequests.set(id, updated);
+    return updated;
+  }
+
   // Chat Message operations
   async getChatMessages(jobId: string): Promise<ChatMessage[]> {
     return Array.from(this.chatMessages.values())
@@ -853,7 +989,6 @@ export class MemStorage implements IStorage {
     const messages = Array.from(this.directMessages.values()).filter(
       (msg) => msg.senderId === userId || msg.receiverId === userId
     );
-
     const partnerMap = new Map<string, { lastMessage: DirectMessage; unreadCount: number }>();
 
     for (const msg of messages) {
@@ -871,6 +1006,29 @@ export class MemStorage implements IStorage {
     return Array.from(partnerMap.entries())
       .map(([partnerId, data]) => ({ partnerId, ...data }))
       .sort((a, b) => new Date(b.lastMessage.createdAt!).getTime() - new Date(a.lastMessage.createdAt!).getTime());
+  }
+
+  async hideConversation(userId: string, partnerId: string): Promise<void> {
+    const existing = Array.from(this.hiddenConversationsMap.values()).find(
+      (h) => h.userId === userId && h.partnerId === partnerId
+    );
+    if (existing) return;
+    const id = randomUUID();
+    this.hiddenConversationsMap.set(id, { id, userId, partnerId, hiddenAt: new Date() });
+  }
+
+  async unhideConversation(userId: string, partnerId: string): Promise<void> {
+    for (const [key, h] of Array.from(this.hiddenConversationsMap.entries())) {
+      if (h.userId === userId && h.partnerId === partnerId) {
+        this.hiddenConversationsMap.delete(key);
+      }
+    }
+  }
+
+  async getHiddenConversationPartners(userId: string): Promise<string[]> {
+    return Array.from(this.hiddenConversationsMap.values())
+      .filter((h) => h.userId === userId)
+      .map((h) => h.partnerId);
   }
 
   async createDirectMessage(message: InsertDirectMessage): Promise<DirectMessage> {
@@ -902,8 +1060,10 @@ export class MemStorage implements IStorage {
   }
 
   async getUnreadNotificationCount(userId: string): Promise<number> {
+    // Only count visible (non-dismissed) notifications so the badge can never show
+    // a count for something the user can't actually see or act on.
     return Array.from(this.notifications.values())
-      .filter((notif) => notif.userId === userId && !notif.read)
+      .filter((notif) => notif.userId === userId && !notif.dismissed && !notif.read)
       .length;
   }
 
@@ -1093,16 +1253,28 @@ export class MemStorage implements IStorage {
     return Array.from(this.ratings.values()).find((rating) => rating.jobId === jobId);
   }
 
+  async getRatingForFreelancer(jobId: string, freelancerId: string): Promise<Rating | undefined> {
+    return Array.from(this.ratings.values()).find(
+      (rating) => rating.jobId === jobId && rating.freelancerId === freelancerId
+    );
+  }
+
   async getRatingsByFreelancer(freelancerId: string): Promise<Rating[]> {
     return Array.from(this.ratings.values())
       .filter((rating) => rating.freelancerId === freelancerId)
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
+  async getRatingsByJob(jobId: string): Promise<Rating[]> {
+    return Array.from(this.ratings.values())
+      .filter((rating) => rating.jobId === jobId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
   async createRating(insertRating: InsertRating): Promise<Rating> {
-    const existing = await this.getRating(insertRating.jobId);
+    const existing = await this.getRatingForFreelancer(insertRating.jobId, insertRating.freelancerId);
     if (existing) {
-      throw new Error(`Rating already exists for job ${insertRating.jobId}`);
+      throw new Error(`Rating already exists for freelancer ${insertRating.freelancerId} on job ${insertRating.jobId}`);
     }
     const id = randomUUID();
     const rating: Rating = {
@@ -1112,6 +1284,33 @@ export class MemStorage implements IStorage {
       createdAt: new Date(),
     };
     this.ratings.set(id, rating);
+    return rating;
+  }
+
+  // Customer Rating operations
+  async getCustomerRating(jobId: string): Promise<CustomerRating | undefined> {
+    return Array.from(this.customerRatings.values()).find((rating) => rating.jobId === jobId);
+  }
+
+  async getCustomerRatings(customerId: string): Promise<CustomerRating[]> {
+    return Array.from(this.customerRatings.values())
+      .filter((rating) => rating.customerId === customerId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createCustomerRating(insertRating: InsertCustomerRating): Promise<CustomerRating> {
+    const existing = await this.getCustomerRating(insertRating.jobId);
+    if (existing) {
+      throw new Error(`Customer rating already exists for job ${insertRating.jobId}`);
+    }
+    const id = randomUUID();
+    const rating: CustomerRating = {
+      ...insertRating,
+      id,
+      review: insertRating.review ?? null,
+      createdAt: new Date(),
+    };
+    this.customerRatings.set(id, rating);
     return rating;
   }
 
@@ -1502,6 +1701,7 @@ export class MemStorage implements IStorage {
         balance: "0",
         totalDeposited: "0",
         totalDistributed: "0",
+        transferredFromCompany: "0",
         updatedAt: new Date(),
       };
     }
@@ -1512,11 +1712,15 @@ export class MemStorage implements IStorage {
     const vault = await this.getModerationVault();
     const currentBalance = parseFloat(vault.balance || "0");
     const totalDeposited = parseFloat(vault.totalDeposited || "0");
+    const transferred = parseFloat(vault.transferredFromCompany || "0");
     
     this.moderationVault = {
       ...vault,
       balance: (currentBalance + amount).toString(),
       totalDeposited: (totalDeposited + amount).toString(),
+      // Deposits move money out of the company's held funds, so track it
+      // here to keep the Company Vault's "Company Held" figure accurate.
+      transferredFromCompany: (transferred + amount).toString(),
       updatedAt: new Date(),
     };
 
@@ -1639,6 +1843,22 @@ export class MemStorage implements IStorage {
       return true;
     }
 
+    // Shared group chat where BOTH users have spoken (at least one message
+    // each). Merely being members of the same chat does not count as an
+    // interaction — both must have actively spoken in it.
+    const chatsUser1SpokeIn = new Set(
+      Array.from(this.groupChatMessagesMap.values())
+        .filter(m => m.senderId === userId1 && !m.isSystemMessage)
+        .map(m => m.groupId)
+    );
+    if (chatsUser1SpokeIn.size > 0) {
+      const user2Spoke = Array.from(this.groupChatMessagesMap.values())
+        .some(m => m.senderId === userId2 && !m.isSystemMessage && chatsUser1SpokeIn.has(m.groupId));
+      if (user2Spoke) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -1681,6 +1901,12 @@ export class MemStorage implements IStorage {
           (f.userId === friendId && f.friendId === userId)) {
         this.friends.delete(id);
       }
+    }
+    // Stamp the friend-request record between the pair (if any) so the
+    // re-request cooldown starts from the moment they unfriended.
+    const fr = await this.getFriendRequestBetweenUsers(userId, friendId);
+    if (fr && fr.status === "accepted") {
+      await this.updateFriendRequest(fr.id, { status: "accepted", updatedAt: new Date() });
     }
   }
 
@@ -1807,6 +2033,19 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  async deleteJobFreelancer(id: string): Promise<void> {
+    this.jobFreelancersMap.delete(id);
+  }
+
+  async removeJobFreelancer(jobId: string, freelancerId: string): Promise<void> {
+    for (const [key, jf] of this.jobFreelancersMap.entries()) {
+      if (jf.jobId === jobId && jf.freelancerId === freelancerId) {
+        this.jobFreelancersMap.delete(key);
+        break;
+      }
+    }
+  }
+
   // Job Submission operations
   async getJobSubmission(id: string): Promise<JobSubmission | undefined> {
     return this.jobSubmissionsMap.get(id);
@@ -1868,6 +2107,7 @@ export class MemStorage implements IStorage {
       jobId: insertDispute.jobId,
       openedByUserId: insertDispute.openedByUserId,
       reason: insertDispute.reason,
+      category: insertDispute.category || null,
       status: DisputeStatus.OPEN,
       moderatorId: null,
       resolutionNotes: null,
@@ -2086,6 +2326,7 @@ export class MemStorage implements IStorage {
       id,
       groupId: member.groupId,
       userId: member.userId,
+      role: (member as any).role || "member",
       joinedAt: new Date(),
     };
     this.groupChatMembersMap.set(id, newMember);
@@ -2096,6 +2337,15 @@ export class MemStorage implements IStorage {
     for (const [key, member] of this.groupChatMembersMap.entries()) {
       if (member.groupId === groupId && member.userId === userId) {
         this.groupChatMembersMap.delete(key);
+        break;
+      }
+    }
+  }
+
+  async updateGroupChatMemberRole(groupId: string, userId: string, role: string): Promise<void> {
+    for (const [key, member] of this.groupChatMembersMap.entries()) {
+      if (member.groupId === groupId && member.userId === userId) {
+        this.groupChatMembersMap.set(key, { ...member, role });
         break;
       }
     }
@@ -2119,6 +2369,157 @@ export class MemStorage implements IStorage {
     };
     this.groupChatMessagesMap.set(id, newMessage);
     return newMessage;
+  }
+
+  async deleteGroupChat(groupId: string): Promise<void> {
+    for (const [key, member] of this.groupChatMembersMap.entries()) {
+      if (member.groupId === groupId) this.groupChatMembersMap.delete(key);
+    }
+    for (const [key, msg] of this.groupChatMessagesMap.entries()) {
+      if (msg.groupId === groupId) this.groupChatMessagesMap.delete(key);
+    }
+    this.groupChatsMap.delete(groupId);
+  }
+
+  // Leadership Vote operations
+  async getLeadershipVote(id: string): Promise<LeadershipVote | undefined> {
+    return this.leadershipVotesMap.get(id);
+  }
+
+  async getActiveLeadershipVoteByJob(jobId: string): Promise<LeadershipVote | undefined> {
+    return Array.from(this.leadershipVotesMap.values()).find(
+      v => v.jobId === jobId && v.status === "open"
+    );
+  }
+
+  async createLeadershipVote(vote: InsertLeadershipVote): Promise<LeadershipVote> {
+    const id = randomUUID();
+    const now = new Date();
+    const newVote: LeadershipVote = {
+      id,
+      jobId: vote.jobId,
+      initiatedById: vote.initiatedById,
+      candidateId: vote.candidateId,
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+      closedAt: null,
+    };
+    this.leadershipVotesMap.set(id, newVote);
+    return newVote;
+  }
+
+  async updateLeadershipVote(id: string, updates: Partial<LeadershipVote>): Promise<LeadershipVote | undefined> {
+    const vote = this.leadershipVotesMap.get(id);
+    if (!vote) return undefined;
+    const updated = { ...vote, ...updates, updatedAt: new Date() };
+    this.leadershipVotesMap.set(id, updated);
+    return updated;
+  }
+
+  async getLeadershipVoteCasts(voteId: string): Promise<LeadershipVoteCast[]> {
+    return Array.from(this.leadershipVoteCastsMap.values())
+      .filter(c => c.voteId === voteId)
+      .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+  }
+
+  async getLeadershipVoteCast(voteId: string, voterId: string): Promise<LeadershipVoteCast | undefined> {
+    return Array.from(this.leadershipVoteCastsMap.values()).find(
+      c => c.voteId === voteId && c.voterId === voterId
+    );
+  }
+
+  async createLeadershipVoteCast(cast: InsertLeadershipVoteCast): Promise<LeadershipVoteCast> {
+    const id = randomUUID();
+    const newCast: LeadershipVoteCast = {
+      id,
+      voteId: cast.voteId,
+      voterId: cast.voterId,
+      choice: cast.choice,
+      createdAt: new Date(),
+    };
+    this.leadershipVoteCastsMap.set(id, newCast);
+    return newCast;
+  }
+
+  // Moderator Meeting operations
+  async getMeeting(id: string): Promise<Meeting | undefined> {
+    return this.meetingsMap.get(id);
+  }
+
+  async getMeetingByGroupChat(groupChatId: string): Promise<Meeting | undefined> {
+    return Array.from(this.meetingsMap.values()).find(m => m.groupChatId === groupChatId);
+  }
+
+  async getActiveMeetingByJob(jobId: string): Promise<Meeting | undefined> {
+    return Array.from(this.meetingsMap.values()).find(
+      m => m.jobId === jobId && m.status === "active"
+    );
+  }
+
+  async createMeeting(meeting: InsertMeeting): Promise<Meeting> {
+    const id = randomUUID();
+    const now = new Date();
+    const newMeeting: Meeting = {
+      id,
+      jobId: meeting.jobId,
+      groupChatId: meeting.groupChatId,
+      moderatorId: meeting.moderatorId,
+      status: "active",
+      mutedUserIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.meetingsMap.set(id, newMeeting);
+    return newMeeting;
+  }
+
+  async updateMeeting(id: string, updates: Partial<Meeting>): Promise<Meeting | undefined> {
+    const meeting = this.meetingsMap.get(id);
+    if (!meeting) return undefined;
+    const updated = { ...meeting, ...updates, updatedAt: new Date() };
+    this.meetingsMap.set(id, updated);
+    return updated;
+  }
+
+  async deleteMeeting(id: string): Promise<void> {
+    this.meetingsMap.delete(id);
+  }
+
+  // Money Request operations
+  async getMoneyRequest(id: string): Promise<MoneyRequest | undefined> {
+    return this.moneyRequestsMap.get(id);
+  }
+
+  async getMoneyRequestsForUser(userId: string): Promise<MoneyRequest[]> {
+    return Array.from(this.moneyRequestsMap.values())
+      .filter(r => r.requesterId === userId || r.recipientId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async createMoneyRequest(request: InsertMoneyRequest): Promise<MoneyRequest> {
+    const id = randomUUID();
+    const now = new Date();
+    const newRequest: MoneyRequest = {
+      id,
+      requesterId: request.requesterId,
+      recipientId: request.recipientId,
+      amount: request.amount,
+      message: request.message ?? null,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.moneyRequestsMap.set(id, newRequest);
+    return newRequest;
+  }
+
+  async updateMoneyRequest(id: string, updates: Partial<MoneyRequest>): Promise<MoneyRequest | undefined> {
+    const request = this.moneyRequestsMap.get(id);
+    if (!request) return undefined;
+    const updated = { ...request, ...updates, updatedAt: new Date() };
+    this.moneyRequestsMap.set(id, updated);
+    return updated;
   }
 
   // Follow operations

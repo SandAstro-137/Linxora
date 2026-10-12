@@ -23,6 +23,43 @@ export async function apiRequest(
   return res;
 }
 
+/**
+ * Extract the specific error message from a failed request.
+ * apiRequest throws `"<status>: <body>"` where body is often JSON like
+ * {"error":"..."}. This unwraps it so users see the actual reason
+ * (e.g. "You cannot add Alex Chen — they have blocked you") instead of
+ * a raw status blob or a generic fallback.
+ */
+export function getApiErrorMessage(error: unknown, fallback = "Something went wrong. Please try again."): string {
+  const raw = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "";
+  if (!raw) return fallback;
+
+  // Strip a leading "<3-digit status>: " prefix produced by throwIfResNotOk.
+  let body = raw;
+  const colonIndex = raw.indexOf(": ");
+  if (colonIndex !== -1 && /^\d{3}$/.test(raw.slice(0, colonIndex))) {
+    body = raw.slice(colonIndex + 2);
+  }
+
+  // Unwrap JSON error bodies.
+  if (body.trimStart().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed.error === "string" && parsed.error) return parsed.error;
+      if (parsed && typeof parsed.message === "string" && parsed.message) return parsed.message;
+    } catch {
+      // not JSON — fall through
+    }
+  }
+
+  body = body.split("\n")[0].trim();
+  return body || fallback;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

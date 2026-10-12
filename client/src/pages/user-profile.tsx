@@ -6,20 +6,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award, Flag, UserCheck, UserX, Bell, BellOff, Users, Mail } from "lucide-react";
+import { User, Star, Briefcase, TrendingUp, Calendar, MessageSquare, UserPlus, ArrowLeft, Award, Flag, UserCheck, UserX, Bell, BellOff, Users, Mail, ChevronDown, ChevronUp, Link2, Clock } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Link } from "wouter";
-import { format } from "date-fns";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { formatAccountCreated } from "@/lib/utils";
 import { ReportDialog } from "@/components/ReportDialog";
 
 interface UserStatus {
   onlineStatus: "online" | "offline";
-  workStatus: "working" | "on-break" | "unemployed" | "inactive" | null;
+  workStatus: "active" | "working" | "on-break" | "unemployed" | "inactive" | null;
   displayStatus: string;
 }
 
@@ -33,8 +35,12 @@ interface PublicProfile {
   rating: string;
   ratingCount: number;
   completedJobs: number;
+  completionPercentage: string;
+  totalJobs: number;
   createdAt: string;
   specialization: string | null;
+  portfolio: string | null;
+  workingHours: Record<string, { start: string; end: string }> | null;
   bio: string | null;
   status: UserStatus;
   email: string | null;
@@ -47,11 +53,21 @@ interface PublicProfile {
   friendRequestStatus: string | null;
   friendRequestId: string | null;
   friendRequestFromMe: boolean | null;
-  recentCompletedJobs?: {
+  completedJobHistory?: {
     id: string;
     title: string;
     category: string;
     completedAt: string;
+  }[];
+  reviews?: {
+    id: string;
+    score: number;
+    review: string | null;
+    createdAt: string;
+    reviewerId: string;
+    reviewerUsername: string;
+    reviewerAvatar: string | null;
+    jobTitle: string | null;
   }[];
 }
 
@@ -107,10 +123,11 @@ function getOnlineStatusColor(status: string): string {
 function getWorkStatusBadge(workStatus: string | null): { text: string; variant: "default" | "secondary" | "outline" | "destructive" } | null {
   if (!workStatus) return null;
   switch (workStatus) {
+    case "active": return { text: "Active", variant: "default" };
     case "working": return { text: "Working", variant: "default" };
     case "on-break": return { text: "On Break", variant: "secondary" };
     case "unemployed": return { text: "Available", variant: "outline" };
-    case "inactive": return { text: "Inactive", variant: "destructive" };
+    case "inactive": return { text: "Inactive", variant: "secondary" };
     default: return null;
   }
 }
@@ -120,6 +137,7 @@ export default function UserProfilePage() {
   const userId = params?.id;
   const { toast } = useToast();
   const [recommendDialogOpen, setRecommendDialogOpen] = useState(false);
+  const [workingHoursOpen, setWorkingHoursOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [freelancerMessage, setFreelancerMessage] = useState("");
@@ -140,6 +158,7 @@ export default function UserProfilePage() {
       return res.json();
     },
     enabled: !!userId,
+    refetchInterval: 5000, // Online status / profile state stays current without a manual refresh
   });
 
   const { data: availableJobs = [] } = useQuery<AvailableJob[]>({
@@ -587,6 +606,65 @@ export default function UserProfilePage() {
             </>
           )}
 
+          {(profile.role === "freelancer" || profile.role === "moderator") && profile.portfolio && (
+            <>
+              <Separator />
+              <div data-testid="section-portfolio" className="min-w-0">
+                <h3 className="font-semibold mb-2">Portfolio</h3>
+                <a
+                  href={profile.portfolio}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline flex items-center gap-1 min-w-0 break-all"
+                  data-testid="link-profile-portfolio"
+                >
+                  <Link2 className="w-4 h-4 shrink-0" />
+                  <span className="break-all min-w-0">{profile.portfolio}</span>
+                </a>
+              </div>
+            </>
+          )}
+
+          {profile.role === "freelancer" && profile.workingHours && (
+            <>
+              <Separator />
+              <Collapsible open={workingHoursOpen} onOpenChange={setWorkingHoursOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-between"
+                    data-testid="button-toggle-working-hours"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      Working Hours (Eastern Time)
+                    </span>
+                    {workingHoursOpen ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3">
+                  <div className="bg-muted/30 p-4 rounded-lg border" data-testid="section-working-hours">
+                    {Object.entries(profile.workingHours).map(([day, hours]) => (
+                      <div key={day} className="flex items-center justify-between py-1 text-sm">
+                        <span className="capitalize font-medium">{day}</span>
+                        <span className="text-muted-foreground">
+                          {(hours as any).start && (hours as any).end
+                            ? `${(hours as any).start} - ${(hours as any).end}`
+                            : "Off"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          )}
+
           <Separator />
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -600,7 +678,7 @@ export default function UserProfilePage() {
                 <div className="text-center p-3 bg-muted rounded-lg">
                   <Star className="w-5 h-5 mx-auto mb-1 text-yellow-500" />
                   <p className="text-lg font-bold" data-testid="text-rating">
-                    {profile.rating || "N/A"}
+                    {profile.ratingCount > 0 ? profile.rating : "N/A"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {profile.ratingCount || 0} reviews
@@ -613,14 +691,23 @@ export default function UserProfilePage() {
                   </p>
                   <p className="text-xs text-muted-foreground">Completed Jobs</p>
                 </div>
+                {profile.role === "freelancer" && (
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <TrendingUp className="w-5 h-5 mx-auto mb-1 text-green-500" />
+                    <p className="text-lg font-bold" data-testid="text-completion-rate">
+                      {profile.completionPercentage || "0"}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">Completion Rate</p>
+                  </div>
+                )}
               </>
             )}
             <div className="text-center p-3 bg-muted rounded-lg">
               <Calendar className="w-5 h-5 mx-auto mb-1 text-green-500" />
-              <p className="text-sm font-medium" data-testid="text-joined">
-                {format(new Date(profile.createdAt), "MMM yyyy")}
+              <p className="text-sm font-medium" data-testid="text-account-created">
+                {formatAccountCreated(profile.createdAt)}
               </p>
-              <p className="text-xs text-muted-foreground">Member Since</p>
+              <p className="text-xs text-muted-foreground">Account Created</p>
             </div>
             <div className="text-center p-3 bg-muted rounded-lg">
               <Users className="w-5 h-5 mx-auto mb-1 text-purple-500" />
@@ -629,25 +716,79 @@ export default function UserProfilePage() {
             </div>
           </div>
 
-          {profile.recentCompletedJobs && profile.recentCompletedJobs.length > 0 && (
+          {profile.completedJobHistory && profile.completedJobHistory.length > 0 && (
             <>
               <Separator />
               <div>
-                <h3 className="font-semibold mb-3">Recent Completed Jobs</h3>
+                <h3 className="font-semibold mb-3">Completed Jobs</h3>
+                <ScrollArea className="h-[400px] pr-3">
                 <div className="space-y-2">
-                  {profile.recentCompletedJobs.map((job) => (
+                  {profile.completedJobHistory.map((job) => (
                     <div
                       key={job.id}
-                      className="flex items-center justify-between p-2 border rounded-lg text-sm"
+                      className="flex items-center justify-between gap-2 p-2 border rounded-lg text-sm overflow-hidden"
                       data-testid={`completed-job-${job.id}`}
                     >
-                      <div>
-                        <p className="font-medium">{job.title}</p>
-                        <p className="text-xs text-muted-foreground">{job.category}</p>
+                      <div className="min-w-0">
+                        <Link href={`/jobs/${job.id}`} className="font-medium hover:underline cursor-pointer break-words">
+                          {job.title}
+                        </Link>
+                        <p className="text-xs text-muted-foreground break-words">{job.category}</p>
                       </div>
                     </div>
                   ))}
                 </div>
+                </ScrollArea>
+              </div>
+            </>
+          )}
+
+          {(profile.role === "freelancer" || profile.role === "customer") && (
+            <>
+              <Separator />
+              <div data-testid="section-reviews">
+                <h3 className="font-semibold mb-3">Reviews</h3>
+                {!profile.reviews || profile.reviews.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No reviews yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {profile.reviews.map((review) => (
+                      <div key={review.id} className="p-3 border rounded-lg space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Link href={`/user/${review.reviewerId}`} className="flex items-center gap-2 hover:underline" data-testid={`link-reviewer-${review.id}`}>
+                            <Avatar className="h-7 w-7">
+                              <AvatarImage src={review.reviewerAvatar || undefined} />
+                              <AvatarFallback>
+                                {review.reviewerUsername.charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm font-medium">{review.reviewerUsername}</span>
+                          </Link>
+                          {review.jobTitle && (
+                            <span className="text-xs text-muted-foreground ml-auto truncate">
+                              on "{review.jobTitle}"
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex gap-1">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                              key={star}
+                              className={`w-4 h-4 ${
+                                star <= review.score
+                                  ? "fill-yellow-400 text-yellow-400"
+                                  : "text-gray-300"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        {review.review && (
+                          <p className="text-sm text-muted-foreground">"{review.review}"</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}

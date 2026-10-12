@@ -288,7 +288,7 @@ export function ReportDialog({ open, onOpenChange, targetId, reportType, targetN
               </div>
               <DialogDescription>
                 {effectiveType === "bug"
-                  ? "Help us improve Linxora by describing the issue you encountered."
+                  ? "Help us improve Linxova by describing the issue you encountered."
                   : effectiveType === "user" && allowTypeSelection
                     ? "Tell us about the member's behavior so our moderators can investigate."
                     : targetName 

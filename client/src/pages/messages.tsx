@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,17 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   MessageSquare,
   Send,
   Plus,
@@ -38,8 +49,11 @@ import {
   UserMinus,
   LogOut,
   Pencil,
+  Gavel,
+  Trash2,
+  Ban,
 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
@@ -66,6 +80,7 @@ interface Conversation {
   partnerId: string;
   lastMessage: DirectMessage;
   unreadCount: number;
+  isBlocked?: boolean;
   partner: UserInfo | null;
 }
 
@@ -82,7 +97,12 @@ interface GroupChat {
   creatorId: string;
   createdAt: string;
   members: GroupChatMemberInfo[];
+  memberRoles?: Record<string, string>;
+  myRole?: string;
   lastMessage?: { message: string; createdAt: string } | null;
+  isMeeting?: boolean;
+  meetingStatus?: string | null;
+  meetingModeratorId?: string | null;
 }
 
 interface GroupChatMessage {
@@ -206,7 +226,7 @@ export default function MessagesPage() {
     onError: (error: any) => {
       toast({
         title: "Failed to send message",
-        description: error?.message || "Please try again",
+        description: getApiErrorMessage(error),
         variant: "destructive",
       });
     },
@@ -225,7 +245,7 @@ export default function MessagesPage() {
     onError: (error: any) => {
       toast({
         title: "Failed to send message",
-        description: error?.message || "Please try again",
+        description: getApiErrorMessage(error),
         variant: "destructive",
       });
     },
@@ -246,7 +266,7 @@ export default function MessagesPage() {
     },
     onError: (error: any) => {
       setFoundUser(null);
-      setSearchError(error?.message || "User not found");
+      setSearchError(getApiErrorMessage(error, "User not found"));
     },
   });
 
@@ -273,7 +293,7 @@ export default function MessagesPage() {
       setGroupMemberIdInput("");
     },
     onError: (error: any) => {
-      setGroupMemberIdError(error?.message || "User not found");
+      setGroupMemberIdError(getApiErrorMessage(error, "User not found"));
     },
   });
 
@@ -290,8 +310,8 @@ export default function MessagesPage() {
       setGroupMemberIdInput("");
       setActiveChat({ type: "group", groupId: data.id });
     },
-    onError: () => {
-      toast({ title: "Failed to create group chat", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: "Failed to create group chat", description: getApiErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -308,7 +328,7 @@ export default function MessagesPage() {
       toast({ title: "Member added" });
     },
     onError: (error: any) => {
-      setAddMemberError(error?.message || "Failed to add member");
+      setAddMemberError(getApiErrorMessage(error, "Failed to add member"));
     },
   });
 
@@ -322,8 +342,8 @@ export default function MessagesPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/group-chats"] });
       toast({ title: "Member removed" });
     },
-    onError: () => {
-      toast({ title: "Failed to remove member", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: "Failed to remove member", description: getApiErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -337,8 +357,8 @@ export default function MessagesPage() {
       setActiveChat(null);
       toast({ title: "Left group chat" });
     },
-    onError: () => {
-      toast({ title: "Failed to leave group", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: "Failed to leave group", description: getApiErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -353,8 +373,8 @@ export default function MessagesPage() {
       setRenameGroupName("");
       toast({ title: "Group renamed" });
     },
-    onError: () => {
-      toast({ title: "Failed to rename group", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: "Failed to rename group", description: getApiErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -429,6 +449,97 @@ export default function MessagesPage() {
   const activeGroup = groupChats.find(
     g => activeChat?.type === "group" && g.id === activeChat.groupId
   );
+  const activeGroupIsMeeting = !!(
+    activeGroup?.isMeeting || activeGroupDetails?.isMeeting
+  );
+  const activeGroupMeetingId =
+    (activeGroup as any)?.meetingId || (activeGroupDetails as any)?.meetingId || null;
+  const activeGroupMeetingStatus =
+    (activeGroup as any)?.meetingStatus || (activeGroupDetails as any)?.meetingStatus || null;
+  const amMeetingModerator =
+    activeGroupIsMeeting &&
+    ((activeGroup as any)?.meetingModeratorId === user?.id ||
+      (activeGroupDetails as any)?.meetingModeratorId === user?.id ||
+      !!user && ["staff", "moderator", "head_of_moderation", "founder"].includes(user.role));
+
+  const deleteMeetingMutation = useMutation({
+    mutationFn: async (meetingId: string) => {
+      const res = await apiRequest("DELETE", `/api/meetings/${meetingId}`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/group-chats"] });
+      setActiveChat(null);
+      toast({ title: "Meeting deleted for everyone" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete meeting", variant: "destructive" });
+    },
+  });
+
+  const toggleBlockMutation = useMutation({
+    mutationFn: async ({ partnerId, isBlocked }: { partnerId: string; isBlocked: boolean }) => {
+      if (isBlocked) {
+        await apiRequest("DELETE", `/api/users/${partnerId}/block`, {});
+      } else {
+        await apiRequest("POST", `/api/users/${partnerId}/block`, {});
+      }
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
+      toast({
+        title: vars.isBlocked ? "User unblocked" : "User blocked",
+        description: vars.isBlocked
+          ? undefined
+          : "They can no longer message you or add you to group chats.",
+      });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update block", description: getApiErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const removeConversationMutation = useMutation({
+    mutationFn: async (partnerId: string) => {
+      await apiRequest("DELETE", `/api/messages/conversations/${partnerId}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
+      setActiveChat(null);
+      toast({ title: "Conversation removed", description: "It will reappear if they message you again." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to remove conversation", description: getApiErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const transferOwnershipMutation = useMutation({
+    mutationFn: async ({ groupId, userId }: { groupId: string; userId: string }) => {
+      await apiRequest("PUT", `/api/group-chats/${groupId}/transfer-ownership`, { userId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/group-chats"] });
+      if (groupId) queryClient.invalidateQueries({ queryKey: ["/api/group-chats", groupId, "details"] });
+      toast({ title: "Ownership transferred" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to transfer ownership", description: getApiErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const setEditorMutation = useMutation({
+    mutationFn: async ({ groupId, userId, role }: { groupId: string; userId: string; role: "editor" | "member" }) => {
+      await apiRequest("PUT", `/api/group-chats/${groupId}/members/${userId}/role`, { role });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/group-chats"] });
+      if (groupId) queryClient.invalidateQueries({ queryKey: ["/api/group-chats", groupId, "details"] });
+      toast({ title: "Member role updated" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update role", description: getApiErrorMessage(error), variant: "destructive" });
+    },
+  });
 
   if (!user) return null;
 
@@ -486,17 +597,19 @@ export default function MessagesPage() {
                   <Card className="mt-4">
                     <CardContent className="p-4">
                       <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarImage src={foundUser.avatar || undefined} />
-                          <AvatarFallback>{foundUser.username.slice(0, 2).toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1">
-                          <p className="font-medium" data-testid="text-found-username">{foundUser.username}</p>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-muted-foreground">ID: {foundUser.userId}</span>
-                            <Badge variant="secondary" className="text-xs">{foundUser.role}</Badge>
+                        <Link href={`/user/${foundUser.id}`} className="flex items-center gap-3 min-w-0 flex-1 hover:underline" data-testid="link-found-user">
+                          <Avatar>
+                            <AvatarImage src={foundUser.avatar || undefined} />
+                            <AvatarFallback>{foundUser.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium" data-testid="text-found-username">{foundUser.username}</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">ID: {foundUser.userId}</span>
+                              <Badge variant="secondary" className="text-xs">{foundUser.role}</Badge>
+                            </div>
                           </div>
-                        </div>
+                        </Link>
                       </div>
                       <Button onClick={handleStartDM} className="w-full mt-3" data-testid="button-start-conversation">
                         <MessageSquare className="w-4 h-4 mr-2" />
@@ -563,13 +676,13 @@ export default function MessagesPage() {
                     <p className="text-sm font-medium">Members to add:</p>
                     {pendingGroupMembers.map((m) => (
                       <div key={m.id} className="flex items-center justify-between py-1">
-                        <div className="flex items-center gap-2">
+                        <Link href={`/user/${m.id}`} className="flex items-center gap-2 min-w-0 hover:underline" data-testid={`link-group-member-${m.id}`}>
                           <Avatar className="h-7 w-7">
                             <AvatarImage src={m.avatar || undefined} />
                             <AvatarFallback>{m.username.slice(0, 2).toUpperCase()}</AvatarFallback>
                           </Avatar>
-                          <span className="text-sm">{m.username}</span>
-                        </div>
+                          <span className="text-sm truncate">{m.username}</span>
+                        </Link>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -709,38 +822,119 @@ export default function MessagesPage() {
             <>
               {/* DM Header */}
               <CardHeader className="pb-3 border-b shrink-0">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => selectedPartner && navigate(`/user/${activeChat.partnerId}`)}
-                    className="cursor-pointer"
-                    data-testid="button-partner-avatar"
-                  >
-                    <Avatar>
-                      <AvatarImage src={selectedPartner?.avatar || undefined} />
-                      <AvatarFallback>
-                        {selectedPartner?.username?.slice(0, 2).toUpperCase() || "??"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </button>
-                  <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
                     <button
                       onClick={() => selectedPartner && navigate(`/user/${activeChat.partnerId}`)}
-                      className="font-semibold text-base hover:underline cursor-pointer text-left"
-                      data-testid="link-partner-username"
+                      className="cursor-pointer"
+                      data-testid="button-partner-avatar"
                     >
-                      {selectedPartner?.username || "Unknown User"}
+                      <Avatar>
+                        <AvatarImage src={selectedPartner?.avatar || undefined} />
+                        <AvatarFallback>
+                          {selectedPartner?.username?.slice(0, 2).toUpperCase() || "??"}
+                        </AvatarFallback>
+                      </Avatar>
                     </button>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        ID: {selectedPartner?.userId}
-                      </span>
-                      {selectedPartner?.role && (
-                        <Badge variant="secondary" className="text-xs">
-                          {selectedPartner.role}
-                        </Badge>
-                      )}
+                    <div>
+                      <button
+                        onClick={() => selectedPartner && navigate(`/user/${activeChat.partnerId}`)}
+                        className="font-semibold text-base hover:underline cursor-pointer text-left"
+                        data-testid="link-partner-username"
+                      >
+                        {selectedPartner?.username || "Unknown User"}
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          ID: {selectedPartner?.userId}
+                        </span>
+                        {selectedPartner?.role && (
+                          <Badge variant="secondary" className="text-xs">
+                            {selectedPartner.role}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="icon" variant="ghost" data-testid="button-dm-options">
+                        <MoreVertical className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {selectedPartner && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <DropdownMenuItem
+                              className={selectedPartner.id && conversations.find(c => c.partnerId === selectedPartner.id)?.isBlocked ? "" : "text-destructive"}
+                              onSelect={(e) => e.preventDefault()}
+                              data-testid="button-block-user"
+                            >
+                              <Ban className="w-4 h-4 mr-2" />
+                              {conversations.find(c => c.partnerId === selectedPartner.id)?.isBlocked ? "Unblock User" : "Block User"}
+                            </DropdownMenuItem>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                {conversations.find(c => c.partnerId === selectedPartner.id)?.isBlocked ? `Unblock ${selectedPartner.username}?` : `Block ${selectedPartner.username}?`}
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {conversations.find(c => c.partnerId === selectedPartner.id)?.isBlocked
+                                  ? "They will be able to message you and add you to group chats again."
+                                  : "They will no longer be able to send you direct messages or add you to group chats. You can still share group chats added by other people."}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => {
+                                  const pid = activeChat?.type === "dm" ? activeChat.partnerId : selectedPartner.id;
+                                  const blocked = conversations.find(c => c.partnerId === pid)?.isBlocked;
+                                  if (pid) toggleBlockMutation.mutate({ partnerId: pid, isBlocked: !!blocked });
+                                }}
+                                data-testid="button-confirm-block-user"
+                              >
+                                {conversations.find(c => c.partnerId === selectedPartner.id)?.isBlocked ? "Unblock" : "Block"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onSelect={(e) => e.preventDefault()}
+                            data-testid="button-remove-conversation"
+                          >
+                            <UserMinus className="w-4 h-4 mr-2" />
+                            Remove from Messages
+                          </DropdownMenuItem>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Remove this conversation?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {selectedPartner?.username || "This user"} will be removed from your Messages list. Your
+                              messages with them are not deleted, and the conversation will reappear if they message
+                              you again.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => activeChat?.type === "dm" && removeConversationMutation.mutate(activeChat.partnerId)}
+                              data-testid="button-confirm-remove-conversation"
+                            >
+                              Remove
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </CardHeader>
 
@@ -810,9 +1004,18 @@ export default function MessagesPage() {
 
               {/* DM Input */}
               <div className="p-4 border-t shrink-0">
+                {conversations.find(c => c.partnerId === activeChat.partnerId)?.isBlocked && (
+                  <div className="mb-2 text-sm text-muted-foreground bg-muted rounded-md px-3 py-2">
+                    You blocked this user. Unblock them to send messages.
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <Textarea
-                    placeholder="Type a message..."
+                    placeholder={
+                      conversations.find(c => c.partnerId === activeChat.partnerId)?.isBlocked
+                        ? "You blocked this user"
+                        : "Type a message..."
+                    }
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -821,7 +1024,11 @@ export default function MessagesPage() {
                   />
                   <Button
                     onClick={handleSendMessage}
-                    disabled={!newMessage.trim() || sendDMMutation.isPending}
+                    disabled={
+                      !newMessage.trim() ||
+                      sendDMMutation.isPending ||
+                      conversations.find(c => c.partnerId === activeChat.partnerId)?.isBlocked
+                    }
                     size="icon"
                     className="h-auto"
                     data-testid="button-send-message"
@@ -857,19 +1064,46 @@ export default function MessagesPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setManageGroupOpen(true)} data-testid="button-manage-group">
-                        <Pencil className="w-4 h-4 mr-2" />
-                        Manage Group
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        onClick={() => activeChat.type === "group" && leaveGroupMutation.mutate(activeChat.groupId)}
-                        data-testid="button-leave-group"
-                      >
-                        <LogOut className="w-4 h-4 mr-2" />
-                        Leave Group
-                      </DropdownMenuItem>
+                      {activeGroupIsMeeting ? (
+                        amMeetingModerator ? (
+                          <>
+                            <DropdownMenuItem onClick={() => setManageGroupOpen(true)} data-testid="button-manage-group">
+                              <Pencil className="w-4 h-4 mr-2" />
+                              Manage Group
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => activeGroupMeetingId && deleteMeetingMutation.mutate(activeGroupMeetingId)}
+                              data-testid="button-delete-meeting"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Meeting
+                            </DropdownMenuItem>
+                          </>
+                        ) : (
+                          <DropdownMenuItem disabled data-testid="button-meeting-managed">
+                            <Gavel className="w-4 h-4 mr-2" />
+                            Managed by moderator
+                          </DropdownMenuItem>
+                        )
+                      ) : (
+                        <>
+                          <DropdownMenuItem onClick={() => setManageGroupOpen(true)} data-testid="button-manage-group">
+                            <Pencil className="w-4 h-4 mr-2" />
+                            Manage Group
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => activeChat.type === "group" && leaveGroupMutation.mutate(activeChat.groupId)}
+                            data-testid="button-leave-group"
+                          >
+                            <LogOut className="w-4 h-4 mr-2" />
+                            Leave Group
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -895,7 +1129,7 @@ export default function MessagesPage() {
                             className="flex justify-center"
                             data-testid={`group-system-msg-${msg.id}`}
                           >
-                            <span className="text-xs text-muted-foreground bg-muted rounded-full px-3 py-1">
+                            <span className="text-xs text-muted-foreground bg-muted rounded-full px-3 py-1 max-w-full break-words text-center">
                               {msg.message}
                             </span>
                           </div>
@@ -982,8 +1216,8 @@ export default function MessagesPage() {
             <DialogTitle>Manage Group</DialogTitle>
           </DialogHeader>
           <div className="space-y-5 py-2">
-            {/* Rename – creator only */}
-            {activeGroupDetails?.creatorId === user.id && (
+            {/* Rename – owner or editor */}
+            {(activeGroupDetails?.creatorId === user.id || activeGroupDetails?.myRole === "editor") && (
               <div className="space-y-2">
                 <p className="text-sm font-medium">Rename Group</p>
                 <div className="flex gap-2">
@@ -1009,40 +1243,85 @@ export default function MessagesPage() {
             <div className="space-y-2">
               <p className="text-sm font-medium">Members</p>
               <div className="space-y-2">
-                {(activeGroupDetails?.members || []).map((m) => (
-                  <div key={m.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => navigate(`/user/${m.id}`)}>
-                        <Avatar className="h-7 w-7">
-                          <AvatarImage src={m.avatar || undefined} />
-                          <AvatarFallback>{m.username.slice(0, 2).toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                      </button>
-                      <button onClick={() => navigate(`/user/${m.id}`)} className="text-sm hover:underline">
-                        {m.username}
-                      </button>
-                      {m.id === activeGroupDetails?.creatorId && (
-                        <Badge variant="secondary" className="text-xs">Creator</Badge>
-                      )}
+                {(activeGroupDetails?.members || []).map((m) => {
+                  const isOwner = m.id === activeGroupDetails?.creatorId;
+                  const memberRole = isOwner ? "owner" : (activeGroupDetails?.memberRoles?.[m.id] || "member");
+                  const amOwner = activeGroupDetails?.creatorId === user.id;
+                  const amEditor = !amOwner && activeGroupDetails?.myRole === "editor";
+                  // Owner can kick anyone but themselves; editor can kick plain members only.
+                  const canKick = (amOwner && !isOwner) || (amEditor && memberRole === "member");
+                  return (
+                    <div key={m.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => navigate(`/user/${m.id}`)}>
+                          <Avatar className="h-7 w-7">
+                            <AvatarImage src={m.avatar || undefined} />
+                            <AvatarFallback>{m.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                        </button>
+                        <button onClick={() => navigate(`/user/${m.id}`)} className="text-sm hover:underline">
+                          {m.username}
+                        </button>
+                        {isOwner && <Badge variant="secondary" className="text-xs">Owner</Badge>}
+                        {!isOwner && memberRole === "editor" && (
+                          <Badge variant="outline" className="text-xs">Editor</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {amOwner && !isOwner && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs h-7"
+                            onClick={() =>
+                              groupId &&
+                              transferOwnershipMutation.mutate({ groupId, userId: m.id })
+                            }
+                            disabled={transferOwnershipMutation.isPending}
+                            data-testid={`button-transfer-owner-${m.id}`}
+                          >
+                            Make Owner
+                          </Button>
+                        )}
+                        {amOwner && !isOwner && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs h-7"
+                            onClick={() =>
+                              groupId &&
+                              setEditorMutation.mutate({
+                                groupId,
+                                userId: m.id,
+                                role: memberRole === "editor" ? "member" : "editor",
+                              })
+                            }
+                            disabled={setEditorMutation.isPending}
+                            data-testid={`button-toggle-editor-${m.id}`}
+                          >
+                            {memberRole === "editor" ? "Remove Editor" : "Make Editor"}
+                          </Button>
+                        )}
+                        {canKick && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => groupId && removeMemberMutation.mutate({ groupId, userId: m.id })}
+                            disabled={removeMemberMutation.isPending}
+                            data-testid={`button-kick-${m.id}`}
+                          >
+                            <UserMinus className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    {activeGroupDetails?.creatorId === user.id && m.id !== user.id && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => groupId && removeMemberMutation.mutate({ groupId, userId: m.id })}
-                        disabled={removeMemberMutation.isPending}
-                        data-testid={`button-kick-${m.id}`}
-                      >
-                        <UserMinus className="w-4 h-4" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
-            {/* Add member – creator only */}
-            {activeGroupDetails?.creatorId === user.id && (
+            {/* Add member – owner or editor */}
+            {(activeGroupDetails?.creatorId === user.id || activeGroupDetails?.myRole === "editor") && (
               <div className="space-y-2">
                 <p className="text-sm font-medium">Add Member</p>
                 <div className="flex gap-2">

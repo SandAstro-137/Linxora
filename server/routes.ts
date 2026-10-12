@@ -1,9 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { randomBytes, randomUUID } from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./storage";
+import { storage, type CalendarEvent } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
-import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus } from "@shared/schema";
+import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, getLevelFromEarnings, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertCustomerRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus, insertLeadershipVoteSchema, insertLeadershipVoteCastSchema, insertMeetingSchema, LeadershipVoteStatus, LeadershipVoteChoice, MeetingStatus, AbandonStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
 import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
@@ -15,6 +16,7 @@ const uploadedFiles = new Map<string, string>();
 
 // Team Room client tracking (moved here for scope visibility in API routes)
 interface TeamRoomClient {
+  id: string;
   ws: any;
   userId: string;
   username: string;
@@ -24,6 +26,27 @@ interface TeamRoomClient {
 
 const teamRoomClients = new Map<string, TeamRoomClient>();
 
+// All live connections for a user (a user may have several tabs open).
+function getTeamRoomClientsForUser(userId: string): TeamRoomClient[] {
+  const result: TeamRoomClient[] = [];
+  teamRoomClients.forEach((client) => {
+    if (client.userId === userId) result.push(client);
+  });
+  return result;
+}
+
+// Active team room voice calls - server-authoritative list so every member sees
+// the same set of concurrent calls. A call is only removed when all participants
+// leave, or when a founder/head of moderation explicitly closes it.
+interface TeamRoomCall {
+  id: string;
+  initiatorId: string;
+  initiatorUsername: string;
+  participants: Set<string>;
+  createdAt: number;
+}
+const teamRoomCalls = new Map<string, TeamRoomCall>();
+
 // Team Room WebSocket tokens - short-lived tokens for secure WS authentication
 interface TeamRoomToken {
   userId: string;
@@ -31,10 +54,116 @@ interface TeamRoomToken {
 }
 
 const teamRoomTokens = new Map<string, TeamRoomToken>();
+const linoMemory = new Map<string, string[]>();
+
+function recordLinoMemory(userId: string, message: string) {
+  if (!message) return;
+  const cleaned = message.trim();
+  if (!cleaned) return;
+
+  const history = linoMemory.get(userId) || [];
+  if (history[history.length - 1] !== cleaned) {
+    history.push(cleaned);
+    if (history.length > 50) {
+      history.shift();
+    }
+    linoMemory.set(userId, history);
+  }
+}
+
+function getLinoMemoryTopics(userId: string) {
+  const history = linoMemory.get(userId) || [];
+  const text = history.join(" ").toLowerCase();
+  const topics = new Set<string>();
+
+  const topicMap: Record<string, string[]> = {
+    wallet: ["wallet", "payment", "deposit", "withdraw", "escrow"],
+    job: ["job", "jobs", "freelancer", "customer", "application", "submit", "approval", "claim", "in progress"],
+    moderation: ["moderator", "report", "dispute", "review", "approval", "reject"],
+    profile: ["profile", "role", "level", "rating", "account"],
+    team: ["team", "friend", "group", "collaborat", "chat"],
+    notifications: ["notification", "alert", "message", "unread"],
+    support: ["support", "bug", "issue"],
+  };
+
+  for (const [topic, phrases] of Object.entries(topicMap)) {
+    if (phrases.some((phrase) => text.includes(phrase))) {
+      topics.add(topic);
+    }
+  }
+
+  return Array.from(topics);
+}
+
+function getLinoFallbackReply(recentMessages: Array<{ role: string; content: string }>, userId: string) {
+  const lastMessage = recentMessages.length > 0 ? recentMessages[recentMessages.length - 1].content.trim() : "";
+  const normalized = lastMessage.toLowerCase();
+  const memoryTopics = getLinoMemoryTopics(userId);
+
+  const isGreeting = ["hi", "hello", "hey", "yo", "good morning", "good afternoon", "good evening"].some((g) => normalized === g || normalized.startsWith(`${g} `));
+  const mentionsJob = /(job|jobs|freelancer|customer|apply|claim|browse|listing|hire|work)/.test(normalized);
+  const mentionsWallet = /(wallet|payment|deposit|withdraw|escrow|balance|funds|usd)/.test(normalized);
+  const mentionsModeration = /(moderator|moderation|report|dispute|approval|reject|review)/.test(normalized);
+  const mentionsProfile = /(profile|role|level|rating|account|username|avatar)/.test(normalized);
+  const mentionsNotifications = /(notification|alert|message|unread|update|notice)/.test(normalized);
+  const mentionsTeam = /(team|group|collaborat|friend|invite|chat)/.test(normalized);
+  const mentionsSupport = /(support|bug|issue|help|question)/.test(normalized);
+  const isQuestion = lastMessage.endsWith("?") || /\b(what|where|how|why|when|who|which|can|could|should|would|do I|do you|help|find)\b/.test(normalized);
+
+  if (isGreeting && lastMessage.length <= 30) {
+    return "Hello! I’m Lino, your Linxova support assistant. How can I help you with jobs, wallet, moderation, profiles, or notifications today?";
+  }
+
+  if (!lastMessage) {
+    return "I can help you with Linxova jobs, wallet, moderation, profiles, notifications, and team collaboration. What would you like to know?";
+  }
+
+  if (normalized.includes("ai integration") || normalized.includes("openai") || normalized.includes("api key") || normalized.includes("configured")) {
+    return "AI integration is not available right now, but I can still help you understand how Linxova works.";
+  }
+
+  if (mentionsJob) {
+    if (normalized.includes("where do i go") || normalized.includes("how do i find") || normalized.includes("where can i") || normalized.includes("get a job") || normalized.includes("find a job") || normalized.includes("apply for a job")) {
+      return "To find a job on Linxova, open the Jobs page. Customers post jobs there, and freelancers can browse open listings, apply, or claim work depending on job settings.";
+    }
+    if (memoryTopics.includes("wallet") || mentionsWallet) {
+      return "Jobs on Linxova are funded from your wallet and held in escrow until completion. Use the Jobs page to locate work and make sure your wallet balance is sufficient.";
+    }
+    return "Jobs on Linxova are posted by customers and claimed by freelancers. Use the Jobs page to browse open jobs, apply where allowed, and complete work with moderation support.";
+  }
+
+  if (mentionsWallet) {
+    if (normalized.includes("where can i see my wallet") || normalized.includes("how do i deposit") || normalized.includes("how do i withdraw")) {
+      return "Your wallet is available in the Wallet section. You can view your balance, deposit funds, withdraw funds, and see escrow transactions for active jobs.";
+    }
+    return "Your wallet stores USD funds used to pay for jobs and receive earnings. Linxova keeps job payments in escrow until the work is completed.";
+  }
+
+  if (mentionsModeration) {
+    return "Moderators on Linxova review job work, handle disputes, and approve or reject submissions. Use the moderation tools and notifications to follow up on reports and review status.";
+  }
+
+  if (mentionsProfile) {
+    return "Your profile shows your role, level, rating, and account details. Higher ratings and completed work help your visibility and payout on Linxova.";
+  }
+
+  if (mentionsNotifications) {
+    return "Notifications show job updates, messages, and alerts. Check the Notifications page to stay informed about new activity and unread items.";
+  }
+
+  if (mentionsTeam) {
+    return "Team collaboration helps you work with friends or groups on jobs. Use the team features to invite collaborators, coordinate work, and manage shared tasks.";
+  }
+
+  if (mentionsSupport || isQuestion) {
+    return `I understand you asked: "${lastMessage.slice(0, 120)}". On Linxova, you can ask me about jobs, wallet, moderation, profiles, notifications, or team collaboration and I’ll guide you to the right section.`;
+  }
+
+  return `I understand you asked: "${lastMessage.slice(0, 120)}". I can help with Linxova jobs, wallet, moderation, profiles, notifications, and team collaboration. What would you like to know?`;
+}
 
 function generateTeamRoomToken(userId: string): string {
   // Use cryptographically strong random token
-  const { randomBytes } = require("crypto");
   const token = randomBytes(32).toString("hex");
   teamRoomTokens.set(token, {
     userId,
@@ -62,6 +191,92 @@ function validateTeamRoomToken(token: string): string | null {
   return tokenData.userId;
 }
 
+// All freelancers working on a job (lead + collaborators + jobFreelancers), deduped.
+async function getJobFreelancerIds(job: any): Promise<string[]> {
+  const ids = new Set<string>();
+  if (job.freelancerId) ids.add(job.freelancerId);
+  if (job.collaborators) {
+    for (const id of job.collaborators) ids.add(id);
+  }
+  const jobFreelancerRecords = await storage.getJobFreelancers(job.id);
+  for (const jf of jobFreelancerRecords) ids.add(jf.freelancerId);
+  return Array.from(ids);
+}
+
+// Aggregate view of the active leadership vote (anonymous — never exposes who voted what).
+async function getActiveLeadershipVoteEnriched(job: any, currentUserId?: string) {
+  const vote = await storage.getActiveLeadershipVoteByJob(job.id);
+  if (!vote) return null;
+  const candidate = await storage.getUser(vote.candidateId);
+  const casts = await storage.getLeadershipVoteCasts(vote.id);
+  const totalEligible = (await getJobFreelancerIds(job)).length;
+  const agreeCount = casts.filter(c => c.choice === LeadershipVoteChoice.AGREE).length;
+  const disapproveCount = casts.filter(c => c.choice === LeadershipVoteChoice.DISAPPROVE).length;
+  const myCast = currentUserId ? casts.find(c => c.voterId === currentUserId) : undefined;
+  return {
+    id: vote.id,
+    jobId: vote.jobId,
+    candidateId: vote.candidateId,
+    candidateUsername: candidate?.username || "Unknown",
+    status: vote.status,
+    agreeCount,
+    disapproveCount,
+    totalEligible,
+    hasVoted: !!myCast,
+    myChoice: myCast?.choice || null,
+  };
+}
+
+// Move USDT from one user's wallet to another's. Returns { error, status } on failure.
+async function performUsdtTransfer(fromUserId: string, toUserId: string, amount: number): Promise<{ error?: string; status?: number }> {
+  const fromWallet = await storage.getWallet(fromUserId);
+  if (!fromWallet) return { error: "Sender wallet not found", status: 404 };
+
+  let toWallet = await storage.getWallet(toUserId);
+  if (!toWallet) {
+    toWallet = await storage.createWallet({
+      userId: toUserId,
+      walletAddress: `0x${Math.random().toString(36).substring(2, 15)}`,
+    });
+  }
+
+  const total = parseFloat(fromWallet.usdtBalance || "0");
+  const pending = parseFloat(fromWallet.pendingUsdtBalance || "0");
+  const available = total - pending;
+  if (available < amount) {
+    return {
+      error: `Insufficient available balance ($${available.toFixed(2)} available, $${pending.toFixed(2)} locked)`,
+      status: 400,
+    };
+  }
+
+  await storage.updateWallet(fromUserId, { usdtBalance: (total - amount).toString() });
+  const toTotal = parseFloat(toWallet.usdtBalance || "0");
+  await storage.updateWallet(toUserId, { usdtBalance: (toTotal + amount).toString() });
+
+  const hash = `0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
+  await storage.createTransaction({
+    walletId: fromWallet.id,
+    type: "transfer_out",
+    currency: "USDT",
+    amount: amount.toString(),
+    usdAmount: amount.toFixed(2),
+    status: "completed",
+    transactionHash: hash,
+  });
+  await storage.createTransaction({
+    walletId: toWallet.id,
+    type: "transfer_in",
+    currency: "USDT",
+    amount: amount.toString(),
+    usdAmount: amount.toFixed(2),
+    status: "completed",
+    transactionHash: hash,
+  });
+
+  return {};
+}
+
 declare module "express-session" {
   interface SessionData {
     userId?: string;
@@ -71,6 +286,28 @@ declare module "express-session" {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Dev/demo: per-tab demo identity. The session cookie is shared across all
+  // tabs of a browser, so logging into a different demo account in another tab
+  // silently rewrites the shared session. Each tab remembers its chosen demo
+  // account in sessionStorage and sends it as X-Demo-User on every request; we
+  // honor that header (development only) so two demo accounts can run side by
+  // side in two tabs. Real (Discord) sessions are unaffected.
+  app.use(async (req, res, next) => {
+    const demoId = req.headers['x-demo-user'];
+    if (typeof demoId === 'string' && demoId && process.env.NODE_ENV !== 'production') {
+      try {
+        const demoUser = await storage.getUserByDiscordId(demoId);
+        if (demoUser) {
+          req.session.userId = demoUser.id;
+          req.session.userRole = demoUser.role;
+        }
+      } catch {
+        // Fall back to the session identity
+      }
+    }
+    next();
+  });
+
   // Development: Simple login for testing (remove in production)
   app.post("/api/auth/dev-login", async (req, res) => {
     try {
@@ -272,15 +509,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+      // Never let the browser cache this: profile edits refetch it and must
+      // see the freshly saved values immediately.
+      res.set("Cache-Control", "no-store");
       res.json(user);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
+  // Presence heartbeat: keeps lastActive fresh while a tab is open so the
+  // online dot stays green. The requireAuth middleware throttles the write.
+  app.post("/api/heartbeat", requireAuth, async (_req, res) => {
+    res.json({ ok: true });
+  });
+
   app.get("/api/auth/demo-accounts", async (_req, res) => {
     try {
-      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-founder-1"];
+      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-head-mod-1", "demo-founder-1"];
       const accounts = [];
       for (const discordId of demoIds) {
         const user = await storage.getUserByDiscordId(discordId);
@@ -550,6 +796,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Oldest premium jobs posted by customers, for the freelancer dashboard.
+  // Jobs can only be created by customers (POST /api/jobs enforces the role),
+  // so every job here is customer-posted by construction.
+  app.get("/api/jobs/available-premium", requireAuth, async (req, res) => {
+    try {
+      const allJobs = await storage.getJobs({});
+      const jobs = allJobs
+        .filter(j =>
+          (j.status === JobStatus.PENDING_ACCEPTANCE || j.status === "active") &&
+          (j.isPremium || parseFloat(j.premiumAmount || "0") > 0)
+        )
+        .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
+      res.json(jobs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/my-jobs", requireRole("customer"), async (req, res) => {
     try {
       const jobs = await storage.getJobs({ customerId: req.session.userId! });
@@ -667,13 +931,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate profit splits
       const profitSplits = allMemberIds.length > 0 ? await calculateProfitSplits(job, allMemberIds) : [];
 
+      // Effective project leader (first freelancer unless a vote changed it)
+      const projectLeaderId = job.projectLeaderId || job.freelancerId;
+      const projectLeader = projectLeaderId ? await storage.getUser(projectLeaderId) : null;
+      const activeLeadershipVote = await getActiveLeadershipVoteEnriched(job, req.session.userId);
+
       const enrichedJob = {
         ...job,
         customerUsername: customer?.username,
         customerDiscordId: customer?.discordId,
+        customerAvatar: customer?.avatar || null,
         collaboratorData: collaboratorData.filter(Boolean),
         profitSplits,
         teamMemberIds: allMemberIds,
+        projectLeaderUsername: projectLeader?.username || null,
+        activeLeadershipVote,
       };
 
       res.json(enrichedJob);
@@ -771,6 +1043,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
+      if (Number.isNaN(budget) || budget < 5) {
+        return res.status(400).json({ error: "Budget must be at least $5" });
+      }
       const premiumFee = parseFloat(validated.premiumAmount || "0");
       if (validated.isPremium && premiumFee < 100) {
         return res.status(400).json({ error: "Premium amount must be at least $100" });
@@ -847,6 +1122,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(validated.budget);
+      if (Number.isNaN(budget) || budget < 5) {
+        return res.status(400).json({ error: "Budget must be at least $5" });
+      }
       const premiumFee = parseFloat(validated.premiumAmount || "0");
       if (validated.isPremium && premiumFee < 100) {
         return res.status(400).json({ error: "Premium amount must be at least $100" });
@@ -873,6 +1151,319 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Deadline lifecycle: extend / put back on market / end / freelancer response ──
+  function getAssignedFreelancerIds(job: any): string[] {
+    const set = new Set<string>();
+    if (job.freelancerId) set.add(job.freelancerId);
+    if (job.collaborators) for (const id of job.collaborators) set.add(id);
+    return Array.from(set);
+  }
+
+  async function notifyModerators(title: string, message: string, jobId: string) {
+    const users = await storage.getUsers();
+    const modRoles = ["staff", "moderator", "head_of_moderation", "founder"];
+    for (const mod of users.filter(u => modRoles.includes(u.role))) {
+      await storage.createNotification({
+        userId: mod.id,
+        type: "dispute_escalated",
+        title,
+        message,
+        relatedId: jobId,
+        sourceType: "job",
+        sourceId: jobId,
+      });
+    }
+  }
+
+  // Customer extends the deadline (status returns to a working state; reminders restart).
+  app.post("/api/jobs/:id/deadline-extend", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId!) return res.status(403).json({ error: "Only the job owner can extend the deadline" });
+      if (job.status !== JobStatus.DEADLINE_REACHED) return res.status(400).json({ error: "Deadline extension is only available after the deadline has been reached" });
+
+      const deadline = new Date(req.body.deadline);
+      if (Number.isNaN(deadline.getTime())) return res.status(400).json({ error: "Please provide a valid deadline" });
+      if (deadline.getTime() <= Date.now()) return res.status(400).json({ error: "Deadline must be in the future" });
+
+      // If a freelancer never accepted the job, extending the deadline should put it
+      // back on the market (ACTIVE) so freelancers can apply. Only restore the working
+      // "in progress" state if someone was actually assigned to the job.
+      const assigned = await storage.getJobFreelancers(job.id);
+      const hasFreelancer = !!(job.freelancerId || (job.collaborators && job.collaborators.length) || assigned.length > 0);
+
+      const updated = await storage.updateJob(job.id, {
+        deadline,
+        status: hasFreelancer ? JobStatus.IN_PROGRESS : JobStatus.ACTIVE,
+        isLocked: false,
+        lastDeadlineReminderAt: null,
+        deadlineArrivalNotified: false,
+      });
+
+      for (const freelancerId of getAssignedFreelancerIds(job)) {
+        await storage.createNotification({
+          userId: freelancerId,
+          type: "job_updated",
+          title: "Deadline extended",
+          message: `The deadline for "${job.title}" has been extended. Stay on track and share progress updates with the client.`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to extend deadline" });
+    }
+  });
+
+  // Customer puts the job back on the market, editing any details + setting a new deadline.
+  app.post("/api/jobs/:id/remarket", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId!) return res.status(403).json({ error: "Only the job owner can relist the job" });
+      if (job.status !== JobStatus.DEADLINE_REACHED && job.status !== JobStatus.IN_PROGRESS) {
+        return res.status(400).json({ error: "This job cannot be put back on the market in its current state" });
+      }
+
+      const body = req.body || {};
+      const deadline = new Date(body.deadline);
+      if (Number.isNaN(deadline.getTime())) return res.status(400).json({ error: "Please provide a deadline" });
+      if (deadline.getTime() <= Date.now()) return res.status(400).json({ error: "Deadline must be in the future" });
+      if (!body.budget || Number.isNaN(parseFloat(body.budget)) || parseFloat(body.budget) < 5) {
+        return res.status(400).json({ error: "Budget must be at least $5" });
+      }
+
+      // Handle budget change against wallet + escrow.
+      const oldBudget = parseFloat(job.budget);
+      const newBudget = parseFloat(body.budget);
+      const oldPremium = parseFloat(job.premiumAmount || "0");
+      const newPremium = body.isPremium ? (parseFloat(body.premiumAmount || "0") || 0) : 0;
+      const wallet = await storage.getWallet(job.customerId);
+      if (wallet) {
+        const walletBalance = parseFloat(wallet.usdtBalance || "0");
+        const diff = (newBudget + newPremium) - (oldBudget + oldPremium);
+        if (diff > 0 && diff > walletBalance) {
+          return res.status(400).json({ error: `Insufficient funds. Need an additional $${diff.toFixed(2)}.` });
+        }
+        if (diff !== 0) {
+          await storage.updateWallet(job.customerId, {
+            usdtBalance: (walletBalance - diff).toFixed(8),
+          });
+        }
+      }
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow) {
+        await storage.updateEscrow(escrow.id, { totalAmount: (newBudget + newPremium).toFixed(2) });
+      }
+
+      // Release the current freelancer(s) and relist.
+      const workers = await storage.getJobFreelancers(job.id);
+      for (const w of workers) await storage.deleteJobFreelancer(w.id);
+
+      const updated = await storage.updateJob(job.id, {
+        title: body.title?.trim() ?? job.title,
+        description: body.description?.trim() ?? job.description,
+        category: body.category ?? job.category,
+        budget: newBudget.toFixed(2),
+        requirements: body.requirements?.trim() ?? job.requirements,
+        deadline,
+        premiumAmount: newPremium > 0 ? newPremium.toFixed(2) : "0",
+        isPremium: newPremium > 0,
+        status: JobStatus.ACTIVE,
+        freelancerId: null,
+        projectLeaderId: null,
+        collaborators: [],
+        isLocked: false,
+        lastDeadlineReminderAt: null,
+        deadlineArrivalNotified: false,
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to relist job" });
+    }
+  });
+
+  // Customer ends the job: refund the budget, then ask the freelancer whether they completed the work.
+  app.post("/api/jobs/:id/end", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId!) return res.status(403).json({ error: "Only the job owner can end the job" });
+      if (job.status !== JobStatus.DEADLINE_REACHED) return res.status(400).json({ error: "You can only end a job after its deadline has been reached" });
+
+      // Refund the customer's full locked amount (budget + premium), never just the budget.
+      const escrow = await storage.getEscrowByJob(job.id);
+      const refundAmount = escrow && parseFloat(escrow.totalAmount)
+        ? parseFloat(escrow.totalAmount)
+        : (parseFloat(job.budget) + (parseFloat(job.premiumAmount || "0") || 0));
+      if (escrow) await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      await storage.adjustPendingBalance(job.customerId, -refundAmount);
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, { usdtBalance: (customerBalance + refundAmount).toFixed(8) });
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "refund",
+          currency: "USDT",
+          amount: refundAmount.toFixed(8),
+          usdAmount: refundAmount.toFixed(2),
+          status: "completed",
+          transactionHash: `deadline-end-refund-${job.id}-${Date.now()}`,
+        });
+      }
+
+      await storage.updateJob(job.id, { status: JobStatus.ENDED, isLocked: true });
+
+      // Ask the freelancer(s) whether they completed the work before the deadline.
+      for (const freelancerId of getAssignedFreelancerIds(job)) {
+        await storage.createNotification({
+          userId: freelancerId,
+          type: "job_updated",
+          title: "The job has been ended",
+          message: `The deadline for "${job.title}" has passed and the job was ended. Please confirm whether you completed the work before the deadline.`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+          redirectUrl: `/jobs/${job.id}`,
+        });
+      }
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to end job" });
+    }
+  });
+
+  // Freelancer answers the "did you complete the work before the deadline?" prompt.
+  app.post("/api/jobs/:id/end-response", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.status !== JobStatus.ENDED) return res.status(400).json({ error: "This job has no pending completion confirmation" });
+
+      const assignedIds = new Set([...getAssignedFreelancerIds(job), ...(await storage.getJobFreelancers(job.id)).map((w: any) => w.freelancerId)]);
+      if (!assignedIds.has(req.session.userId!)) return res.status(403).json({ error: "Only assigned freelancers can respond" });
+
+      const completed = req.body.completed === true;
+
+      if (!completed) {
+        // Did not finish before the deadline: delete the job (customer already refunded).
+        await storage.deleteJob(job.id);
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "job_cancelled",
+          title: "Job closed",
+          message: `The freelancer confirmed they did not complete "${job.title}" before the deadline, so the job was closed and you were refunded.`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+        return res.json({ ok: true, outcome: "deleted" });
+      }
+
+      // Claims completion: reopen the budget into escrow and open a dispute for a moderator to decide.
+      const budget = parseFloat(job.budget);
+      const escrow = await storage.getEscrowByJob(job.id);
+      if (escrow) await storage.updateEscrow(escrow.id, { status: EscrowStatus.HELD });
+      await storage.adjustPendingBalance(job.customerId, budget);
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, { usdtBalance: (customerBalance - budget).toFixed(8) });
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "escrow_lock",
+          currency: "USDT",
+          amount: budget.toFixed(8),
+          usdAmount: budget.toFixed(2),
+          status: "completed",
+          transactionHash: `deadline-dispute-relock-${job.id}-${Date.now()}`,
+        });
+      }
+
+      await storage.updateJob(job.id, { status: JobStatus.DISPUTE, isLocked: true });
+      const dispute = await storage.createDispute({
+        jobId: job.id,
+        openedByUserId: job.customerId,
+        reason: "Deadline missed but freelancer claims the work was completed before the deadline",
+      });
+
+      await notifyModerators(
+        "New deadline dispute",
+        `A dispute was opened on "${job.title}": the freelancer claims the work was completed before the deadline.`,
+        job.id
+      );
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "dispute_opened",
+        title: "Dispute opened",
+        message: `A dispute has been opened for "${job.title}". A moderator will review both sides.`,
+        relatedId: dispute.id,
+        sourceType: "dispute",
+        sourceId: dispute.id,
+      });
+
+      res.json({ ok: true, outcome: "dispute", disputeId: dispute.id });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to record response" });
+    }
+  });
+
+  // Customer deletes a job that no freelancer ever accepted (e.g. its deadline
+  // passed while it was still on the market). Refunds the locked budget and removes
+  // the listing. Only allowed while the job has no freelancer assigned.
+  app.delete("/api/jobs/:id", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId!) {
+        return res.status(403).json({ error: "Only the job owner can delete this job" });
+      }
+      if (job.status !== JobStatus.ACTIVE && job.status !== JobStatus.DEADLINE_REACHED) {
+        return res.status(400).json({ error: "Only a job that is still on the market can be deleted" });
+      }
+
+      const assigned = await storage.getJobFreelancers(job.id);
+      const hasFreelancer = !!(job.freelancerId || (job.collaborators && job.collaborators.length) || assigned.length > 0);
+      if (hasFreelancer) {
+        return res.status(400).json({ error: "This job has already been accepted by a freelancer and cannot be deleted" });
+      }
+
+      // Refund the customer's full locked amount (budget + premium), never just the budget.
+      const escrow = await storage.getEscrowByJob(job.id);
+      const refundAmount = escrow && parseFloat(escrow.totalAmount)
+        ? parseFloat(escrow.totalAmount)
+        : (parseFloat(job.budget) + (parseFloat(job.premiumAmount || "0") || 0));
+      if (escrow) await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      await storage.adjustPendingBalance(job.customerId, -refundAmount);
+      const customerWallet = await storage.getWallet(job.customerId);
+      if (customerWallet) {
+        const customerBalance = parseFloat(customerWallet.usdtBalance || "0");
+        await storage.updateWallet(job.customerId, { usdtBalance: (customerBalance + refundAmount).toFixed(8) });
+        await storage.createTransaction({
+          walletId: customerWallet.id,
+          type: "refund",
+          currency: "USDT",
+          amount: refundAmount.toFixed(8),
+          usdAmount: refundAmount.toFixed(2),
+          status: "completed",
+          transactionHash: `job-delete-refund-${job.id}-${Date.now()}`,
+        });
+      }
+
+      await storage.deleteJob(job.id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to delete job" });
+    }
+  });
+
   // Get job requests for a specific job (for customers to see applicants)
   app.get("/api/jobs/:id/requests", requireAuth, async (req, res) => {
     try {
@@ -881,9 +1472,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Only job owner or moderators can see requests
+      // Only job owner, lead freelancer, or moderators can see requests
       const user = await storage.getUser(req.session.userId!);
-      if (job.customerId !== req.session.userId! && 
+      if (job.customerId !== req.session.userId! &&
+          job.freelancerId !== req.session.userId! &&
           !["staff", "moderator", "head_of_moderation", "founder"].includes(user?.role || "")) {
         return res.status(403).json({ error: "Not authorized to view job requests" });
       }
@@ -905,6 +1497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               rating: freelancer.rating,
               completedJobs: freelancer.completedJobs,
               completionPercentage: freelancer.completionPercentage,
+              portfolio: freelancer.portfolio,
             } : null,
           };
         })
@@ -925,11 +1518,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can view their job requests" });
       }
 
-      // Get all job requests for this freelancer (no status filter)
-      const requests = await storage.getJobRequestsByFreelancer(req.session.userId!);
-      
-      // Enrich with job data
-      const enrichedRequests = await Promise.all(
+      const userId = req.session.userId!;
+      // Every job a freelancer has ever been on represents an accepted
+      // application. Lifetime finished jobs come from the user counter
+      // (totalJobs), plus any jobs currently in progress/claimed/submitted
+      // that are not yet counted there.
+      const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted", "disputed"];
+      const allJobs = await storage.getJobs({});
+      const jobFreelancerRows = await storage.getJobFreelancersByFreelancer(userId);
+      const assignedJobIds = new Set<string>();
+      for (const job of allJobs) {
+        if (
+          job.freelancerId === userId ||
+          job.collaborators?.includes(userId)
+        ) {
+          assignedJobIds.add(job.id);
+        }
+      }
+      for (const jf of jobFreelancerRows) {
+        assignedJobIds.add(jf.jobId);
+      }
+
+      const activeAssignedCount = Array.from(assignedJobIds).filter((id) => {
+        const job = allJobs.find((j) => j.id === id);
+        return !!job && activeStatuses.includes(job.status);
+      }).length;
+
+      // Lifetime totals: finished jobs (completed, cancelled, etc.) from the
+      // user record + currently active assignments. This is the source of
+      // truth for "accepted applications" - every job worked counts.
+      const lifetimeJobs = user.totalJobs || 0;
+      const acceptedCount = lifetimeJobs + activeAssignedCount;
+
+      // Real application records (pending / rejected / withdrawn / cancelled)
+      // that never turned into a job add to total applications but not accepted.
+      const requests = await storage.getJobRequestsByFreelancer(userId);
+      const pendingCount = requests.filter((r) => r.status === "pending").length;
+      const otherRequestCount = requests.filter((r) => r.status !== "pending" && r.status !== "accepted").length;
+      const totalCount = acceptedCount + pendingCount + otherRequestCount;
+
+      // History list: real request records plus synthetic accepted entries for
+      // jobs the freelancer is assigned to that have no request row.
+      const requestedJobIds = new Set(requests.map((r) => r.jobId));
+      const allEnriched = await Promise.all(
         requests.map(async (request) => {
           const job = await storage.getJob(request.jobId);
           return {
@@ -947,13 +1578,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      res.json(enrichedRequests);
+      const synthetic: any[] = [];
+      for (const jobId of Array.from(assignedJobIds)) {
+        if (requestedJobIds.has(jobId)) continue;
+        const job = await storage.getJob(jobId);
+        if (!job) continue;
+        synthetic.push({
+          id: `assigned-${jobId}`,
+          jobId: job.id,
+          freelancerId: userId,
+          status: "accepted",
+          message: null,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+          job: {
+            id: job.id,
+            title: job.title,
+            budget: job.budget,
+            category: job.category,
+            status: job.status,
+            customerId: job.customerId,
+            deadline: job.deadline,
+          },
+        });
+      }
+
+      const applications = [...allEnriched, ...synthetic].sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+
+      res.json({
+        applications,
+        stats: {
+          totalApplications: totalCount,
+          accepted: acceptedCount,
+          pending: pendingCount,
+        },
+      });
     } catch (error) {
       console.error("Error getting my job requests:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
-
   app.post("/api/jobs/:id/claim", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
@@ -1239,6 +1905,227 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Freelancer requests to join the team of a job that already has one
+  // (claimed / in_progress). The request lands in the same job-requests queue
+  // and is approved/declined by the customer or the lead freelancer via the
+  // join-requests endpoints below. Approving adds the freelancer to the job's
+  // collaborators (equal profit share), matching invitation acceptance.
+  app.post("/api/jobs/:id/join-request", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(404).json({ error: "Your account could not be found. Please log in again." });
+      }
+
+      if (user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can request to join a team." });
+      }
+
+      const userId = req.session.userId!;
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "This job no longer exists. It may have been removed by the customer." });
+      }
+
+      // Only jobs that already have a working team accept join requests.
+      if (job.status !== "claimed" && job.status !== "in_progress") {
+        return res.status(400).json({ error: "Join requests are only available for jobs that already have a team." });
+      }
+
+      // Not for people already on the team.
+      const onTeam =
+        job.freelancerId === userId ||
+        job.collaborators?.includes(userId);
+      if (onTeam) {
+        return res.status(400).json({ error: "You are already part of this job's team." });
+      }
+      const existingAssignments = await storage.getJobFreelancersByFreelancer(userId);
+      if (existingAssignments.some(jf => jf.jobId === job.id)) {
+        return res.status(400).json({ error: "You are already part of this job's team." });
+      }
+
+      // Blacklist check (same policy as regular applications).
+      const customer = await storage.getUser(job.customerId);
+      if (customer?.blacklistedFreelancers?.includes(userId)) {
+        return res.status(403).json({ error: "You are not eligible to work with this customer." });
+      }
+
+      // A freelancer busy on another active job cannot join a team.
+      const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted"];
+      const assignedActiveJobs = (await storage.getJobs({})).filter(j => {
+        if (!activeStatuses.includes(j.status)) return false;
+        return j.freelancerId === userId || j.collaborators?.includes(userId);
+      });
+      if (assignedActiveJobs.length > 0) {
+        return res.status(400).json({ error: "You are already assigned to an active job. Complete it before requesting to join a team." });
+      }
+      for (const jf of existingAssignments) {
+        const assignedJob = await storage.getJob(jf.jobId);
+        if (assignedJob && activeStatuses.includes(assignedJob.status)) {
+          return res.status(400).json({ error: "You are already assigned to an active job. Complete it before requesting to join a team." });
+        }
+      }
+
+      // One pending request per freelancer per job (shared queue with applications).
+      const existingRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, userId);
+      if (existingRequest && existingRequest.status === "pending") {
+        return res.status(400).json({ error: "You have already requested to join this job's team." });
+      }
+
+      const joinRequest = await storage.createJobRequest({
+        jobId: req.params.id,
+        freelancerId: userId,
+        status: "pending",
+        message: req.body.message || null,
+      });
+
+      // Notify the customer and the lead freelancer (each respects their own
+      // Team Request Notifications preference).
+      const joinRecipients = [job.customerId, job.freelancerId].filter(
+        (id): id is string => !!id && id !== userId
+      );
+      for (const recipientId of joinRecipients) {
+        const prefs = await storage.getUserPreferences(recipientId);
+        if (prefs?.teamRequestNotificationsEnabled === false) continue;
+        await storage.createNotification({
+          userId: recipientId,
+          type: "job_request",
+          title: "New team join request",
+          message: `${user.username} has requested to join the team for: ${job.title}`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
+
+      res.json({ success: true, request: joinRequest });
+    } catch (error) {
+      console.error("Error creating join request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Approve a join request — customer or lead freelancer. Adds the freelancer
+  // to the job's collaborators (equal profit share), matching invitation
+  // acceptance behavior.
+  app.post("/api/jobs/:id/join-requests/:requestId/approve", requireAuth, async (req, res) => {
+    try {
+      const approverId = req.session.userId!;
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isCustomer = job.customerId === approverId;
+      const isLead = job.freelancerId === approverId;
+      if (!isCustomer && !isLead) {
+        return res.status(403).json({ error: "Only the job owner or the lead freelancer can approve join requests" });
+      }
+
+      if (job.status !== "claimed" && job.status !== "in_progress") {
+        return res.status(400).json({ error: "This job's team is no longer accepting members" });
+      }
+
+      const joinRequest = await storage.getJobRequest(req.params.requestId);
+      if (!joinRequest || joinRequest.jobId !== job.id) {
+        return res.status(404).json({ error: "Join request not found" });
+      }
+      if (joinRequest.status !== "pending") {
+        return res.status(400).json({ error: "This request has already been handled" });
+      }
+
+      const freelancerId = joinRequest.freelancerId;
+      const freelancer = await storage.getUser(freelancerId);
+
+      // The freelancer must still be free to join.
+      const activeStatuses = ["in_progress", "claimed", "awaiting_customer", "submitted"];
+      const assignedActiveJobs = (await storage.getJobs({})).filter(j => {
+        if (!activeStatuses.includes(j.status)) return false;
+        return j.freelancerId === freelancerId || j.collaborators?.includes(freelancerId);
+      });
+      if (assignedActiveJobs.length > 0) {
+        await storage.updateJobRequest(joinRequest.id, { status: "cancelled" });
+        return res.status(400).json({ error: "This freelancer already has an active job and cannot join the team" });
+      }
+      const freelancerAssignments = await storage.getJobFreelancersByFreelancer(freelancerId);
+      for (const jf of freelancerAssignments) {
+        const assignedJob = await storage.getJob(jf.jobId);
+        if (assignedJob && activeStatuses.includes(assignedJob.status)) {
+          await storage.updateJobRequest(joinRequest.id, { status: "cancelled" });
+          return res.status(400).json({ error: "This freelancer already has an active job and cannot join the team" });
+        }
+      }
+
+      // Add to collaborators (idempotent).
+      const collaborators = job.collaborators ? [...job.collaborators] : [];
+      if (!collaborators.includes(freelancerId)) {
+        collaborators.push(freelancerId);
+        await storage.updateJob(job.id, { collaborators });
+      }
+
+      await storage.updateJobRequest(joinRequest.id, { status: "accepted" });
+
+      // Notify the new team member.
+      await storage.createNotification({
+        userId: freelancerId,
+        type: "job_approved",
+        title: "Join request approved!",
+        message: `Your request to join the team for "${job.title}" has been approved. You are now part of the team!`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error approving join request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Decline a join request — customer or lead freelancer.
+  app.post("/api/jobs/:id/join-requests/:requestId/decline", requireAuth, async (req, res) => {
+    try {
+      const approverId = req.session.userId!;
+      const job = await storage.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const isCustomer = job.customerId === approverId;
+      const isLead = job.freelancerId === approverId;
+      if (!isCustomer && !isLead) {
+        return res.status(403).json({ error: "Only the job owner or the lead freelancer can decline join requests" });
+      }
+
+      const joinRequest = await storage.getJobRequest(req.params.requestId);
+      if (!joinRequest || joinRequest.jobId !== job.id) {
+        return res.status(404).json({ error: "Join request not found" });
+      }
+      if (joinRequest.status !== "pending") {
+        return res.status(400).json({ error: "This request has already been handled" });
+      }
+
+      await storage.updateJobRequest(joinRequest.id, { status: "rejected" });
+
+      // Notify the requester.
+      await storage.createNotification({
+        userId: joinRequest.freelancerId,
+        type: "job_rejected",
+        title: "Join request declined",
+        message: `Your request to join the team for "${job.title}" was declined.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error declining join request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Job completion route
   app.post("/api/jobs/:id/complete", requireAuth, async (req, res) => {
     try {
@@ -1269,7 +2156,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
       }
 
-      // Transfer level-based portion of budget to freelancer (premium stays with Linxora)
+      // Transfer level-based portion of budget to freelancer (premium stays with Linxova)
       const freelancer2 = await storage.getUser(job.freelancerId);
       const level = freelancer2?.level || 1;
       const levelPayout = getLevelPayout(level);
@@ -1299,48 +2186,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update freelancer stats (completed jobs, completion %, level)
       const freelancer = await storage.getUser(job.freelancerId);
       if (freelancer) {
-        // Get all jobs and filter for those assigned to this freelancer
-        // Include jobs where they are primary OR collaborator, deduplicated by job ID
-        const allJobs = await storage.getJobs();
-        const assignedJobsMap = new Map();
-        
-        for (const j of allJobs) {
-          // Include if freelancer is primary assignee or in collaborators array
-          if (j.freelancerId === job.freelancerId || 
-              j.collaborators?.includes(job.freelancerId!)) {
-            // Only count jobs that represent actual assignments (claimed, in progress, or completed)
-            // Exclude: pending (not approved), active (not claimed), freelancer_requested (not approved),
-            // rejected (moderator rejected), changes_requested (needs revision)
-            if (j.status === "claimed" || j.status === "in_progress" || j.status === "completed") {
-              assignedJobsMap.set(j.id, j);
-            }
-          }
-        }
-        
-        const assignedJobs = Array.from(assignedJobsMap.values());
-        
-        // Count completed jobs
-        const completedJobs = assignedJobs.filter(j => j.status === "completed").length;
-        
-        // Calculate completion percentage — include terminal non-completion states in denominator
-        const countableStatuses = ["claimed", "in_progress", "completed", "dispute", "cancelled", "expired"];
-        const countableJobs = assignedJobs.filter(j => countableStatuses.includes(j.status));
-        const totalJobs = countableJobs.length;
-        const completionPercentage = totalJobs > 0 
+        // Counter-based completion rate: a completed job adds to both the
+        // completedJobs numerator and the totalJobs denominator.
+        const completedJobs = (freelancer.completedJobs || 0) + 1;
+        const totalJobs = (freelancer.totalJobs || 0) + 1;
+        const completionPercentage = totalJobs > 0
           ? ((completedJobs / totalJobs) * 100).toFixed(2)
           : "0.00";
-        
-        // Determine level based on completed jobs
-        let newLevel = 1;
-        if (completedJobs >= 50) newLevel = 5;
-        else if (completedJobs >= 30) newLevel = 4;
-        else if (completedJobs >= 15) newLevel = 3;
-        else if (completedJobs >= 5) newLevel = 2;
-        
+
+        // Level is based on lifetime earnings, not completed jobs.
+        const totalEarned = parseFloat(freelancer.totalEarned || "0") + payoutAmount;
+        const newLevel = getLevelFromEarnings(totalEarned);
+
         // Update user with new stats
         await storage.updateUser(job.freelancerId, {
           completedJobs,
+          totalJobs,
           completionPercentage,
+          totalEarned: totalEarned.toFixed(2),
           level: newLevel,
         });
       }
@@ -1690,12 +2553,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only freelancers can submit work" });
       }
 
-      // Check if this freelancer is assigned (primary or via jobFreelancers)
-      const isAssigned = job.freelancerId === req.session.userId ||
-        (await storage.getJobFreelancers(job.id)).some(jf => jf.freelancerId === req.session.userId);
-
-      if (!isAssigned) {
-        return res.status(403).json({ error: "You are not assigned to this job" });
+      // Only the Project Leader may submit work on behalf of the whole team.
+      // The first freelancer to take the job is the leader unless a vote changed it.
+      const projectLeaderId = job.projectLeaderId || job.freelancerId;
+      if (req.session.userId !== projectLeaderId) {
+        return res.status(403).json({ error: "Only the Project Leader can submit work for this job" });
       }
 
       // Job must be in progress (legacy: claimed, in_progress or new: IN_PROGRESS)
@@ -1845,11 +2707,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
       }
 
-      // Get all freelancers on this job
-      const jobFreelancers = await storage.getJobFreelancers(job.id);
-      const allFreelancerIds = jobFreelancers.length > 0 
-        ? jobFreelancers.map(jf => jf.freelancerId)
-        : job.freelancerId ? [job.freelancerId] : [];
+      // Get all freelancers on this job (lead + collaborators + job_freelancers)
+      const allFreelancerIds = await getJobFreelancerIds(job);
 
       const budget = parseFloat(job.budget);
       const jobPremium = parseFloat(job.premiumAmount || "0");
@@ -1870,7 +2729,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!freelancer) continue;
 
         const level = freelancer.level || 1;
-        const levelPayout = getLevelPayout(level); // Returns 0.60 to 0.85
+        const levelPayout = getLevelPayout(level); // Returns 0.65 to 0.97
         const payoutAmount = sharePerFreelancer * levelPayout;
         const platformFee = sharePerFreelancer - payoutAmount;
 
@@ -1921,7 +2780,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // NOW update freelancer stats after job is marked completed (increment completed count)
       for (const freelancerId of allFreelancerIds) {
-        await updateFreelancerStats(freelancerId, true);
+        const fl = await storage.getUser(freelancerId);
+        const earnedIncrement = sharePerFreelancer * getLevelPayout(fl?.level || 1);
+        await updateFreelancerStats(freelancerId, true, earnedIncrement);
       }
 
       res.json(updatedJob);
@@ -2007,47 +2868,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Helper function to update freelancer stats
-  async function updateFreelancerStats(freelancerId: string, incrementCompleted: boolean = false) {
+  async function updateFreelancerStats(freelancerId: string, incrementCompleted: boolean = false, earnedIncrement: number = 0) {
     const freelancer = await storage.getUser(freelancerId);
     if (!freelancer) return;
 
-    // Get current stats - preserve existing completedJobs count
+    // Counter-based completion rate: completedJobs / totalJobs (lifetime finished jobs).
     let completedJobs = freelancer.completedJobs || 0;
-    
-    // If incrementing (job just completed), add 1 to existing count
+    let totalJobs = freelancer.totalJobs || 0;
+
+    // If incrementing (job just completed), add 1 to both counters.
     if (incrementCompleted) {
       completedJobs = completedJobs + 1;
+      totalJobs = totalJobs + 1;
     }
 
-    // Calculate level based on completed jobs
-    let newLevel = 1;
-    if (completedJobs >= 50) newLevel = 5;
-    else if (completedJobs >= 30) newLevel = 4;
-    else if (completedJobs >= 15) newLevel = 3;
-    else if (completedJobs >= 5) newLevel = 2;
+    const completionPercentage = totalJobs > 0
+      ? ((completedJobs / totalJobs) * 100).toFixed(2)
+      : "0.00";
 
-    // Calculate completion percentage from actual job records for display
-    const allJobs = await storage.getJobs();
-    const assignedJobsMap = new Map();
-
-    for (const j of allJobs) {
-      if (j.freelancerId === freelancerId || j.collaborators?.includes(freelancerId)) {
-        if (["claimed", "in_progress", "completed", "dispute", "cancelled", "expired"].includes(j.status)) {
-          assignedJobsMap.set(j.id, j);
-        }
-      }
-    }
-
-    const assignedJobs = Array.from(assignedJobsMap.values());
-    const activeJobsCount = assignedJobs.length;
-    const completedInActiveJobs = assignedJobs.filter(j => j.status === "completed").length;
-    const completionPercentage = activeJobsCount > 0 ? ((completedInActiveJobs / activeJobsCount) * 100).toFixed(2) : "100.00";
+    // Level is based on lifetime earnings, not completed jobs.
+    const totalEarned = parseFloat(freelancer.totalEarned || "0") + earnedIncrement;
+    const newLevel = getLevelFromEarnings(totalEarned);
 
     await storage.updateUser(freelancerId, {
       completedJobs,
+      totalJobs,
       completionPercentage,
+      totalEarned: totalEarned.toFixed(2),
       level: newLevel,
     });
+  }
+
+  // Lower a freelancer's completion rate when a job ends without completion
+  // (cancelled by agreement or resolved against them in a dispute).
+  async function penalizeFreelancerCompletion(freelancerId: string) {
+    const freelancer = await storage.getUser(freelancerId);
+    if (!freelancer) return;
+
+    const completedJobs = freelancer.completedJobs || 0;
+    const totalJobs = (freelancer.totalJobs || 0) + 1;
+    const completionPercentage = totalJobs > 0
+      ? ((completedJobs / totalJobs) * 100).toFixed(2)
+      : "0.00";
+
+    await storage.updateUser(freelancerId, {
+      totalJobs,
+      completionPercentage,
+    });
+  }
+
+  // Penalize every freelancer assigned to a job (lead + collaborators + team
+  // members) when the job ends cancelled without completion.
+  async function penalizeAllJobFreelancers(job: any) {
+    const freelancerIds = await getJobFreelancerIds(job);
+    for (const id of freelancerIds) {
+      await penalizeFreelancerCompletion(id);
+    }
   }
 
   // ============================================================
@@ -2082,9 +2958,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "A dispute is already open for this job" });
       }
 
-      const { reason } = req.body;
-      if (!reason || typeof reason !== "string" || reason.trim().length < 20) {
-        return res.status(400).json({ error: "Please provide a detailed reason for the dispute (at least 20 characters)" });
+      const { reason, category } = req.body;
+      if (!reason || typeof reason !== "string" || reason.trim().length < 10) {
+        return res.status(400).json({ error: "Please provide a reason for the dispute (at least 10 characters)" });
       }
 
       // Create dispute
@@ -2092,12 +2968,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         jobId: job.id,
         openedByUserId: req.session.userId!,
         reason: reason.trim(),
+        category: typeof category === "string" && category.trim() ? category.trim() : null,
       });
 
-      // Lock the job
+      // Lock the job and remember its pre-dispute status so closing the dispute can restore it
       await storage.updateJob(job.id, {
         status: JobStatus.DISPUTE,
         isLocked: true,
+        preDisputeStatus: job.status,
       });
 
       // Cancel any pending scheduled tasks
@@ -2164,6 +3042,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             jobTitle: job?.title,
             jobBudget: job?.budget,
             openedByUsername: openedBy?.username,
+            openedByUserRole: openedBy?.role || null,
             customerUsername: customer?.username,
             customerId: job?.customerId,
             freelancerUsername: freelancer?.username,
@@ -2193,8 +3072,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           return {
             ...dispute,
+            jobBudget: job?.budget || null,
+            jobTitle: job?.title || null,
             job: job ? { id: job.id, title: job.title, budget: job.budget, customerId: job.customerId, freelancerId: job.freelancerId } : null,
             openedBy: openedBy ? { id: openedBy.id, username: openedBy.username, role: openedBy.role } : null,
+            openedByUsername: openedBy?.username || null,
+            openedByUserRole: openedBy?.role || null,
             moderator: moderator ? { id: moderator.id, username: moderator.username } : null,
           };
         })
@@ -2243,6 +3126,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Relinquish dispute (unclaim - put back in queue)
+  app.post("/api/disputes/:id/relinquish", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ error: "Dispute not found" });
+      }
+
+      if (dispute.moderatorId !== req.session.userId) {
+        return res.status(403).json({ error: "You can only relinquish disputes you have claimed" });
+      }
+
+      const updatedDispute = await storage.updateDispute(req.params.id, {
+        moderatorId: null,
+        status: DisputeStatus.OPEN,
+      });
+
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "dispute_relinquished",
+        disputeId: dispute.id,
+        jobId: dispute.jobId,
+      });
+
+      res.json(updatedDispute);
+    } catch (error) {
+      console.error("Error relinquishing dispute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Close dispute without distributing funds (keep job going)
+  app.post("/api/disputes/:id/close", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ error: "Dispute not found" });
+      }
+
+      if (dispute.status === DisputeStatus.RESOLVED) {
+        return res.status(400).json({ error: "Dispute already resolved" });
+      }
+
+      if (dispute.status === DisputeStatus.OPEN) {
+        return res.status(400).json({ error: "Claim this dispute before closing it" });
+      }
+
+      const isLeadership = ["staff", "head_of_moderation", "founder"].includes(req.session.userRole || "");
+      if (dispute.moderatorId && dispute.moderatorId !== req.session.userId && !isLeadership) {
+        return res.status(403).json({ error: "This dispute is handled by another moderator" });
+      }
+
+      const job = await storage.getJob(dispute.jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Update dispute to resolved (closed without distribution)
+      await storage.updateDispute(req.params.id, {
+        status: DisputeStatus.RESOLVED,
+        freelancerAmount: "0.00",
+        customerRefund: "0.00",
+        resolutionNotes: req.body.resolutionNotes?.trim() || "Dispute closed without action — job continues.",
+      });
+
+      // Unlock the job and return it to how it was before the dispute was opened
+      await storage.updateJob(job.id, {
+        status: (job.preDisputeStatus as any) || JobStatus.IN_PROGRESS,
+        isLocked: false,
+        preDisputeStatus: null,
+      });
+
+      // Log moderation action
+      await storage.createModerationLog({
+        moderatorId: req.session.userId!,
+        actionType: "dispute_closed",
+        disputeId: dispute.id,
+        jobId: job.id,
+        notes: req.body.resolutionNotes?.trim() || "Dispute closed without action — job continues.",
+      });
+
+      // Notify the customer and every assigned freelancer
+      if (job.customerId) {
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "dispute_closed",
+          title: "Dispute closed",
+          message: `The dispute for "${job.title}" has been closed. The job continues as normal.`,
+        });
+      }
+      for (const fid of await getJobFreelancerIds(job)) {
+        await storage.createNotification({
+          userId: fid,
+          type: "dispute_closed",
+          title: "Dispute closed",
+          message: `The dispute for "${job.title}" has been closed. The job continues as normal.`,
+        });
+      }
+
+      res.json({ success: true, message: "Dispute closed. Job continues as normal." });
+    } catch (error) {
+      console.error("Error closing dispute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Resolve dispute
   app.post("/api/disputes/:id/resolve", requireRole("moderator", "staff", "head_of_moderation", "founder"), async (req, res) => {
     try {
@@ -2255,10 +3244,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Dispute already resolved" });
       }
 
+      if (dispute.status === DisputeStatus.OPEN) {
+        return res.status(400).json({ error: "Claim this dispute before resolving it" });
+      }
+
+      const isLeadership = ["staff", "head_of_moderation", "founder"].includes(req.session.userRole || "");
+      if (dispute.moderatorId && dispute.moderatorId !== req.session.userId && !isLeadership) {
+        return res.status(403).json({ error: "This dispute is handled by another moderator" });
+      }
+
       const { freelancerAmount, customerRefund, resolutionNotes } = req.body;
 
       if (typeof freelancerAmount !== "number" || typeof customerRefund !== "number") {
         return res.status(400).json({ error: "Please specify freelancer and customer amounts" });
+      }
+
+      if (freelancerAmount < 0 || customerRefund < 0) {
+        return res.status(400).json({ error: "Amounts cannot be negative. Both amounts must be zero or positive." });
       }
 
       if (!resolutionNotes || typeof resolutionNotes !== "string" || resolutionNotes.trim().length < 10) {
@@ -2274,10 +3276,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const jobPremium = parseFloat(job.premiumAmount || "0");
       const totalCost = budget + jobPremium;
 
-      // Validate amounts don't exceed budget (premium always goes to Linxora)
-      if (freelancerAmount + customerRefund > budget) {
-        return res.status(400).json({ error: "Total distribution cannot exceed job budget" });
+      // The full budget must be distributed between the freelancer and the customer,
+      // so the moderator cannot keep money out of the dispute. (Premium stays with Linxova.)
+      if (Math.abs(freelancerAmount + customerRefund - budget) > 0.01) {
+        return res.status(400).json({
+          error: `The full job budget must be distributed. Freelancer amount + customer refund must total exactly $${budget.toFixed(2)}.`
+        });
       }
+
+      // Freelancer payouts are reduced by the platform fee based on their level.
+      const freelancerUser = job.freelancerId ? await storage.getUser(job.freelancerId) : null;
+      const freelancerLevel = freelancerUser?.level || 1;
+      const levelPayout = getLevelPayout(freelancerLevel);
+      const freelancerNetPayout = freelancerAmount * levelPayout; // platform keeps the difference
 
       // Get escrow
       const escrow = await storage.getEscrowByJob(job.id);
@@ -2294,7 +3305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Funds already deducted from customer wallet at submission time
-      // Only refund the customerRefund portion back to wallet (premium stays with Linxora)
+      // Only refund the customerRefund portion back to wallet (premium stays with Linxova)
       if (customerRefund > 0) {
         const customerWallet = await storage.getWallet(job.customerId);
         if (customerWallet) {
@@ -2315,25 +3326,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Pay freelancer if they get anything
-      if (job.freelancerId && freelancerAmount > 0) {
-        const freelancerWallet = await storage.getWallet(job.freelancerId);
-        if (freelancerWallet) {
-          const freelancerBalance = parseFloat(freelancerWallet.usdtBalance || "0");
-          await storage.updateWallet(job.freelancerId, {
-            usdtBalance: (freelancerBalance + freelancerAmount).toFixed(8),
+      // Pay every freelancer on the job (project leader + collaborators +
+      // jobFreelancers) an equal share of the allocated amount, each net of the
+      // platform fee based on their own level.
+      if (freelancerAmount > 0) {
+        const allFreelancerIds = await getJobFreelancerIds(job);
+        const share = freelancerAmount / allFreelancerIds.length;
+        for (const fid of allFreelancerIds) {
+          const fu = await storage.getUser(fid);
+          const fuLevel = fu?.level || 1;
+          const fuNet = share * getLevelPayout(fuLevel);
+          if (fuNet <= 0) continue;
+          const fw = await storage.getWallet(fid);
+          if (!fw) continue;
+          const fb = parseFloat(fw.usdtBalance || "0");
+          await storage.updateWallet(fid, {
+            usdtBalance: (fb + fuNet).toFixed(8),
           });
 
           await storage.createTransaction({
-            walletId: freelancerWallet.id,
+            walletId: fw.id,
             type: "deposit",
             currency: "USDT",
-            amount: freelancerAmount.toFixed(8),
-            usdAmount: freelancerAmount.toFixed(2),
+            amount: fuNet.toFixed(8),
+            usdAmount: fuNet.toFixed(2),
             status: "completed",
-            transactionHash: `dispute-payout-${dispute.id}`,
+            transactionHash: `dispute-payout-${dispute.id}-${fid}`,
           });
         }
+      }
+
+      // Dispute payouts count toward lifetime earnings used for leveling
+      // (no job-completion counter changes).
+      const allFreelancerIdsPayout = await getJobFreelancerIds(job);
+      const payoutShare = freelancerAmount / allFreelancerIdsPayout.length;
+      for (const fid of allFreelancerIdsPayout) {
+        await updateFreelancerStats(fid, false, payoutShare);
+      }
+
+      // Notify every freelancer on the job
+      for (const fid of allFreelancerIdsPayout) {
+        const fu = await storage.getUser(fid);
+        const fuLevel = fu?.level || 1;
+        const fuNet = payoutShare * getLevelPayout(fuLevel);
+        await storage.createNotification({
+          userId: fid,
+          type: "dispute_resolved",
+          title: "Dispute resolved",
+          message: `The dispute for "${job.title}" has been resolved. Your share: $${fuNet.toFixed(2)} after the platform fee.`,
+          relatedId: job.id,
+          sourceType: "dispute",
+          sourceId: dispute.id,
+        });
       }
 
       // Update escrow
@@ -2343,7 +3387,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateJob(job.id, {
         status: JobStatus.CANCELLED,
         isLocked: false,
+        preDisputeStatus: null,
       });
+
+      // A cancelled/resolved-against job counts against every assigned freelancer's completion rate
+      // unless the moderator opted to leave completion rates unaffected.
+      const affectCompletionRate = req.body.affectCompletionRate !== false;
+      if (affectCompletionRate) {
+        await penalizeAllJobFreelancers(job);
+      }
 
       // Log moderation action
       await storage.createModerationLog({
@@ -2351,7 +3403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         actionType: "dispute_resolved",
         disputeId: dispute.id,
         jobId: job.id,
-        notes: `Freelancer: $${freelancerAmount}, Customer refund: $${customerRefund}`,
+        notes: `Freelancer: $${freelancerAmount} (net $${freelancerNetPayout.toFixed(2)} after level fee), Customer refund: $${customerRefund}`,
       });
 
       // Notify both parties
@@ -2364,18 +3416,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceType: "dispute",
         sourceId: dispute.id,
       });
-
-      if (job.freelancerId) {
-        await storage.createNotification({
-          userId: job.freelancerId,
-          type: "dispute_resolved",
-          title: "Dispute resolved",
-          message: `The dispute for "${job.title}" has been resolved. You received $${freelancerAmount}.`,
-          relatedId: job.id,
-          sourceType: "dispute",
-          sourceId: dispute.id,
-        });
-      }
 
       res.json(updatedDispute);
     } catch (error) {
@@ -2643,6 +3683,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateJob(job.id, {
           status: JobStatus.CANCELLED,
         });
+
+        // A cancelled job counts against every assigned freelancer's completion rate.
+        await penalizeAllJobFreelancers(job);
 
         // Notify both parties
         await storage.createNotification({
@@ -3158,7 +4201,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Moderation routes
-  app.get("/api/moderation/pending", requireRole("staff", "moderator"), async (req, res) => {
+  app.get("/api/moderation/pending", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const pendingJobs = await storage.getJobsByStatus("pending");
       res.json(pendingJobs);
@@ -3167,7 +4210,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/moderation/:id/approve", requireRole("staff", "moderator"), async (req, res) => {
+  app.get("/api/moderation/all-jobs", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (_req, res) => {
+    try {
+      const allJobs = await storage.getJobs({});
+      res.json(allJobs);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderation/:id/approve", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const job = await storage.updateJob(req.params.id, { status: "active" });
       if (!job) {
@@ -3196,7 +4248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/moderation/:id/reject", requireRole("staff", "moderator"), async (req, res) => {
+  app.post("/api/moderation/:id/reject", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);
       if (!job) {
@@ -3245,7 +4297,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/moderation/:id/request-changes", requireRole("staff", "moderator"), async (req, res) => {
+  app.post("/api/moderation/:id/request-changes", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const { feedback } = req.body;
       
@@ -3304,6 +4356,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error requesting changes:", error);
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Serve uploaded proof files. The upload endpoint stores the raw data URL
+  // in an in-memory map; without this GET route every /uploads/... link fell
+  // through to the SPA and opened the dashboard instead of the file.
+  app.get("/uploads/*", async (req, res) => {
+    try {
+      const fileUrl = `/uploads/${(req.params as any)[0]}`;
+      const fileData = uploadedFiles.get(fileUrl);
+      if (!fileData) {
+        return res.status(404).json({ error: "File not found" });
+      }
+      // fileData is a data URL like data:image/png;base64,....
+      // Parse the data URL without regex to avoid escaping pitfalls.
+      const sepIdx = fileData.indexOf(";base64,");
+      if (sepIdx === -1 || !fileData.startsWith("data:")) {
+        return res.redirect(fileData);
+      }
+      const mimeType = fileData.slice(5, sepIdx);
+      const b64Data = fileData.slice(sepIdx + 8);
+      const buf = Buffer.from(b64Data, "base64");
+      res.set("Content-Type", mimeType);
+      res.set("Content-Disposition", "inline");
+      res.send(buf);
+    } catch (error) {
+      console.error("Error serving upload:", error);
+      res.status(500).json({ error: "Failed to serve file" });
     }
   });
 
@@ -3447,7 +4527,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/cancellation-requests", requireRole("staff", "moderator"), async (req, res) => {
+  app.get("/api/cancellation-requests", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const requests = await storage.getAllCancellationRequests();
       res.json(requests);
@@ -3474,7 +4554,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/cancellation-requests/:id/approve", requireRole("staff", "moderator"), async (req, res) => {
+  app.post("/api/cancellation-requests/:id/approve", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const request = await storage.getCancellationRequest(req.params.id);
       if (!request) {
@@ -3523,13 +4603,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         freelancerId: null,
       });
 
+      // A cancelled job counts against every assigned freelancer's completion rate
+      // unless the moderator opted to leave completion rates unaffected.
+      const affectCompletionRate = req.body.affectCompletionRate !== false;
+      if (affectCompletionRate) {
+        await penalizeAllJobFreelancers(job);
+      }
+
       res.json({ request: updatedRequest, job: updatedJob });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  app.post("/api/cancellation-requests/:id/decline", requireRole("staff", "moderator"), async (req, res) => {
+  app.post("/api/cancellation-requests/:id/decline", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const request = await storage.updateCancellationRequest(req.params.id, {
         status: "declined",
@@ -3547,7 +4634,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/cancellation-requests/:id/request-evidence", requireRole("staff", "moderator"), async (req, res) => {
+  app.post("/api/cancellation-requests/:id/request-evidence", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
       const request = await storage.updateCancellationRequest(req.params.id, {
         status: "needs_more_evidence",
@@ -3746,12 +4833,375 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Transfer money (USDT) to another user
+  app.post("/api/wallet/transfer", requireAuth, async (req, res) => {
+    try {
+      const { toUserId, amount } = z.object({
+        toUserId: z.string().min(1),
+        amount: z.coerce.number().positive(),
+      }).parse(req.body);
+
+      if (toUserId === req.session.userId) {
+        return res.status(400).json({ error: "You cannot transfer money to yourself" });
+      }
+      const recipient = await storage.getUser(toUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found" });
+      }
+
+      const result = await performUsdtTransfer(req.session.userId!, toUserId, amount);
+      if (result.error) {
+        return res.status(result.status || 400).json({ error: result.error });
+      }
+
+      const sender = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: toUserId,
+        type: "money_received",
+        title: "You received money",
+        message: `${sender?.username || "A user"} sent you $${amount.toFixed(2)}.`,
+        relatedId: sender?.id || null,
+        sourceType: "user",
+        sourceId: sender?.id || null,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error transferring money:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Request money (USDT) from another user
+  app.post("/api/wallet/request", requireAuth, async (req, res) => {
+    try {
+      const { toUserId, amount, message } = z.object({
+        toUserId: z.string().min(1),
+        amount: z.coerce.number().positive(),
+        message: z.string().max(500).optional(),
+      }).parse(req.body);
+
+      if (toUserId === req.session.userId) {
+        return res.status(400).json({ error: "You cannot request money from yourself" });
+      }
+      const recipient = await storage.getUser(toUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const request = await storage.createMoneyRequest({
+        requesterId: req.session.userId!,
+        recipientId: toUserId,
+        amount: amount.toFixed(2),
+        message: message || null,
+      });
+
+      const requester = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: toUserId,
+        type: "money_request",
+        title: "Money request",
+        message: `${requester?.username || "A user"} requested $${amount.toFixed(2)} from you.`,
+        relatedId: request.id,
+        sourceType: "user",
+        sourceId: requester?.id || null,
+      });
+
+      res.status(201).json(request);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error requesting money:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // List money requests involving the current user
+  app.get("/api/wallet/requests", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const requests = await storage.getMoneyRequestsForUser(userId);
+      const enriched = await Promise.all(
+        requests.map(async (r) => {
+          const counterpartId = r.requesterId === userId ? r.recipientId : r.requesterId;
+          const counterpart = await storage.getUser(counterpartId);
+          return {
+            ...r,
+            direction: r.requesterId === userId ? "outgoing" : "incoming",
+            counterpartUsername: counterpart?.username || "Unknown",
+            counterpartAvatar: counterpart?.avatar || null,
+          };
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching money requests:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Recipient pays (accepts) a money request
+  app.post("/api/wallet/requests/:id/accept", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getMoneyRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Request not found" });
+      if (request.recipientId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the recipient can accept this request" });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request is no longer pending" });
+      }
+
+      const amount = parseFloat(request.amount);
+      const result = await performUsdtTransfer(req.session.userId!, request.requesterId, amount);
+      if (result.error) {
+        return res.status(result.status || 400).json({ error: result.error });
+      }
+
+      await storage.updateMoneyRequest(request.id, { status: "accepted" });
+
+      const payer = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: request.requesterId,
+        type: "money_received",
+        title: "Money request paid",
+        message: `${payer?.username || "A user"} paid your request and sent you $${amount.toFixed(2)}.`,
+        relatedId: request.id,
+        sourceType: "user",
+        sourceId: payer?.id || null,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error accepting money request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Recipient declines a money request
+  app.post("/api/wallet/requests/:id/decline", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getMoneyRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Request not found" });
+      if (request.recipientId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the recipient can decline this request" });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request is no longer pending" });
+      }
+      await storage.updateMoneyRequest(request.id, { status: "declined" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error declining money request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Requester cancels their own outgoing request
+  app.post("/api/wallet/requests/:id/cancel", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getMoneyRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Request not found" });
+      if (request.requesterId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the requester can cancel this request" });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({ error: "This request is no longer pending" });
+      }
+      await storage.updateMoneyRequest(request.id, { status: "cancelled" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error cancelling money request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Moderation Vault routes
   app.get("/api/vault", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const vault = await storage.getModerationVault();
       res.json(vault);
     } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Platform fees the company has actually earned (used to cap vault deposits).
+  async function computePlatformFees(): Promise<number> {
+    const jobs = await storage.getJobs({});
+    let total = 0;
+    for (const job of jobs) {
+      if (job.status !== JobStatus.COMPLETED) continue;
+      const budget = parseFloat(job.budget || "0");
+      const premium = parseFloat((job as any).premiumAmount || "0");
+      const jfRecords = await storage.getJobFreelancers(job.id);
+      let paidOut = 0;
+      if (jfRecords.length > 0) {
+        for (const jf of jfRecords) {
+          if (jf.payoutAmount) paidOut += parseFloat(jf.payoutAmount);
+        }
+      } else if (job.freelancerId) {
+        const fl = await storage.getUser(job.freelancerId);
+        const level = fl?.level || 1;
+        paidOut = budget * getLevelPayout(level);
+      }
+      total += Math.max(0, budget + premium - paidOut);
+    }
+    return total;
+  }
+
+  function dayKey(dt: Date): string {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const d = String(dt.getDate()).padStart(2, "0");
+    return y + '-' + m + '-' + d;
+  }
+
+  // Company Vault - founder-only view of all money in the platform
+  app.get("/api/company-vault", requireRole("founder"), async (_req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const jobs = await storage.getJobs({});
+      const vault = await storage.getModerationVault();
+      const disputes = await storage.getDisputes();
+
+      // Last 14 days of marketplace activity for the comparison column chart
+      const seriesMap = new Map<string, { date: string; label: string; profit: number; completed: number; cancelled: number; disputes: number; active: number }>();
+      for (let i = 13; i >= 0; i--) {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - i);
+        const key = dayKey(d);
+        seriesMap.set(key, {
+          date: key,
+          label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          profit: 0, completed: 0, cancelled: 0, disputes: 0, active: 0,
+        });
+      }
+
+      let customerHeld = 0;
+      let freelancerHeld = 0;
+      let otherHeld = 0;
+      let freelancerCount = 0;
+      let customerCount = 0;
+      let moderatorCount = 0;
+
+      for (const u of users) {
+        const wallet = await storage.getWallet(u.id);
+        const balance = wallet ? parseFloat(wallet.usdtBalance || "0") : 0;
+        if (u.role === "customer") { customerHeld += balance; customerCount++; }
+        else if (u.role === "freelancer") { freelancerHeld += balance; freelancerCount++; }
+        else { otherHeld += balance; if (u.role === "moderator" || u.role === "head_of_moderation") moderatorCount++; }
+      }
+
+      let pendingEscrow = 0;
+      let pendingEscrowCount = 0;
+      let companyHeld = 0;
+      let completedJobs = 0;
+      let activeJobs = 0;
+      let cancelledJobs = 0;
+      let disputedJobs = 0;
+
+      for (const job of jobs) {
+        const budget = parseFloat(job.budget || "0");
+        const premium = parseFloat((job as any).premiumAmount || "0");
+        const escrow = await storage.getEscrowByJob(job.id);
+
+        if (escrow && escrow.status === EscrowStatus.HELD) {
+          pendingEscrow += parseFloat(escrow.totalAmount || "0");
+          pendingEscrowCount++;
+        }
+
+        if (job.status === JobStatus.COMPLETED) {
+          completedJobs++;
+          // Platform keeps budget + premium minus what freelancers were paid.
+          const jfRecords = await storage.getJobFreelancers(job.id);
+          let paidOut = 0;
+          if (jfRecords.length > 0) {
+            for (const jf of jfRecords) {
+              if (jf.payoutAmount) paidOut += parseFloat(jf.payoutAmount);
+            }
+          } else if (job.freelancerId) {
+            const fl = await storage.getUser(job.freelancerId);
+            const level = fl?.level || 1;
+            paidOut = budget * getLevelPayout(level);
+          }
+          const fee = Math.max(0, budget + premium - paidOut);
+          companyHeld += fee;
+          const cKey = dayKey(job.updatedAt || job.createdAt || new Date());
+          const cBucket = seriesMap.get(cKey);
+          if (cBucket) { cBucket.profit += fee; cBucket.completed += 1; }
+        } else if (job.status === JobStatus.ACTIVE || job.status === JobStatus.CLAIMED || job.status === JobStatus.IN_PROGRESS || job.status === JobStatus.SUBMITTED || job.status === JobStatus.AWAITING_CUSTOMER) {
+          activeJobs++;
+        } else if (job.status === JobStatus.CANCELLED) {
+          cancelledJobs++;
+          const cKey = dayKey(job.updatedAt || job.createdAt || new Date());
+          const cBucket = seriesMap.get(cKey);
+          if (cBucket) cBucket.cancelled += 1;
+        } else if (job.status === JobStatus.DISPUTE) {
+          disputedJobs++;
+        }
+      }
+
+      // Disputes opened per day
+      for (const d of disputes) {
+        const dKey = dayKey(d.createdAt || new Date());
+        const dBucket = seriesMap.get(dKey);
+        if (dBucket) dBucket.disputes += 1;
+      }
+      // Active jobs per day (jobs whose life window covers that day)
+      const nowTs = Date.now();
+      for (const job of jobs) {
+        const start = (job.createdAt || new Date()).getTime();
+        const end = (job.status === JobStatus.COMPLETED || job.status === JobStatus.CANCELLED)
+          ? (job.updatedAt || new Date()).getTime()
+          : nowTs;
+        for (const bucket of Array.from(seriesMap.values())) {
+          const dayStart = new Date(bucket.date + "T00:00:00").getTime();
+          if (start < dayStart + 86400000 && end > dayStart) bucket.active += 1;
+        }
+      }
+      const series = Array.from(seriesMap.values()).map(b => ({
+        ...b,
+        profit: Math.round(b.profit * 100) / 100,
+      }));
+
+      const transferredFromCompany = parseFloat(vault.transferredFromCompany || "0");
+      const companyHeldRounded = Math.round((companyHeld - transferredFromCompany) * 100) / 100;
+      const moderationVault = parseFloat(vault.balance || "0");
+      const totalInPlatform = Math.round((customerHeld + freelancerHeld + pendingEscrow + companyHeldRounded + moderationVault) * 100) / 100;
+
+      res.json({
+        customerHeld: Math.round(customerHeld * 100) / 100,
+        freelancerHeld: Math.round(freelancerHeld * 100) / 100,
+        pendingEscrow: Math.round(pendingEscrow * 100) / 100,
+        pendingEscrowCount,
+        companyHeld: companyHeldRounded,
+        moderationVault: Math.round(moderationVault * 100) / 100,
+        totalInPlatform,
+        counts: {
+          users: users.length,
+          freelancers: freelancerCount,
+          customers: customerCount,
+          moderators: moderatorCount,
+          jobs: jobs.length,
+          activeJobs,
+          completedJobs,
+          cancelledJobs,
+          disputedJobs,
+        },
+        feeStructure: {
+          level1: "40% platform fee",
+          level2: "30% platform fee",
+          level3: "20% platform fee",
+          level4: "15% platform fee",
+          level5: "10% platform fee",
+        },
+        series,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Company vault error:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -3804,6 +5254,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (depositAmount < 1.00) {
         return res.status(400).json({ error: "Minimum deposit is $1.00" });
+      }
+
+      // Founder deposits can only move money the company actually holds
+      // (platform fees earned from completed jobs, minus what has already
+      // been transferred into the moderation vault).
+      const vault = await storage.getModerationVault();
+      const platformFees = await computePlatformFees();
+      const alreadyTransferred = parseFloat(vault.transferredFromCompany || "0");
+      const companyAvailable = Math.max(0, platformFees - alreadyTransferred);
+      if (depositAmount > companyAvailable) {
+        return res.status(400).json({
+          error: "Cannot deposit more than the company holds ($" + companyAvailable.toFixed(2) + " available)."
+        });
       }
 
       const transaction = await storage.depositToVault(depositAmount, req.session.userId!, note);
@@ -3978,6 +5441,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/calendar/events/:id", requireRole(...calendarRoles), async (req, res) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      const event = events.find(e => e.id === req.params.id);
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const user = await storage.getUser(req.session.userId!);
+      const isCreator = event.createdBy === req.session.userId;
+      const isLeader = user && ["head_of_moderation", "founder"].includes(user.role);
+      if (!isCreator && !isLeader) {
+        return res.status(403).json({ error: "You can only edit your own events" });
+      }
+      const { title, description, startTime, endTime } = req.body;
+      const updates: Partial<CalendarEvent> = {};
+      if (title !== undefined) {
+        if (typeof title !== "string" || !title.trim()) {
+          return res.status(400).json({ error: "Title cannot be empty" });
+        }
+        updates.title = title.trim();
+      }
+      if (description !== undefined) updates.description = String(description).trim();
+      if (startTime !== undefined) {
+        const start = new Date(startTime);
+        if (isNaN(start.getTime())) return res.status(400).json({ error: "Invalid start date" });
+        updates.startTime = start;
+      }
+      if (endTime !== undefined) {
+        const end = new Date(endTime);
+        if (isNaN(end.getTime())) return res.status(400).json({ error: "Invalid end date" });
+        updates.endTime = end;
+      }
+      if (updates.startTime && updates.endTime && updates.endTime <= updates.startTime) {
+        return res.status(400).json({ error: "End time must be after start time" });
+      }
+      const updated = await storage.updateCalendarEvent(req.params.id, updates);
+      if (!updated) return res.status(404).json({ error: "Event not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.delete("/api/calendar/events/:id", requireRole(...calendarRoles), async (req, res) => {
     try {
       const events = await storage.getCalendarEvents();
@@ -4101,7 +5605,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if there's already a pending request between these users
       const existingRequest = await storage.getFriendRequestBetweenUsers(req.session.userId!, toUserId);
       if (existingRequest && existingRequest.status === "pending") {
-        return res.status(400).json({ error: "A friend request already exists between you and this user" });
+        return res.status(400).json({ error: "A friend request already exists between you and this user. Please wait for them to respond." });
+      }
+
+      // Anti-spam: if the recipient declined/cancelled a previous request, or
+      // these two users were recently friends, block re-sending for 10 minutes
+      // so a user can't spam repeated requests (e.g. add/unfriend/re-add).
+      // After the cooldown a single new request is allowed.
+      if (existingRequest && (existingRequest.status === "declined" || existingRequest.status === "accepted")) {
+        const lastActionAt = existingRequest.updatedAt ? new Date(existingRequest.updatedAt).getTime() : 0;
+        const cooldownMs = 10 * 60 * 1000;
+        if (Date.now() - lastActionAt < cooldownMs) {
+          const minutesLeft = Math.max(1, Math.ceil((cooldownMs - (Date.now() - lastActionAt)) / 60000));
+          if (existingRequest.status === "declined") {
+            return res.status(429).json({
+              error: existingRequest.fromUserId === req.session.userId
+                ? `They declined your recent friend request. You can send another in ${minutesLeft} minute${minutesLeft === 1 ? "" : "s"}.`
+                : `You declined their recent friend request. They can send another in ${minutesLeft} minute${minutesLeft === 1 ? "" : "s"}.`
+            });
+          }
+          return res.status(429).json({
+            error: `You recently unfriended each other. You can send another friend request in ${minutesLeft} minute${minutesLeft === 1 ? "" : "s"}.`
+          });
+        }
+        // Cooldown over — reuse the record so there is never more than one
+        // request per pair of users.
+        const refreshed = await storage.updateFriendRequest(existingRequest.id, {
+          fromUserId: req.session.userId,
+          toUserId,
+          status: "pending",
+          createdAt: new Date(),
+        });
+        const sender = await storage.getUser(req.session.userId!);
+        await storage.createNotification({
+          userId: toUserId,
+          type: "friend_request",
+          title: "Friend Request",
+          message: `${sender?.username || "Someone"} sent you a friend request.`,
+          relatedId: refreshed!.id,
+          sourceType: "user",
+          sourceId: req.session.userId!,
+        });
+        return res.json(refreshed);
       }
       
       const request = await storage.createFriendRequest({
@@ -4428,22 +5973,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Can only rate completed jobs" });
       }
       
-      // Verify job has a freelancer
-      if (!job.freelancerId) {
+      // Determine which freelancer is being rated (default to the lead for backward compat)
+      const targetFreelancerId = req.body.freelancerId || job.freelancerId;
+      if (!targetFreelancerId) {
         return res.status(400).json({ error: "No freelancer to rate for this job" });
       }
+
+      // The rated freelancer must actually be part of this job (lead, collaborator, or team member)
+      const jobFreelancerIds = await getJobFreelancerIds(job);
+      if (!jobFreelancerIds.includes(targetFreelancerId)) {
+        return res.status(403).json({ error: "That freelancer is not assigned to this job" });
+      }
       
-      // Check if rating already exists
-      const existingRating = await storage.getRating(jobId);
+      // One rating per freelancer per job
+      const existingRating = await storage.getRatingForFreelancer(jobId, targetFreelancerId);
       if (existingRating) {
-        return res.status(400).json({ error: "Rating already submitted for this job" });
+        return res.status(400).json({ error: "You have already rated this freelancer for this job" });
       }
       
       // Validate rating data
       const validatedData = insertRatingSchema.parse({
         jobId,
         customerId: req.session.userId!,
-        freelancerId: job.freelancerId,
+        freelancerId: targetFreelancerId,
         score: req.body.score,
         review: req.body.review,
       });
@@ -4451,14 +6003,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create rating
       const rating = await storage.createRating(validatedData);
       
-      // Update freelancer's average rating and total ratings
-      const freelancer = await storage.getUser(job.freelancerId);
+      // Update the rated freelancer's average rating and total ratings
+      const freelancer = await storage.getUser(targetFreelancerId);
       if (freelancer) {
         const currentRating = parseFloat(freelancer.rating || "0");
         const currentTotal = freelancer.totalRatings || 0;
         const newAverage = ((currentRating * currentTotal) + rating.score) / (currentTotal + 1);
         
-        await storage.updateUser(job.freelancerId, {
+        await storage.updateUser(targetFreelancerId, {
           rating: newAverage.toFixed(2),
           totalRatings: currentTotal + 1,
         });
@@ -4484,10 +6036,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // All customer ratings for a job (one per rated freelancer)
+  app.get("/api/jobs/:jobId/ratings", requireAuth, async (req, res) => {
+    try {
+      const ratings = await storage.getRatingsByJob(req.params.jobId);
+      res.json(ratings);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
   
   app.get("/api/freelancers/:freelancerId/ratings", requireAuth, async (req, res) => {
     try {
       const ratings = await storage.getRatingsByFreelancer(req.params.freelancerId);
+      res.json(ratings);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer rates the customer after a completed job
+  app.post("/api/jobs/:jobId/customer-rating", requireRole("freelancer"), async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await storage.getJob(jobId);
+
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Verify the freelancer worked on this job
+      const userId = req.session.userId!;
+      if (job.freelancerId !== userId && !(job.collaborators || []).includes(userId)) {
+        return res.status(403).json({ error: "Only assigned freelancers can rate this job" });
+      }
+
+      if (job.status !== "completed") {
+        return res.status(400).json({ error: "Can only rate completed jobs" });
+      }
+
+      if (!job.customerId) {
+        return res.status(400).json({ error: "No customer to rate for this job" });
+      }
+
+      const existingRating = await storage.getCustomerRating(jobId);
+      if (existingRating) {
+        return res.status(400).json({ error: "Customer rating already submitted for this job" });
+      }
+
+      const validatedData = insertCustomerRatingSchema.parse({
+        jobId,
+        freelancerId: userId,
+        customerId: job.customerId,
+        score: req.body.score,
+        review: req.body.review,
+      });
+
+      const rating = await storage.createCustomerRating(validatedData);
+      res.json(rating);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/jobs/:jobId/customer-rating", requireAuth, async (req, res) => {
+    try {
+      const rating = await storage.getCustomerRating(req.params.jobId);
+      if (!rating) {
+        return res.status(404).json({ error: "Rating not found" });
+      }
+      res.json(rating);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/customers/:customerId/ratings", requireAuth, async (req, res) => {
+    try {
+      const ratings = await storage.getCustomerRatings(req.params.customerId);
       res.json(ratings);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -4696,6 +6326,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Project leader proposes inviting a freelancer — goes to the customer for approval first,
+  // and only after approval is the freelancer actually invited.
+  app.post("/api/jobs/:jobId/propose-invite", requireAuth, async (req, res) => {
+    try {
+      const { userId, message } = req.body;
+      const jobId = req.params.jobId;
+
+      const job = await storage.getJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Only the project leader can propose an invite
+      const projectLeaderId = job.projectLeaderId || job.freelancerId;
+      if (!projectLeaderId || req.session.userId !== projectLeaderId) {
+        return res.status(403).json({ error: "Only the project leader can invite freelancers" });
+      }
+
+      const takenStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer", "deadline_reached"];
+      if (!takenStatuses.includes(job.status)) {
+        return res.status(400).json({ error: "This job is not active right now" });
+      }
+
+      const invited = await storage.getUser(userId);
+      if (!invited) {
+        return res.status(404).json({ error: "Freelancer not found" });
+      }
+      if (invited.role !== "freelancer") {
+        return res.status(400).json({ error: "You can only invite freelancers" });
+      }
+
+      // Can't invite someone already on the job
+      if (job.freelancerId === userId || (job.collaborators || []).includes(userId)) {
+        return res.status(400).json({ error: "This freelancer is already on the job" });
+      }
+
+      // No duplicate recommendation already awaiting the customer's review
+      const existingRecs = await storage.getJobRecommendationsByRecommender(req.session.userId!);
+      const alreadyRecommended = existingRecs.find(
+        (r) => r.recommendedFreelancerId === userId && r.jobId === jobId && r.status === "pending"
+      );
+      if (alreadyRecommended) {
+        return res.status(400).json({ error: "An invite for this freelancer is already awaiting customer review" });
+      }
+
+      // The invite is a job recommendation — it lands in the customer's Recommendations tab
+      const recommendation = await storage.createJobRecommendation({
+        recommenderId: req.session.userId!,
+        recommendedFreelancerId: userId,
+        jobId,
+        customerId: job.customerId,
+        recommenderMessage: message || null,
+      });
+
+      // Notify the customer — routes them to their Recommendations
+      const leader = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_recommendation",
+        title: "Freelancer Recommendation",
+        message: `${leader?.username} recommends ${invited.username} for your job: ${job.title}`,
+        relatedId: recommendation.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true, recommendation });
+    } catch (error) {
+      console.error("Error proposing invite:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/invitations", requireAuth, async (req, res) => {
     try {
       const invitations = await storage.getInvitations(req.session.userId!);
@@ -4837,6 +6540,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const existingInvitation = await storage.getInvitation(req.params.id);
+      if (!existingInvitation) {
+        return res.status(404).json({ error: "Invitation not found" });
+      }
+      if (existingInvitation.toUserId !== req.session.userId) {
+        return res.status(403).json({ error: "This invitation is not addressed to you" });
+      }
+      if (existingInvitation.status !== "pending" && existingInvitation.status !== null) {
+        return res.status(400).json({ error: "This invitation can no longer be accepted" });
+      }
+
       const invitation = await storage.updateInvitation(req.params.id, { 
         status: "accepted" 
       });
@@ -4875,6 +6589,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/invitations/:id/reject", requireAuth, async (req, res) => {
     try {
+      const existingInvitation = await storage.getInvitation(req.params.id);
+      if (!existingInvitation) {
+        return res.status(404).json({ error: "Invitation not found" });
+      }
+      if (existingInvitation.toUserId !== req.session.userId) {
+        return res.status(403).json({ error: "This invitation is not addressed to you" });
+      }
+      if (existingInvitation.status !== "pending" && existingInvitation.status !== null) {
+        return res.status(400).json({ error: "This invitation can no longer be rejected" });
+      }
+
       const invitation = await storage.updateInvitation(req.params.id, { 
         status: "rejected" 
       });
@@ -4901,6 +6626,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Customer approves a project leader's invite proposal — the freelancer is then actually invited
+
 
   // Profile update route (username only - email requires verification)
   app.put("/api/profile", requireAuth, async (req, res) => {
@@ -4991,12 +6719,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update user with pending email
       await storage.updateUser(user.id, { pendingEmail: trimmedEmail });
       
+      // Dev aid: when no email provider is configured, make the verification
+      // link retrievable from the server log so the flow stays testable.
+      if (!process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
+        console.log(`[email-verification] No email provider configured. Verification link for ${trimmedEmail}: http://localhost:5000/api/profile/email-verify?token=${token}`);
+      }
+      
       // Send verification email
       try {
         const { sendVerificationEmail } = await import('./lib/resend-client');
         await sendVerificationEmail(trimmedEmail, token, user.username);
-      } catch (emailError) {
+      } catch (emailError: any) {
         console.error('Failed to send verification email:', emailError);
+        const msg = String(emailError?.message || '');
+        // Surface a misconfigured email provider clearly so the user isn't
+        // left wondering why nothing arrives in their inbox.
+        if (msg.includes('not set and no Replit connector') || msg.includes('Resend not connected')) {
+          return res.status(503).json({
+            error: "Email sending is not configured on this server (missing SENDGRID_API_KEY or RESEND_API_KEY). The verification email was not sent — ask the administrator to add an API key. In development you can verify with:\n/api/profile/email-verify?token=<token from server log>",
+            pendingEmail: trimmedEmail,
+          });
+        }
         return res.status(500).json({ error: "Failed to send verification email. Please try again later." });
       }
       
@@ -5221,6 +6964,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/profile/portfolio", requireRole("freelancer"), async (req, res) => {
+    try {
+      const { portfolio } = req.body;
+
+      if (portfolio === undefined || portfolio === null || typeof portfolio !== "string") {
+        return res.status(400).json({ error: "Invalid portfolio" });
+      }
+
+      const trimmed = portfolio.trim();
+      if (trimmed.length > 300) {
+        return res.status(400).json({ error: "Portfolio URL must be 300 characters or less" });
+      }
+
+      if (trimmed && !/^https?:\/\/.+/i.test(trimmed)) {
+        return res.status(400).json({ error: "Portfolio must be a valid http(s) URL" });
+      }
+
+      const user = await storage.updateUser(req.session.userId!, { portfolio: trimmed || null });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ portfolio: user.portfolio });
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.put("/api/profile/bio", requireAuth, async (req, res) => {
     try {
       const { bio } = req.body;
@@ -5324,7 +7095,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           casesReviewed,
           moderatorTier,
           accountAgeDays: accountAge,
-          accuracyScore: 95, // Placeholder - would need appeal tracking
           isVerified: true,
           moderatorStatus: "Active",
         });
@@ -5496,7 +7266,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: message.trim(),
       });
 
-      // Create notification for receiver
+      // Create notification for receiver. The master "Enable Notifications"
+      // switch is a *delivery* preference, not an inbox filter: notifications
+      // must always enter the inbox so the user sees them when they re-enable
+      // notifications. The client suppresses the red badge growth and sounds.
       const sender = await storage.getUser(userId);
       await storage.createNotification({
         userId: receiverId,
@@ -5658,7 +7431,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename="linxora-data-${req.session.userId}.json"`);
+      res.setHeader('Content-Disposition', `attachment; filename="linxova-data-${req.session.userId}.json"`);
       res.json(userData);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -5814,6 +7587,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               completedJobs: user.completedJobs,
               level: user.level,
               rating: user.rating,
+              portfolio: user.portfolio,
             } : null,
           };
         })
@@ -5859,14 +7633,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Customer to Freelancer: Account must be at least 2 weeks old
+        // Customer to Freelancer: Account must be at least 3 days old
         if (user.createdAt) {
           const accountAge = Date.now() - new Date(user.createdAt).getTime();
-          const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
-          if (accountAge < twoWeeksMs) {
-            const daysRemaining = Math.ceil((twoWeeksMs - accountAge) / (24 * 60 * 60 * 1000));
+          const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+          if (accountAge < threeDaysMs) {
+            const daysRemaining = Math.ceil((threeDaysMs - accountAge) / (24 * 60 * 60 * 1000));
             return res.status(400).json({ 
-              error: `Your account must be at least 2 weeks old to become a freelancer. ${daysRemaining} day(s) remaining.` 
+              error: `Your account must be at least 3 days old to become a freelancer. ${daysRemaining} day(s) remaining.` 
             });
           }
         }
@@ -6038,38 +7812,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // === LINO AI ASSISTANT ===
   const linoRateLimits = new Map<string, number[]>();
-  const linoOpenai = new OpenAI({
-    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  const linoOpenaiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  const linoOpenai = linoOpenaiKey ? new OpenAI({
+    apiKey: linoOpenaiKey,
     baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  });
+  }) : null;
+  const linoOpenaiModel = process.env.AI_INTEGRATIONS_OPENAI_MODEL || "gpt-4o-mini";
 
   app.post("/api/lino/chat", requireAuth, async (req, res) => {
+    const userId = req.session.userId!;
+
+    // Rate limit: max 20 messages per hour
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const userTimestamps = (linoRateLimits.get(userId) || []).filter(t => t > oneHourAgo);
+    if (userTimestamps.length >= 20) {
+      return res.status(429).json({
+        error: "You've sent too many messages to Lino recently. Please wait before trying again."
+      });
+    }
+    userTimestamps.push(now);
+    linoRateLimits.set(userId, userTimestamps);
+
+    const { messages } = req.body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "Messages are required" });
+    }
+
+    const rawMessages = messages.slice(-20);
+    const recentMessages = rawMessages.map((m: any) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content || "").trim(),
+    }));
+
+    console.log("[Lino] incoming chat request", {
+      userId,
+      messageCount: recentMessages.length,
+      recentPreview: recentMessages.map((m) => ({ role: m.role, content: m.content.slice(0, 80) })),
+      fullPayload: rawMessages.length > 0 ? rawMessages.map((m: any) => ({ role: m.role, content: String(m.content || "").slice(0, 80) })) : [],
+    });
+
+    if (!linoOpenai) {
+      recentMessages.filter(m => m.role === "user").forEach((msg) => recordLinoMemory(userId, msg.content));
+      const reply = getLinoFallbackReply(recentMessages, userId);
+      console.log("[Lino] fallback reply", { reply });
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.write(`data: ${JSON.stringify({ content: reply })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+      return;
+    }
+
     try {
-      const userId = req.session.userId!;
+      const systemPrompt = `You are Lino, the friendly and helpful AI support assistant for Linxova — a professional freelancer job marketplace platform.
 
-      // Rate limit: max 20 messages per hour
-      const now = Date.now();
-      const oneHourAgo = now - 60 * 60 * 1000;
-      const userTimestamps = (linoRateLimits.get(userId) || []).filter(t => t > oneHourAgo);
-      if (userTimestamps.length >= 20) {
-        return res.status(429).json({
-          error: "You've sent too many messages to Lino recently. Please wait before trying again."
-        });
-      }
-      userTimestamps.push(now);
-      linoRateLimits.set(userId, userTimestamps);
-
-      const { messages } = req.body;
-      if (!messages || !Array.isArray(messages) || messages.length === 0) {
-        return res.status(400).json({ error: "Messages are required" });
-      }
-
-      // Limit conversation history to last 20 messages
-      const recentMessages = messages.slice(-20);
-
-      const systemPrompt = `You are Lino, the friendly and helpful AI support assistant for Linxora — a professional freelancer job marketplace platform.
-
-Your role is to help users understand how to use Linxora. Here is what you know about the platform:
+Your role is to help users understand how to use Linxova. Here is what you know about the platform:
 
 **Roles:**
 - Customer: Posts jobs, hires freelancers, manages payments
@@ -6089,11 +7888,11 @@ Your role is to help users understand how to use Linxora. Here is what you know 
 **Wallet & Payments:**
 - USD-based wallet with deposit and withdrawal
 - Escrow system: money is held until job completes
-- Premium listings: minimum $100, premium revenue goes to Linxora
-- Level-based payouts: Level 1=60%, Level 2=70%, Level 3=75%, Level 4=80%, Level 5=85% of budget
+- Premium listings: minimum $100, premium revenue goes to Linxova
+- Level-based payouts: Level 1=65%, Level 2=75%, Level 3=80%, Level 4=85%, Level 5=90%, Level 6=93%, Level 7=95%, Level 8=97% of budget
 
 **Role Upgrades:**
-- Customers can apply to become Freelancers (account must be 2+ weeks old, no active jobs)
+- Customers can apply to become Freelancers (account must be 3+ days old, no active jobs)
 - Freelancers can apply for Moderator (Level 5, 65%+ completion rate, 4+ months account age)
 - Cannot post new jobs while a role upgrade request is pending
 
@@ -6111,22 +7910,28 @@ Your role is to help users understand how to use Linxora. Here is what you know 
 - Use simple language, avoid technical jargon
 - If you don't know something specific, say so honestly
 - Don't make up features that don't exist
-- Don't provide advice on matters outside of Linxora platform usage
+- Don't provide advice on matters outside of Linxova platform usage
 - Keep responses focused and under 200 words when possible`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = await linoOpenai.chat.completions.create({
-        model: "gpt-5-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...recentMessages.map((m: any) => ({
+      const messagesToSend = [
+        { role: "system", content: systemPrompt },
+        ...recentMessages
+          .filter((m) => m.content.length > 0)
+          .map((m) => ({
             role: m.role as "user" | "assistant",
             content: String(m.content).slice(0, 2000),
           })),
-        ],
+      ];
+
+      console.log("[Lino] sending to OpenAI", JSON.stringify(messagesToSend.map((m) => ({ role: m.role, content: m.content.slice(0, 200) })), null, 2));
+
+      const stream = await linoOpenai.chat.completions.create({
+        model: linoOpenaiModel,
+        messages: messagesToSend,
         stream: true,
         max_completion_tokens: 1024,
       });
@@ -6142,14 +7947,21 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       res.end();
     } catch (error: any) {
       console.error("Lino chat error:", error);
+      const friendly =
+        error?.status === 429 || error?.code === "insufficient_quota"
+          ? "The AI service is temporarily unavailable (quota/rate limit reached). Please try again later."
+          : error?.status === 401 || error?.status === 403
+          ? "The AI service key is not authorized. Please contact the Linxova admin."
+          : "Failed to process your message";
       if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ error: "Something went wrong" })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: friendly })}\n\n`);
         res.end();
       } else {
-        res.status(500).json({ error: "Failed to process your message" });
+        res.status(500).json({ error: friendly });
       }
     }
   });
+
 
   // Report routes
   const reportRateLimits = new Map<string, number[]>();
@@ -6187,9 +7999,11 @@ Your role is to help users understand how to use Linxora. Here is what you know 
 
       // For user reports with numeric targetId, resolve to internal UUID
       if (validatedData.reportType === "user" && validatedData.targetId !== "platform") {
-        const numericId = parseInt(validatedData.targetId);
-        if (!isNaN(numericId) && numericId > 0) {
-          const targetUser = await storage.getUserByUserId(numericId);
+        // Only treat the target as a numeric user ID when it is entirely digits.
+        // Internal user IDs are UUIDs which can start with digits (e.g. "7594fb08-…")
+        // — parseInt would mangle those into a bogus sequential lookup and 404.
+        if (/^\d+$/.test(validatedData.targetId)) {
+          const targetUser = await storage.getUserByUserId(parseInt(validatedData.targetId));
           if (targetUser) {
             validatedData.targetId = targetUser.id;
           } else {
@@ -6282,6 +8096,15 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   app.get("/api/my-reports", requireAuth, async (req, res) => {
     try {
       const reports = await storage.getReports({ reporterId: req.session.userId });
+      res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/reports/forwarded-bugs", requireRole("head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const reports = await storage.getReports({ status: "forwarded", reportType: "bug" });
       res.json(reports);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -6479,15 +8302,6 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   });
 
   // Get forwarded bug reports (for founder/head of moderation)
-  app.get("/api/reports/forwarded-bugs", requireRole("head_of_moderation", "founder"), async (req, res) => {
-    try {
-      const reports = await storage.getReports({ status: "forwarded", reportType: "bug" });
-      res.json(reports);
-    } catch (error) {
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
   // Moderator Task routes
   app.get("/api/moderator-tasks", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
@@ -7170,64 +8984,45 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   // Helper function to calculate user status
   async function calculateUserStatus(user: any) {
     const now = new Date();
-    const lastActive = user.lastActive ? new Date(user.lastActive) : new Date(user.createdAt);
+    const lastActive = user.lastActive ? new Date(user.lastActive) : new Date();
     const timeSinceActive = now.getTime() - lastActive.getTime();
-    const oneMonth = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
     const fiveMinutes = 5 * 60 * 1000; // 5 minutes in ms
-    
-    // Online status: active within last 5 minutes
+
+    // Online status (green dot): active within the last 5 minutes (app/tab open)
     const isOnline = timeSinceActive < fiveMinutes;
     const onlineStatus = isOnline ? "online" : "offline";
-    
-    // Inactive: no activity for over a month (applies to all roles)
-    if (timeSinceActive > oneMonth) {
-      return { 
-        onlineStatus: "offline", 
-        workStatus: "inactive",
-        displayStatus: "Inactive"
-      };
-    }
-    
-    // For non-freelancers, just return online/offline status
+
+    // Non-freelancers only carry presence (online/offline)
     if (user.role !== "freelancer") {
-      return { 
-        onlineStatus, 
+      return {
+        onlineStatus,
         workStatus: null,
         displayStatus: isOnline ? "Online" : "Offline"
       };
     }
-    
-    // Freelancer-specific status calculation
-    const jobs = await storage.getJobs();
-    
-    // Active job statuses include all states where work is ongoing or pending review
-    const activeJobStatuses = [
-      "in_progress", 
-      "awaiting_customer", 
-      "pending_acceptance",
-      "submitted",
-      "claimed",
-      "dispute"
-    ];
-    
-    // Check if currently has an active job
-    const activeJobs = jobs.filter(j => 
-      (j.freelancerId === user.id || j.collaborators?.includes(user.id)) &&
-      activeJobStatuses.includes(j.status)
-    );
-    
-    // Also check jobFreelancers table for team assignments (only accepted status)
-    const freelancerAssignments = await storage.getJobFreelancersByFreelancer(user.id);
-    const assignedActiveJobs = freelancerAssignments.filter(jf => {
-      // Only count if freelancer is still active on the job (status = accepted)
-      if (jf.status && jf.status !== "accepted") return false;
-      const job = jobs.find(j => j.id === jf.jobId);
-      return job && activeJobStatuses.includes(job.status);
-    });
-    
-    const hasActiveJob = activeJobs.length > 0 || assignedActiveJobs.length > 0;
-    
-    // Check if on PTO
+
+    // Freelancer work status: Active within set working hours, Inactive outside.
+    let outsideWorkingHours = false;
+    const workingHours = user.workingHours as any;
+    if (workingHours && Object.keys(workingHours).length > 0) {
+      const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      const currentDay = dayNames[now.getDay()];
+      const daySchedule = workingHours[currentDay];
+
+      if (daySchedule && daySchedule.start && daySchedule.end) {
+        const currentTime = now.getHours() * 60 + now.getMinutes();
+        const [startHour, startMin] = daySchedule.start.split(":").map(Number);
+        const [endHour, endMin] = daySchedule.end.split(":").map(Number);
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        outsideWorkingHours = currentTime < startTime || currentTime > endTime;
+      } else {
+        // No hours configured for this day = off
+        outsideWorkingHours = true;
+      }
+    }
+
+    // On approved PTO also counts as inactive
     const ptoRequests = await storage.getPTORequests(user.id);
     const onPTO = ptoRequests.some(pto => {
       if (pto.status !== "approved") return false;
@@ -7237,38 +9032,11 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       endDate.setHours(23, 59, 59, 999);
       return now >= startDate && now <= endDate;
     });
-    
-    // Check if outside working hours
-    let outsideWorkingHours = false;
-    const workingHours = user.workingHours as any;
-    if (workingHours && Object.keys(workingHours).length > 0) {
-      const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-      const currentDay = dayNames[now.getDay()];
-      const daySchedule = workingHours[currentDay];
-      
-      if (daySchedule && daySchedule.start && daySchedule.end) {
-        const currentTime = now.getHours() * 60 + now.getMinutes();
-        const [startHour, startMin] = daySchedule.start.split(":").map(Number);
-        const [endHour, endMin] = daySchedule.end.split(":").map(Number);
-        const startTime = startHour * 60 + startMin;
-        const endTime = endHour * 60 + endMin;
-        
-        outsideWorkingHours = currentTime < startTime || currentTime > endTime;
-      }
-    }
-    
-    // Determine freelancer work status
-    let workStatus: string;
-    if (hasActiveJob) {
-      workStatus = "working";
-    } else if (onPTO || outsideWorkingHours) {
-      workStatus = "on-break";
-    } else {
-      workStatus = "unemployed";
-    }
-    
-    return { 
-      onlineStatus, 
+
+    const workStatus = onPTO || outsideWorkingHours ? "inactive" : "active";
+
+    return {
+      onlineStatus,
       workStatus,
       displayStatus: isOnline ? "Online" : "Offline"
     };
@@ -7284,14 +9052,13 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       const requesterId = req.session.userId!;
       const requester = await storage.getUser(requesterId);
 
-      // Check showOnlineStatus preference before revealing status
+      // Check showOnlineStatus preference before revealing status.
+      // The user's choice wins for everyone — no requester bypass.
       const profilePrefs = await storage.getUserPreferences(user.id);
       const showOnline = profilePrefs?.showOnlineStatus !== false;
-      // Moderators/above can always see status
-      const requesterCanSeeStatus = requester && ["moderator", "head_of_moderation", "founder", "staff"].includes(requester.role);
 
       let status;
-      if (showOnline || requesterCanSeeStatus) {
+      if (showOnline) {
         status = await calculateUserStatus(user);
       } else {
         status = { onlineStatus: "offline", workStatus: null, displayStatus: "Offline" };
@@ -7342,8 +9109,12 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
         ratingCount: user.totalRatings || 0,
         completedJobs: user.completedJobs || 0,
+        completionPercentage: user.completionPercentage || "0",
+        totalJobs: user.totalJobs || 0,
         createdAt: user.createdAt,
         specialization: user.specialization || null,
+        portfolio: user.portfolio || null,
+        workingHours: user.workingHours || null,
         bio: user.bio || null,
         status: status,
         email: visibleEmail,
@@ -7358,18 +9129,54 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         friendRequestFromMe: friendRequest ? friendRequest.fromUserId === requesterId : null,
       };
 
-      // For freelancers, include their completed job history
+      // For freelancers, include their full completed job history
       if (user.role === "freelancer" || user.role === "moderator") {
         const jobs = await storage.getJobs();
         const completedJobsList = jobs.filter(
           j => j.freelancerId === user.id && j.status === "completed"
-        ).slice(0, 10).map(j => ({
+        ).map(j => ({
           id: j.id,
           title: j.title,
           category: j.category,
           completedAt: j.updatedAt,
         }));
-        publicProfile.recentCompletedJobs = completedJobsList;
+        publicProfile.completedJobHistory = completedJobsList;
+      }
+
+      // Reviews: customers reviewing a freelancer, or freelancers reviewing a customer.
+      // Cap at the most recent 50 so heavy users don't trigger unbounded enrichment work.
+      if (user.role === "freelancer") {
+        const ratings = (await storage.getRatingsByFreelancer(user.id)).slice(0, 50);
+        publicProfile.reviews = await Promise.all(ratings.map(async (r) => {
+          const reviewer = await storage.getUser(r.customerId);
+          const job = await storage.getJob(r.jobId);
+          return {
+            id: r.id,
+            score: r.score,
+            review: r.review,
+            createdAt: r.createdAt,
+            reviewerId: r.customerId,
+            reviewerUsername: reviewer?.username || "Customer",
+            reviewerAvatar: reviewer?.avatar || null,
+            jobTitle: job?.title || null,
+          };
+        }));
+      } else if (user.role === "customer") {
+        const ratings = (await storage.getCustomerRatings(user.id)).slice(0, 50);
+        publicProfile.reviews = await Promise.all(ratings.map(async (r) => {
+          const reviewer = await storage.getUser(r.freelancerId);
+          const job = await storage.getJob(r.jobId);
+          return {
+            id: r.id,
+            score: r.score,
+            review: r.review,
+            createdAt: r.createdAt,
+            reviewerId: r.freelancerId,
+            reviewerUsername: reviewer?.username || "Freelancer",
+            reviewerAvatar: reviewer?.avatar || null,
+            jobTitle: job?.title || null,
+          };
+        }));
       }
 
       res.json(publicProfile);
@@ -8079,14 +9886,19 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   app.get("/api/messages/conversations", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const conversations = await storage.getConversations(userId);
+      const hidden = new Set(await storage.getHiddenConversationPartners(userId));
+      const conversations = (await storage.getConversations(userId)).filter(
+        (conv) => !hidden.has(conv.partnerId)
+      );
 
       // Enrich with partner details
       const enrichedConversations = await Promise.all(
         conversations.map(async (conv) => {
           const partner = await storage.getUser(conv.partnerId);
+          const isBlocked = await storage.isBlocked(userId, conv.partnerId);
           return {
             ...conv,
+            isBlocked,
             partner: partner ? {
               id: partner.id,
               userId: partner.userId,
@@ -8099,6 +9911,19 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       );
 
       res.json(enrichedConversations);
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Remove (hide) a DM conversation from the current user's Messages list.
+  // This does NOT delete the messages — the other person keeps their copy, and
+  // if they message again the conversation naturally reappears.
+  app.delete("/api/messages/conversations/:partnerId", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      await storage.hideConversation(userId, req.params.partnerId);
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -8158,7 +9983,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       // Check if sender is blocked by receiver
       const isBlockedByReceiver = await storage.isBlocked(receiverId, senderId);
       if (isBlockedByReceiver) {
-        return res.status(403).json({ error: "You cannot send messages to this user." });
+        return res.status(403).json({ error: `You can't message ${receiver.username} because they have blocked you.` });
       }
 
       // Check receiver's privacy settings
@@ -8202,7 +10027,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
             if (dmSetting === "friends") {
               return res.status(403).json({ error: "This user only accepts messages from friends." });
             } else if (dmSetting === "associates") {
-              return res.status(403).json({ error: "This user only accepts messages from people they've worked with or messaged before." });
+              return res.status(403).json({ error: "This user only accepts messages from people they've worked with, messaged before, or shared a group chat with." });
             } else {
               return res.status(403).json({ error: "This user's messaging settings do not allow you to contact them." });
             }
@@ -8216,22 +10041,40 @@ Your role is to help users understand how to use Linxora. Here is what you know 
         return res.status(400).json({ error: "Message contains inappropriate content" });
       }
 
+      // Spam filter: a sender is "known" (not spam) when they have exchanged
+      // messages, shared a job, are friends, or have both spoken in a shared
+      // group chat with the receiver (areUsersConnected covers all of these —
+      // merely sharing a group chat without speaking does not count).
+      const sender = await storage.getUser(senderId);
+      const isKnownSender = await storage.areUsersConnected(senderId, receiverId);
+
       const directMessage = await storage.createDirectMessage({
         senderId,
         receiverId,
         message: sanitizeText(message.trim()),
       });
 
-      // Create notification for receiver
-      const sender = await storage.getUser(senderId);
+      // A new message makes a removed conversation reappear for the receiver.
+      await storage.unhideConversation(receiverId, senderId);
+
+      // Create notification for receiver. When the spam filter is on and the
+      // sender is unknown, the notification is created pre-read so it never
+      // pings the receiver or counts toward their unread badge — it silently
+      // files itself in the Spam tab instead. The master "Enable Notifications"
+      // switch is a delivery preference handled client-side (badge suppression
+      // + sound), not an inbox filter, so the notification is always created.
+      const receiverPrefs = await storage.getUserPreferences(receiverId);
+      const spamFilterOn = receiverPrefs?.spamFilterEnabled ?? false;
+      const isSpamNotification = spamFilterOn && !isKnownSender;
       await storage.createNotification({
         userId: receiverId,
-        type: "direct_message",
+        type: isKnownSender ? "direct_message" : "direct_message_unknown",
         title: "New Message",
         message: `${sender?.username || "Someone"} sent you a message`,
         relatedId: senderId,
         sourceType: "user",
         sourceId: senderId,
+        read: isSpamNotification,
       });
 
       res.json({
@@ -8309,12 +10152,14 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   app.get("/api/team-room/online", requireRole("moderator", "head_of_moderation", "founder"), async (_req, res) => {
     try {
       // Return list of users currently connected to team room WebSocket
-      const onlineUsers = Array.from(teamRoomClients.values()).map(client => ({
-        id: client.userId,
-        username: client.username,
-        avatar: client.avatar,
-        role: client.role
-      }));
+      const onlineUsers = Array.from(teamRoomClients.values())
+        .filter((client, i, arr) => arr.findIndex(x => x.userId === client.userId) === i)
+        .map(client => ({
+          id: client.userId,
+          username: client.username,
+          avatar: client.avatar,
+          role: client.role
+        }));
       res.json(onlineUsers);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -8337,7 +10182,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
   // ============ TEAM ROOM WEBSOCKET ============
   
   // WebSocket server for team room real-time chat
-  const teamRoomWss = new WebSocketServer({ server: httpServer, path: "/ws/team-room" });
+  const teamRoomWss = new WebSocketServer({ noServer: true });
   
   teamRoomWss.on('connection', async (ws: WebSocket, req) => {
     // Parse token from URL query (client gets token from authenticated endpoint)
@@ -8365,13 +10210,14 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     
     // Store client connection
     const client: TeamRoomClient = {
+      id: randomUUID(),
       ws,
       userId: user.id,
       username: user.username,
       avatar: user.avatar,
       role: user.role
     };
-    teamRoomClients.set(userId, client);
+    teamRoomClients.set(client.id, client);
     
     console.log(`[TeamRoom] ${user.username} joined the team room`);
     
@@ -8384,12 +10230,20 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     // Send current online users to new client
     ws.send(JSON.stringify({
       type: 'online_users',
-      users: Array.from(teamRoomClients.values()).map(c => ({
-        id: c.userId,
-        username: c.username,
-        avatar: c.avatar,
-        role: c.role
-      }))
+      users: Array.from(teamRoomClients.values())
+        .filter((c, i, arr) => arr.findIndex(x => x.userId === c.userId) === i)
+        .map(c => ({
+          id: c.userId,
+          username: c.username,
+          avatar: c.avatar,
+          role: c.role
+        }))
+    }));
+
+    // Send the current list of voice calls so late joiners see all active calls
+    ws.send(JSON.stringify({
+      type: 'voice_calls_list',
+      calls: serializeTeamRoomCalls()
     }));
     
     ws.on('message', async (data) => {
@@ -8425,29 +10279,87 @@ Your role is to help users understand how to use Linxora. Here is what you know 
             user: { id: user.id, username: user.username }
           }, userId);
         } else if (message.type === 'webrtc_signal') {
-          // Forward WebRTC signaling to target user
-          const targetClient = teamRoomClients.get(message.targetUserId);
-          if (targetClient && targetClient.ws.readyState === WebSocket.OPEN) {
-            targetClient.ws.send(JSON.stringify({
-              type: 'webrtc_signal',
-              fromUserId: userId,
-              fromUsername: user.username,
-              signal: message.signal,
-              signalType: message.signalType
-            }));
-          }
+          // Forward WebRTC signaling to every connection of the target user
+          const signalPayload = JSON.stringify({
+            type: 'webrtc_signal',
+            fromUserId: userId,
+            fromUsername: user.username,
+            signal: message.signal,
+            signalType: message.signalType
+          });
+          getTeamRoomClientsForUser(message.targetUserId).forEach((tc) => {
+            if (tc.ws.readyState === WebSocket.OPEN) tc.ws.send(signalPayload);
+          });
         } else if (message.type === 'voice_call_start') {
-          // Broadcast voice call invitation to all clients
+          // Create a brand-new call alongside any existing ones - never replace.
+          // If the user was in another call, leave it (that call persists for
+          // its remaining participants). No list broadcast here - the final
+          // broadcast after creating the call is the only one clients see, so
+          // the initiator never observes a gap where they aren't in any call.
+          removeUserFromTeamRoomCalls(user.id, false);
+          const newCall: TeamRoomCall = {
+            id: randomUUID(),
+            initiatorId: user.id,
+            initiatorUsername: user.username,
+            participants: new Set([user.id]),
+            createdAt: Date.now(),
+          };
+          teamRoomCalls.set(newCall.id, newCall);
           broadcastTeamRoom({
             type: 'voice_call_start',
+            call: serializeTeamRoomCall(newCall),
             initiator: { id: user.id, username: user.username, avatar: user.avatar }
           });
-        } else if (message.type === 'voice_call_end') {
-          // Broadcast voice call ended
-          broadcastTeamRoom({
-            type: 'voice_call_end',
-            user: { id: user.id, username: user.username }
-          });
+          broadcastVoiceCalls();
+        } else if (message.type === 'voice_call_join') {
+          // Join a specific call (message.callId). If the user was in another
+          // call, they leave it first - that call stays alive for whoever else
+          // is still in it.
+          const joinTarget = teamRoomCalls.get(message.callId);
+          if (joinTarget) {
+            if (!joinTarget.participants.has(user.id)) {
+              removeUserFromTeamRoomCalls(user.id, false);
+            }
+            const stillThere = teamRoomCalls.get(message.callId);
+            if (stillThere) {
+              stillThere.participants.add(user.id);
+              broadcastTeamRoom({
+                type: 'voice_call_user_joined',
+                callId: stillThere.id,
+                user: { id: user.id, username: user.username, avatar: user.avatar }
+              });
+              broadcastVoiceCalls();
+            }
+          }
+        } else if (message.type === 'voice_call_leave' || message.type === 'voice_call_end') {
+          // Leave a specific call. If it empties out, the call is deleted.
+          const leaveCall = message.callId ? teamRoomCalls.get(message.callId) : null;
+          if (leaveCall) {
+            leaveCall.participants.delete(user.id);
+            if (leaveCall.participants.size === 0) {
+              teamRoomCalls.delete(leaveCall.id);
+              broadcastTeamRoom({ type: 'voice_call_ended', callId: leaveCall.id });
+            } else {
+              broadcastTeamRoom({ type: 'voice_call_user_left', callId: leaveCall.id, user: { id: user.id } });
+            }
+            broadcastVoiceCalls();
+          }
+        } else if (message.type === 'voice_call_close') {
+          // Only the founder or head of moderation can force-close a call.
+          if (user.role !== 'founder' && user.role !== 'head_of_moderation') {
+            ws.send(JSON.stringify({ type: 'error', message: 'Only the founder or head of moderation can close a call' }));
+            return;
+          }
+          const closeTarget = teamRoomCalls.get(message.callId);
+          if (closeTarget) {
+            teamRoomCalls.delete(closeTarget.id);
+            broadcastTeamRoom({
+              type: 'voice_call_ended',
+              callId: closeTarget.id,
+              closedBy: { id: user.id, username: user.username }
+            });
+            broadcastVoiceCalls();
+          }
         }
       } catch (error) {
         console.error('[TeamRoom] Message error:', error);
@@ -8455,29 +10367,66 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     });
     
     ws.on('close', () => {
-      teamRoomClients.delete(userId);
+      teamRoomClients.delete(client.id);
       console.log(`[TeamRoom] ${user.username} left the team room`);
-      
-      // Broadcast user left
-      broadcastTeamRoom({
-        type: 'user_left',
-        user: { id: user.id, username: user.username }
-      });
+
+      // Only drop call membership and announce the leave once the user has no
+      // connections left (they may still have another tab open).
+      if (getTeamRoomClientsForUser(user.id).length === 0) {
+        removeUserFromTeamRoomCalls(userId);
+        broadcastTeamRoom({
+          type: 'user_left',
+          user: { id: user.id, username: user.username }
+        });
+      }
     });
     
     ws.on('error', (error) => {
       console.error('[TeamRoom] WebSocket error:', error.message);
-      teamRoomClients.delete(userId);
+      teamRoomClients.delete(client.id);
     });
   });
   
   function broadcastTeamRoom(data: object, excludeUserId?: string) {
     const message = JSON.stringify(data);
-    teamRoomClients.forEach((client, id) => {
-      if (id !== excludeUserId && client.ws.readyState === WebSocket.OPEN) {
+    teamRoomClients.forEach((client) => {
+      if (client.userId !== excludeUserId && client.ws.readyState === WebSocket.OPEN) {
         client.ws.send(message);
       }
     });
+  }
+
+  function serializeTeamRoomCall(call: TeamRoomCall) {
+    return {
+      id: call.id,
+      initiatorId: call.initiatorId,
+      initiatorUsername: call.initiatorUsername,
+      createdAt: call.createdAt,
+      participants: Array.from(call.participants).map((participantId) => {
+        const client = getTeamRoomClientsForUser(participantId)[0];
+        return client
+          ? { id: client.userId, username: client.username, avatar: client.avatar, role: client.role }
+          : { id: participantId, username: 'Someone', avatar: null, role: null };
+      }),
+    };
+  }
+
+  function serializeTeamRoomCalls() {
+    return Array.from(teamRoomCalls.values()).map(serializeTeamRoomCall);
+  }
+
+  function broadcastVoiceCalls() {
+    broadcastTeamRoom({ type: 'voice_calls_list', calls: serializeTeamRoomCalls() });
+  }
+
+  function removeUserFromTeamRoomCalls(userId: string, broadcastList = true) {
+    teamRoomCalls.forEach((call, callId) => {
+      if (call.participants.delete(userId) && call.participants.size === 0) {
+        teamRoomCalls.delete(callId);
+        broadcastTeamRoom({ type: 'voice_call_ended', callId });
+      }
+    });
+    if (broadcastList) broadcastVoiceCalls();
   }
   
   // =================== Group Chat Routes ===================
@@ -8487,24 +10436,36 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     try {
       const userId = req.session.userId!;
       const groups = await storage.getGroupChatsForUser(userId);
-      const enriched = await Promise.all(
-        groups.map(async (g) => {
-          const members = await storage.getGroupChatMembers(g.id);
-          const memberUsers = await Promise.all(
-            members.map(async (m) => {
-              const u = await storage.getUser(m.userId);
-              return u ? { id: u.id, username: u.username, avatar: u.avatar } : null;
-            })
-          );
-          const lastMsgs = await storage.getGroupChatMessages(g.id);
-          const lastMsg = lastMsgs[lastMsgs.length - 1] || null;
-          return {
-            ...g,
-            members: memberUsers.filter(Boolean),
-            lastMessage: lastMsg,
-          };
-        })
-      );
+      const user = await storage.getUser(userId);
+      const isStaffView = !!user && ["staff", "moderator", "head_of_moderation", "founder"].includes(user.role);
+      const enriched: any[] = [];
+      for (const g of groups) {
+        const meeting = await storage.getMeetingByGroupChat(g.id);
+        // A closed meeting chat is gone for everyone except the moderator who
+        // ran it (and moderation staff) — it must not linger in Messages.
+        if (meeting && meeting.status === "closed" && meeting.moderatorId !== userId && !isStaffView) {
+          continue;
+        }
+        const members = await storage.getGroupChatMembers(g.id);
+        const memberUsers = await Promise.all(
+          members.map(async (m) => {
+            const u = await storage.getUser(m.userId);
+            return u ? { id: u.id, username: u.username, avatar: u.avatar } : null;
+          })
+        );
+        const lastMsgs = await storage.getGroupChatMessages(g.id);
+        const lastMsg = lastMsgs[lastMsgs.length - 1] || null;
+        enriched.push({
+          ...g,
+          members: memberUsers.filter(Boolean),
+          memberRoles: Object.fromEntries(members.map(m => [m.userId, m.role || "member"])),
+          lastMessage: lastMsg,
+          isMeeting: !!meeting,
+          meetingId: meeting?.id ?? null,
+          meetingStatus: meeting?.status ?? null,
+          meetingModeratorId: meeting?.moderatorId ?? null,
+        });
+      }
       res.json(enriched);
     } catch (error) {
       console.error("Error fetching group chats:", error);
@@ -8521,6 +10482,17 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       }).parse(req.body);
 
       const userId = req.session.userId!;
+
+      // A user cannot be added to a group chat by someone they have blocked.
+      const memberUsers = await Promise.all(memberIds.map(mid => storage.getUser(mid)));
+      for (let i = 0; i < memberIds.length; i++) {
+        const mu = memberUsers[i];
+        if (!mu) return res.status(404).json({ error: "One of the selected members was not found" });
+        if (mu.id !== userId && (await storage.isBlocked(mu.id, userId))) {
+          return res.status(403).json({ error: `You cannot add ${mu.username} to the group — they have blocked you` });
+        }
+      }
+
       const group = await storage.createGroupChat({ name, creatorId: userId });
 
       // Add creator + members
@@ -8545,26 +10517,59 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       const isMember = members.some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ error: "Not a member of this group" });
 
+      const myMembership = members.find(m => m.userId === userId);
+      const myRole = group.creatorId === userId ? "owner" : (myMembership?.role || "member");
+
       const memberUsers = await Promise.all(
         members.map(async (m) => {
           const u = await storage.getUser(m.userId);
           return u ? { id: u.id, username: u.username, avatar: u.avatar, role: u.role } : null;
         })
       );
-      res.json({ ...group, members: memberUsers.filter(Boolean) });
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      // A closed meeting chat is gone for everyone except the moderator who
+      // ran it (and moderation staff).
+      if (meeting && meeting.status === "closed" && meeting.moderatorId !== userId) {
+        const viewer = await storage.getUser(userId);
+        const viewerIsStaff = !!viewer && ["staff", "moderator", "head_of_moderation", "founder"].includes(viewer.role);
+        if (!viewerIsStaff) return res.status(404).json({ error: "Group chat not found" });
+      }
+      res.json({
+        ...group,
+        members: memberUsers.filter(Boolean),
+        memberRoles: Object.fromEntries(members.map(m => [m.userId, m.role || "member"])),
+        myRole,
+        isMeeting: !!meeting,
+        meetingId: meeting?.id ?? null,
+        meetingStatus: meeting?.status ?? null,
+        meetingModeratorId: meeting?.moderatorId ?? null,
+      });
     } catch (error) {
       console.error("Error fetching group chat:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // Rename a group chat (creator only)
+  // Shared helper: resolve the current user's group role.
+  // "owner" = creator, "editor" = member with editor rights, otherwise "member".
+  async function getGroupRole(group: { creatorId: string; id: string }, userId: string): Promise<string> {
+    if (group.creatorId === userId) return "owner";
+    const members = await storage.getGroupChatMembers(group.id);
+    return members.find(m => m.userId === userId)?.role || "member";
+  }
+
+  // Rename a group chat (owner or editor; moderator-only for meeting chats)
   app.patch("/api/group-chats/:id", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const group = await storage.getGroupChat(req.params.id);
       if (!group) return res.status(404).json({ error: "Group chat not found" });
-      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can rename this group" });
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      if (meeting && meeting.moderatorId !== userId) {
+        return res.status(403).json({ error: "Only the moderator can change this meeting chat" });
+      }
+      const role = await getGroupRole(group, userId);
+      if (role === "member") return res.status(403).json({ error: "Only the owner or an editor can rename this group" });
       const { name } = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
       const updated = await storage.updateGroupChat(group.id, { name });
       res.json(updated);
@@ -8574,16 +10579,25 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     }
   });
 
-  // Add member to group chat (creator only)
+  // Add member to group chat (owner or editor; moderator-only for meeting chats)
   app.post("/api/group-chats/:id/members", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const group = await storage.getGroupChat(req.params.id);
       if (!group) return res.status(404).json({ error: "Group chat not found" });
-      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can add members" });
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      if (meeting && meeting.moderatorId !== userId) {
+        return res.status(403).json({ error: "Only the moderator can change this meeting chat" });
+      }
+      const role = await getGroupRole(group, userId);
+      if (role === "member") return res.status(403).json({ error: "Only the owner or an editor can add members" });
       const { userId: newMemberId } = z.object({ userId: z.string() }).parse(req.body);
       const targetUser = await storage.getUser(newMemberId);
       if (!targetUser) return res.status(404).json({ error: "User not found" });
+      // A user cannot be added to a group chat by someone they have blocked.
+      if (await storage.isBlocked(newMemberId, userId)) {
+        return res.status(403).json({ error: `You cannot add ${targetUser.username} — they have blocked you` });
+      }
       const existing = await storage.getGroupChatMembers(group.id);
       if (existing.some(m => m.userId === newMemberId)) return res.status(400).json({ error: "User is already a member" });
       await storage.addGroupChatMember({ groupId: group.id, userId: newMemberId });
@@ -8601,14 +10615,91 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     }
   });
 
-  // Remove member from group chat (creator only, can't remove self)
+  // Promote/demote an editor (owner only)
+  app.put("/api/group-chats/:id/members/:userId/role", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the owner can change member roles" });
+      if (req.params.userId === userId) return res.status(400).json({ error: "The owner's role cannot be changed" });
+      const { role } = z.object({ role: z.enum(["member", "editor"]) }).parse(req.body);
+      const members = await storage.getGroupChatMembers(group.id);
+      const target = members.find(m => m.userId === req.params.userId);
+      if (!target) return res.status(404).json({ error: "User is not a member of this group" });
+      await storage.updateGroupChatMemberRole(group.id, req.params.userId, role);
+      const targetUser = await storage.getUser(req.params.userId);
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: role === "editor"
+          ? `${targetUser?.username || "A member"} is now an editor`
+          : `${targetUser?.username || "A member"} is no longer an editor`,
+        isSystemMessage: true,
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error changing group member role:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Transfer ownership (owner only)
+  app.put("/api/group-chats/:id/transfer-ownership", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const group = await storage.getGroupChat(req.params.id);
+      if (!group) return res.status(404).json({ error: "Group chat not found" });
+      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the owner can transfer ownership" });
+      const { userId: newOwnerId } = z.object({ userId: z.string() }).parse(req.body);
+      const members = await storage.getGroupChatMembers(group.id);
+      if (!members.some(m => m.userId === newOwnerId)) {
+        return res.status(400).json({ error: "The new owner must be a member of the group" });
+      }
+      if (newOwnerId === userId) return res.status(400).json({ error: "You already own this group" });
+      await storage.updateGroupChat(group.id, { creatorId: newOwnerId });
+      // The new owner may keep their editor flag; it is ignored while they are owner.
+      const oldOwnerUser = await storage.getUser(userId);
+      const newOwnerUser = await storage.getUser(newOwnerId);
+      // The previous owner becomes a regular member of the group they handed off.
+      await storage.removeGroupChatMember(group.id, userId);
+      await storage.addGroupChatMember({ groupId: group.id, userId, role: "member" });
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: `${oldOwnerUser?.username || "The owner"} transferred ownership to ${newOwnerUser?.username || "a member"}`,
+        isSystemMessage: true,
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error transferring group ownership:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Remove member from group chat. The owner can kick anyone except themselves;
+  // an editor can kick everyone except the owner and other editors;
+  // plain members cannot kick. Moderator-only for meeting chats.
   app.delete("/api/group-chats/:id/members/:userId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const group = await storage.getGroupChat(req.params.id);
       if (!group) return res.status(404).json({ error: "Group chat not found" });
-      if (group.creatorId !== userId) return res.status(403).json({ error: "Only the creator can remove members" });
-      if (req.params.userId === userId) return res.status(400).json({ error: "Cannot remove yourself" });
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      if (meeting && meeting.moderatorId !== userId) {
+        return res.status(403).json({ error: "Only the moderator can change this meeting chat" });
+      }
+      if (req.params.userId === userId) return res.status(400).json({ error: "Cannot remove yourself — leave the group instead" });
+      const actorRole = await getGroupRole(group, userId);
+      if (actorRole === "member") {
+        return res.status(403).json({ error: "Only the owner or an editor can remove members" });
+      }
+      const targetRole = req.params.userId === group.creatorId
+        ? "owner"
+        : (await storage.getGroupChatMembers(group.id)).find(m => m.userId === req.params.userId)?.role || "member";
+      if (actorRole === "editor" && (targetRole === "owner" || targetRole === "editor")) {
+        return res.status(403).json({ error: "Editors cannot remove the owner or other editors" });
+      }
       const removedUser = await storage.getUser(req.params.userId);
       const remover = await storage.getUser(userId);
       await storage.removeGroupChatMember(group.id, req.params.userId);
@@ -8616,7 +10707,7 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       await storage.createGroupChatMessage({
         groupId: group.id,
         senderId: "system",
-        message: `${remover?.username || "Creator"} kicked ${removedUser?.username || "a member"} from the chat`,
+        message: `${remover?.username || "An editor"} kicked ${removedUser?.username || "a member"} from the chat`,
         isSystemMessage: true,
       });
       res.json({ success: true });
@@ -8626,14 +10717,35 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     }
   });
 
-  // Leave a group chat (any member)
+  // Leave a group chat (any member; blocked for meeting chats — only the moderator
+  // may end a meeting, via the close endpoint)
   app.delete("/api/group-chats/:id/leave", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const group = await storage.getGroupChat(req.params.id);
       if (!group) return res.status(404).json({ error: "Group not found" });
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      if (meeting) {
+        return res.status(403).json({ error: "You cannot leave a moderator meeting — the moderator will close it when it ends." });
+      }
       const leavingUser = await storage.getUser(userId);
+      const wasOwner = group.creatorId === userId;
       await storage.removeGroupChatMember(group.id, userId);
+      // If the owner leaves, hand ownership to the first remaining member so
+      // the group always has exactly one owner.
+      if (wasOwner) {
+        const remaining = await storage.getGroupChatMembers(group.id);
+        if (remaining.length > 0) {
+          await storage.updateGroupChat(group.id, { creatorId: remaining[0].userId });
+          const newOwner = await storage.getUser(remaining[0].userId);
+          await storage.createGroupChatMessage({
+            groupId: group.id,
+            senderId: "system",
+            message: `${newOwner?.username || "A member"} is now the owner`,
+            isSystemMessage: true,
+          });
+        }
+      }
       // System message
       await storage.createGroupChatMessage({
         groupId: group.id,
@@ -8682,6 +10794,15 @@ Your role is to help users understand how to use Linxora. Here is what you know 
       if (!group) return res.status(404).json({ error: "Group chat not found" });
       const members = await storage.getGroupChatMembers(group.id);
       if (!members.some(m => m.userId === userId)) return res.status(403).json({ error: "Not a member" });
+
+      // If this chat is a moderator meeting, the moderator controls who may speak
+      const meeting = await storage.getMeetingByGroupChat(group.id);
+      if (meeting && meeting.status === "active" && meeting.moderatorId !== userId) {
+        if ((meeting.mutedUserIds || []).includes(userId)) {
+          return res.status(403).json({ error: "You are muted. The moderator controls who can speak in this meeting." });
+        }
+      }
+
       const { message } = z.object({ message: z.string().min(1).max(2000) }).parse(req.body);
       const msg = await storage.createGroupChatMessage({ groupId: group.id, senderId: userId, message });
       res.status(201).json(msg);
@@ -8691,8 +10812,719 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     }
   });
 
+  // ============================================================
+  // Freelancer Leaving a Job
+  // ============================================================
+
+  // Freelancer abandons/leaves a job. They are removed immediately.
+  app.post("/api/jobs/:id/leave", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const userId = req.session.userId!;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can leave a job" });
+      }
+
+      const freelancerIds = await getJobFreelancerIds(job);
+      if (!freelancerIds.includes(userId)) {
+        return res.status(403).json({ error: "You are not assigned to this job" });
+      }
+
+      const { reason } = z.object({ reason: z.string().max(2000).optional() }).parse(req.body);
+      const remaining = freelancerIds.filter(id => id !== userId);
+
+      // Remove from collaborators array
+      const collaborators = (job.collaborators || []).filter((id: string) => id !== userId);
+
+      // Remove any jobFreelancers record
+      const jfRecords = await storage.getJobFreelancers(job.id);
+      if (jfRecords.some(jf => jf.freelancerId === userId)) {
+        await storage.removeJobFreelancer(job.id, userId);
+      }
+
+      const updates: any = { collaborators };
+      const currentLeader = job.projectLeaderId || job.freelancerId;
+
+      if (job.freelancerId === userId) {
+        // The lead left: promote the next remaining freelancer, or unassign the job
+        const next = remaining[0] || null;
+        updates.freelancerId = next;
+        updates.projectLeaderId = null; // effective leader becomes the new freelancerId
+        if (!next) {
+          updates.status = "active"; // no freelancers left — open the job again
+        }
+      } else if (currentLeader === userId) {
+        // A non-lead freelancer who became project leader (e.g., via a vote) left
+        updates.projectLeaderId = null; // leadership falls back to freelancerId
+      }
+
+      await storage.updateJob(job.id, updates);
+
+      // Notify the customer
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_left",
+        title: "A freelancer left your job",
+        message: reason
+          ? `${user.username} left "${job.title}" and shared a reason: ${reason}`
+          : `${user.username} left "${job.title}".`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      // Notify remaining freelancers
+      for (const fid of remaining) {
+        await storage.createNotification({
+          userId: fid,
+          type: "job_left",
+          title: "A teammate left the job",
+          message: `${user.username} left "${job.title}".`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
+
+      // Leaving a job counts against the freelancer's completion rate
+      await penalizeFreelancerCompletion(userId);
+
+      res.json({ success: true, job });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error leaving job:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Optional: freelancer shares why they left (after already being removed)
+  app.post("/api/jobs/:id/leave-reason", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      const { reason } = z.object({ reason: z.string().min(1).max(2000) }).parse(req.body);
+      const user = await storage.getUser(req.session.userId!);
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "job_left",
+        title: "Why a freelancer left",
+        message: `${user?.username || "A freelancer"} left "${job.title}" and shared a reason: ${reason}`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+      res.json({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error recording leave reason:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============================================================
+  // Abandon Requests — freelancer asks permission to leave a job
+  // ============================================================
+
+  // Shared helper: remove a freelancer from a job and fix up leadership.
+  // When penalize is true, the removal counts against their completion rate.
+  async function removeFreelancerFromJob(job: any, userId: string, penalize: boolean) {
+    const user = await storage.getUser(userId);
+    if (!user) return null;
+
+    const freelancerIds = await getJobFreelancerIds(job);
+    if (!freelancerIds.includes(userId)) return null;
+
+    const remaining = freelancerIds.filter(id => id !== userId);
+    const collaborators = (job.collaborators || []).filter((id: string) => id !== userId);
+
+    const jfRecords = await storage.getJobFreelancers(job.id);
+    if (jfRecords.some(jf => jf.freelancerId === userId)) {
+      await storage.removeJobFreelancer(job.id, userId);
+    }
+
+    const updates: any = { collaborators };
+    const currentLeader = job.projectLeaderId || job.freelancerId;
+
+    if (job.freelancerId === userId) {
+      const next = remaining[0] || null;
+      updates.freelancerId = next;
+      updates.projectLeaderId = null;
+      if (!next) updates.status = "active";
+    } else if (currentLeader === userId) {
+      updates.projectLeaderId = null;
+    }
+
+    await storage.updateJob(job.id, updates);
+
+    if (penalize) {
+      await penalizeFreelancerCompletion(userId);
+    }
+
+    return { user, remaining };
+  }
+
+  // Freelancer requests to abandon a job. Goes to the customer for approval first.
+  app.post("/api/jobs/:id/abandon-request", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const userId = req.session.userId!;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "freelancer") {
+        return res.status(403).json({ error: "Only freelancers can abandon a job" });
+      }
+
+      const freelancerIds = await getJobFreelancerIds(job);
+      if (!freelancerIds.includes(userId)) {
+        return res.status(403).json({ error: "You are not assigned to this job" });
+      }
+
+      const { reason, links, proofUrl } = z.object({
+        reason: z.string().min(10, "Reason must be at least 10 characters"),
+        links: z.string().max(4000).optional(),
+        proofUrl: z.string().max(4000).optional(),
+      }).parse(req.body);
+
+      const existing = await storage.getAbandonRequests({ jobId: job.id, freelancerId: userId });
+      if (existing.some(r => r.status === AbandonStatus.PENDING_CUSTOMER || r.status === AbandonStatus.PENDING_MODERATOR)) {
+        return res.status(400).json({ error: "You already have a pending abandon request for this job" });
+      }
+
+      const request = await storage.createAbandonRequest({
+        jobId: job.id,
+        freelancerId: userId,
+        reason,
+        links: links || null,
+        proofUrl: proofUrl || null,
+        status: AbandonStatus.PENDING_CUSTOMER,
+      });
+
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "abandon_request",
+        title: "A freelancer wants to abandon your job",
+        message: `${user.username} requested to leave "${job.title}". Reason: ${reason}`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.status(201).json({ success: true, request });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error creating abandon request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Abandon requests for a job (visible to the customer and assigned freelancers)
+  app.get("/api/abandon-requests/job/:jobId", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const userId = req.session.userId!;
+      const freelancerIds = await getJobFreelancerIds(job);
+      if (job.customerId !== userId && !freelancerIds.includes(userId)) {
+        return res.status(403).json({ error: "Not a member of this job" });
+      }
+
+      const requests = await storage.getAbandonRequests({ jobId: job.id });
+      const enriched = await Promise.all(requests.map(async (r) => {
+        const freelancer = await storage.getUser(r.freelancerId);
+        return { ...r, freelancerUsername: freelancer?.username || "Unknown" };
+      }));
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching abandon requests:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // All abandon requests for the moderation queue (enriched with job + freelancer)
+  app.get("/api/abandon-requests", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (_req, res) => {
+    try {
+      const requests = await storage.getAllAbandonRequests();
+      const enriched = [];
+      for (const r of requests) {
+        const job = await storage.getJob(r.jobId);
+        const freelancer = await storage.getUser(r.freelancerId);
+        enriched.push({
+          ...r,
+          jobTitle: job?.title || "Unknown Job",
+          jobBudget: job?.budget || null,
+          freelancerUsername: freelancer?.username || "Unknown",
+        });
+      }
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching all abandon requests:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer approves: freelancer excused, removed without a completion-rate penalty.
+  app.post("/api/abandon-requests/:id/customer-approve", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const userId = req.session.userId!;
+      if (job.customerId !== userId) {
+        return res.status(403).json({ error: "Only the customer can approve this request" });
+      }
+      if (request.status !== AbandonStatus.PENDING_CUSTOMER) {
+        return res.status(400).json({ error: "This request is no longer awaiting customer approval" });
+      }
+
+      await removeFreelancerFromJob(job, request.freelancerId, false);
+      await storage.updateAbandonRequest(request.id, { status: AbandonStatus.APPROVED, decidedBy: userId });
+
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "abandon_approved",
+        title: "Abandon request approved",
+        message: `The customer approved your request to leave "${job.title}". You have been excused without affecting your completion rate.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error approving abandon request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer declines: the request is forwarded to the moderation queue.
+  app.post("/api/abandon-requests/:id/customer-decline", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const userId = req.session.userId!;
+      if (job.customerId !== userId) {
+        return res.status(403).json({ error: "Only the customer can decline this request" });
+      }
+      if (request.status !== AbandonStatus.PENDING_CUSTOMER) {
+        return res.status(400).json({ error: "This request is no longer awaiting customer approval" });
+      }
+
+      await storage.updateAbandonRequest(request.id, { status: AbandonStatus.PENDING_MODERATOR, decidedBy: userId });
+
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "abandon_forwarded",
+        title: "Abandon request sent to moderation",
+        message: `The customer did not approve your request to leave "${job.title}". It has been forwarded to the moderation team for review.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error declining abandon request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator approves: freelancer excused, removed without a completion-rate penalty.
+  app.post("/api/abandon-requests/:id/moderator-approve", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (request.status !== AbandonStatus.PENDING_MODERATOR) {
+        return res.status(400).json({ error: "This request is not awaiting moderator review" });
+      }
+
+      const moderatorId = req.session.userId!;
+      await removeFreelancerFromJob(job, request.freelancerId, false);
+      await storage.updateAbandonRequest(request.id, { status: AbandonStatus.APPROVED, decidedBy: moderatorId });
+
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "abandon_approved",
+        title: "Abandon request approved",
+        message: `A moderator approved your request to leave "${job.title}". You have been excused without affecting your completion rate.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "abandon_approved",
+        title: "Freelancer excused from your job",
+        message: `A moderator approved a request for a freelancer to leave "${job.title}".`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error approving abandon request (moderator):", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator declines: the freelancer is not excused and stays on the job.
+  app.post("/api/abandon-requests/:id/moderator-decline", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (request.status !== AbandonStatus.PENDING_MODERATOR) {
+        return res.status(400).json({ error: "This request is not awaiting moderator review" });
+      }
+
+      const moderatorId = req.session.userId!;
+      await storage.updateAbandonRequest(request.id, { status: AbandonStatus.DECLINED, decidedBy: moderatorId });
+
+      await storage.createNotification({
+        userId: request.freelancerId,
+        type: "abandon_declined",
+        title: "Abandon request declined",
+        message: `A moderator declined your request to leave "${job.title}". You are expected to complete the job.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "abandon_declined",
+        title: "Freelancer must stay on your job",
+        message: `A moderator declined a freelancer's request to leave "${job.title}".`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error declining abandon request (moderator):", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  // ============================================================
+  // Project Leader Voting
+  // ============================================================
+
+  // Customer starts a vote to change who the Project Leader is
+  app.post("/api/jobs/:id/project-leader-vote", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can start a leadership vote" });
+      }
+      const { candidateId } = z.object({ candidateId: z.string().min(1) }).parse(req.body);
+
+      const existing = await storage.getActiveLeadershipVoteByJob(job.id);
+      if (existing) {
+        return res.status(400).json({ error: "A leadership vote is already open for this job" });
+      }
+
+      const freelancerIds = await getJobFreelancerIds(job);
+      if (freelancerIds.length < 2) {
+        return res.status(400).json({ error: "This job needs at least two freelancers to hold a leadership vote" });
+      }
+      const currentLeader = job.projectLeaderId || job.freelancerId;
+      if (candidateId === currentLeader) {
+        return res.status(400).json({ error: "This freelancer is already the Project Leader" });
+      }
+      if (!freelancerIds.includes(candidateId)) {
+        return res.status(400).json({ error: "The candidate must be a freelancer on this job" });
+      }
+
+      const vote = await storage.createLeadershipVote({
+        jobId: job.id,
+        initiatedById: req.session.userId!,
+        candidateId,
+      });
+
+      const candidate = await storage.getUser(candidateId);
+      for (const fid of freelancerIds) {
+        await storage.createNotification({
+          userId: fid,
+          type: "leadership_vote",
+          title: "Project Leader vote started",
+          message: `A vote is open to make ${candidate?.username || "a freelancer"} the Project Leader for "${job.title}". Cast your vote in Current Job.`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
+
+      res.status(201).json(vote);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error starting leadership vote:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer casts an anonymous vote
+  app.post("/api/jobs/:id/project-leader-vote/cast", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      const freelancerIds = await getJobFreelancerIds(job);
+      if (!freelancerIds.includes(req.session.userId!)) {
+        return res.status(403).json({ error: "Only freelancers on this job can vote" });
+      }
+      const vote = await storage.getActiveLeadershipVoteByJob(job.id);
+      if (!vote) return res.status(404).json({ error: "No open leadership vote for this job" });
+
+      const { choice } = z.object({ choice: z.enum([LeadershipVoteChoice.AGREE, LeadershipVoteChoice.DISAPPROVE]) }).parse(req.body);
+
+      const existingCast = await storage.getLeadershipVoteCast(vote.id, req.session.userId!);
+      if (existingCast) return res.status(400).json({ error: "You have already voted" });
+
+      await storage.createLeadershipVoteCast({ voteId: vote.id, voterId: req.session.userId!, choice });
+
+      const casts = await storage.getLeadershipVoteCasts(vote.id);
+      const agreeCount = casts.filter(c => c.choice === LeadershipVoteChoice.AGREE).length;
+      const disapproveCount = casts.filter(c => c.choice === LeadershipVoteChoice.DISAPPROVE).length;
+      const totalEligible = freelancerIds.length;
+
+      let passed = false;
+      let failed = false;
+      if (agreeCount * 2 >= totalEligible) {
+        passed = true;
+      } else if (disapproveCount * 2 > totalEligible) {
+        failed = true;
+      }
+
+      const candidate = await storage.getUser(vote.candidateId);
+      if (passed) {
+        await storage.updateLeadershipVote(vote.id, { status: LeadershipVoteStatus.PASSED, closedAt: new Date() });
+        await storage.updateJob(job.id, { projectLeaderId: vote.candidateId });
+        for (const fid of freelancerIds) {
+          await storage.createNotification({
+            userId: fid,
+            type: "leadership_vote",
+            title: "Project Leader changed",
+            message: `${candidate?.username || "A freelancer"} is now the Project Leader for "${job.title}".`,
+            relatedId: job.id,
+            sourceType: "job",
+            sourceId: job.id,
+          });
+        }
+        await storage.createNotification({
+          userId: job.customerId,
+          type: "leadership_vote",
+          title: "Project Leader changed",
+          message: `${candidate?.username || "A freelancer"} is now the Project Leader for "${job.title}".`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      } else if (failed) {
+        await storage.updateLeadershipVote(vote.id, { status: LeadershipVoteStatus.FAILED, closedAt: new Date() });
+      }
+
+      res.json({ success: true, passed, failed, agreeCount, disapproveCount, totalEligible });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error casting leadership vote:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Customer cancels an open leadership vote
+  app.post("/api/jobs/:id/project-leader-vote/cancel", requireAuth, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can cancel this vote" });
+      }
+      const vote = await storage.getActiveLeadershipVoteByJob(job.id);
+      if (!vote) return res.status(404).json({ error: "No open leadership vote for this job" });
+      await storage.updateLeadershipVote(vote.id, { status: LeadershipVoteStatus.CANCELLED, closedAt: new Date() });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error cancelling leadership vote:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ============================================================
+  // Moderator Meetings (court-room group chat)
+  // ============================================================
+
+  // Moderator creates (or reopens) a meeting room for a job
+  app.post("/api/meetings", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const { jobId } = z.object({ jobId: z.string().min(1) }).parse(req.body);
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      const existing = await storage.getActiveMeetingByJob(jobId);
+      if (existing) {
+        return res.json({ ...existing, reopened: false });
+      }
+
+      const moderatorId = req.session.userId!;
+      const participantIds = new Set<string>([moderatorId, job.customerId]);
+      for (const fid of await getJobFreelancerIds(job)) participantIds.add(fid);
+
+      const moderator = await storage.getUser(moderatorId);
+      const group = await storage.createGroupChat({
+        name: `Meeting: ${job.title}`.slice(0, 100),
+        creatorId: moderatorId,
+      });
+      // The moderator must be a member of the chat so it shows in their
+      // Messages and they can manage/delete it from the three-dots menu.
+      await storage.addGroupChatMember({ groupId: group.id, userId: moderatorId });
+      for (const pid of Array.from(participantIds)) {
+        await storage.addGroupChatMember({ groupId: group.id, userId: pid });
+      }
+      await storage.createGroupChatMessage({
+        groupId: group.id,
+        senderId: "system",
+        message: `Moderator ${moderator?.username || "Moderator"} opened a meeting about "${job.title}". This is a court room — the moderator controls who may speak.`,
+        isSystemMessage: true,
+      });
+
+      const meeting = await storage.createMeeting({
+        jobId: job.id,
+        groupChatId: group.id,
+        moderatorId,
+      });
+
+      for (const pid of Array.from(participantIds)) {
+        if (pid === moderatorId) continue;
+        await storage.createNotification({
+          userId: pid,
+          type: "meeting_started",
+          title: "A moderator opened a meeting",
+          message: `A moderator opened a meeting about "${job.title}". Tap to join the discussion.`,
+          relatedId: meeting.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+      }
+
+      res.status(201).json(meeting);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error creating meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get meeting details + participants (moderator or any participant)
+  app.get("/api/meetings/:id", requireAuth, async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(req.params.id);
+      if (!meeting) return res.status(404).json({ error: "Meeting not found" });
+      const userId = req.session.userId!;
+      const members = await storage.getGroupChatMembers(meeting.groupChatId);
+      const isModerator = meeting.moderatorId === userId;
+      const isParticipant = members.some(m => m.userId === userId);
+      const user = await storage.getUser(userId);
+      const isStaff = !!user && ["staff", "moderator", "head_of_moderation", "founder"].includes(user.role);
+      if (!isParticipant && !isStaff) return res.status(403).json({ error: "Not a participant of this meeting" });
+
+      // A closed meeting is deleted for everyone except the moderator who ran it
+      // (and moderation staff). Non-moderator participants see it as gone.
+      if (meeting.status === "closed" && !isModerator && !isStaff) {
+        return res.status(404).json({ error: "Meeting not found" });
+      }
+
+      const group = await storage.getGroupChat(meeting.groupChatId);
+      const job = await storage.getJob(meeting.jobId);
+      const memberUsers = await Promise.all(
+        members.map(async (m) => {
+          const u = await storage.getUser(m.userId);
+          return u ? { id: u.id, username: u.username, avatar: u.avatar, role: u.role } : null;
+        })
+      );
+
+      res.json({
+        ...meeting,
+        jobTitle: job?.title || null,
+        jobStatus: job?.status || null,
+        group,
+        participants: memberUsers.filter(Boolean),
+        canControl: isModerator || isStaff,
+        amMuted: (meeting.mutedUserIds || []).includes(userId),
+      });
+    } catch (error) {
+      console.error("Error fetching meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator toggles who may type in the meeting
+  app.post("/api/meetings/:id/toggle-mute", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(req.params.id);
+      if (!meeting) return res.status(404).json({ error: "Meeting not found" });
+      const { userId } = z.object({ userId: z.string().min(1) }).parse(req.body);
+      if (userId === meeting.moderatorId) {
+        return res.status(400).json({ error: "The moderator always controls the floor" });
+      }
+      const muted = new Set(meeting.mutedUserIds || []);
+      if (muted.has(userId)) muted.delete(userId); else muted.add(userId);
+      const updated = await storage.updateMeeting(meeting.id, { mutedUserIds: Array.from(muted) });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request" });
+      console.error("Error toggling mute:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator closes the meeting — deletes it for all participants (freelancers,
+  // customers, and the moderator themselves). The court-room chat is removed entirely.
+  app.post("/api/meetings/:id/close", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(req.params.id);
+      if (!meeting) return res.status(404).json({ error: "Meeting not found" });
+      // Close instead of delete: the meeting disappears for all non-moderator
+      // participants, but the moderator keeps the record (messages intact) until
+      // they delete it via DELETE /api/meetings/:id.
+      await storage.updateMeeting(meeting.id, { status: "closed" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error closing meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Moderator permanently deletes a closed meeting to free up space.
+  app.delete("/api/meetings/:id", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(req.params.id);
+      if (!meeting) return res.status(404).json({ error: "Meeting not found" });
+      await storage.deleteGroupChat(meeting.groupChatId);
+      await storage.deleteMeeting(meeting.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting meeting:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Set up WebSocket server for real-time price broadcasts
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws/prices" });
+  const wss = new WebSocketServer({ noServer: true });
   
   // Initialize crypto price service
   const priceService = getCryptoPriceService();
@@ -8731,5 +11563,22 @@ Your role is to help users understand how to use Linxora. Here is what you know 
     });
   }, 3000); // Broadcast every 3 seconds
   
+  // Route WebSocket upgrades by path. Each WebSocketServer is created with
+  // noServer:true so a non-matching path isn’t aborted by ws (it destroys the
+  // socket with a 400 otherwise, killing connections handled by the other server
+  // sharing this HTTP server — e.g. the team room vs the price feed).
+  httpServer.on("upgrade", (req, socket, head) => {
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (pathname === "/ws/team-room") {
+      teamRoomWss.handleUpgrade(req, socket, head, (ws) => {
+        teamRoomWss.emit("connection", ws, req);
+      });
+    } else if (pathname === "/ws/prices") {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    }
+  });
+
   return httpServer;
 }

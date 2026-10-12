@@ -1,9 +1,35 @@
-// Resend email client integration
+// Email sending client. Supports three providers, checked in order:
+//   1. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
+//      e.g. em4731.linxova.com, must be verified via SendGrid Sender Auth)
+//   2. RESEND_API_KEY    (Resend HTTP API)
+//   3. Replit connector  (fallback when deployed on Replit)
 import { Resend } from 'resend';
+import sgMail from '@sendgrid/mail';
+
+function getSendGridCredentials() {
+  if (process.env.SENDGRID_API_KEY) {
+    return {
+      apiKey: process.env.SENDGRID_API_KEY,
+      fromEmail: process.env.SENDGRID_FROM_EMAIL || 'noreply@linxova.com',
+    };
+  }
+  return null;
+}
 
 let connectionSettings: any;
 
-async function getCredentials() {
+async function getResendCredentials() {
+  // Preferred path: a standard RESEND_API_KEY provided via environment
+  // (replit_connectors / connector secrets, a real .env, or shell env).
+  if (process.env.RESEND_API_KEY) {
+    return {
+      apiKey: process.env.RESEND_API_KEY,
+      fromEmail: process.env.RESEND_FROM_EMAIL || connectionSettings?.settings?.from_email || 'noreply@linxova.com',
+    };
+  }
+
+  // Replit connector fallback (only works when deployed on Replit with the
+  // Resend connector installed).
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY 
     ? 'repl ' + process.env.REPL_IDENTITY 
@@ -11,8 +37,8 @@ async function getCredentials() {
     ? 'depl ' + process.env.WEB_REPL_RENEWAL 
     : null;
 
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!xReplitToken || !hostname) {
+    throw new Error('SENDGRID_API_KEY/RESEND_API_KEY not set and no Replit connector available');
   }
 
   connectionSettings = await fetch(
@@ -31,33 +57,25 @@ async function getCredentials() {
   return { apiKey: connectionSettings.settings.api_key, fromEmail: connectionSettings.settings.from_email };
 }
 
-// WARNING: Never cache this client.
+// WARNING: Never cache the Resend client.
 // Access tokens expire, so a new client must be created each time.
 export async function getResendClient() {
-  const { apiKey, fromEmail } = await getCredentials();
+  const { apiKey, fromEmail } = await getResendCredentials();
   return {
     client: new Resend(apiKey),
-    fromEmail: fromEmail || 'noreply@linxora.com'
+    fromEmail: fromEmail || 'noreply@linxova.com'
   };
 }
 
 export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
-  const { client, fromEmail } = await getResendClient();
-  
-  // Get the app URL - use custom domain in production, dev domain in development
   const appUrl = process.env.APP_BASE_URL
-    || (process.env.REPLIT_DEPLOYMENT_URL ? 'https://linxora.co' : null)
+    || (process.env.REPLIT_DEPLOYMENT_URL ? 'https://linxova.co' : null)
     || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : null)
     || 'http://localhost:5000';
-  
+
   const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
-  
-  const { data, error } = await client.emails.send({
-    from: fromEmail,
-    to: toEmail,
-    subject: 'Verify your email address - Linxora',
-    html: `
-      <!DOCTYPE html>
+  const subject = 'Verify your email address - Linxova';
+  const html = `<!DOCTYPE html>
       <html>
         <head>
           <meta charset="utf-8">
@@ -70,7 +88,7 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
               Hi ${username},
             </p>
             <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
-              You requested to change your email address on Linxora. Click the button below to verify this email address:
+              You requested to change your email address on Linxova. Click the button below to verify this email address:
             </p>
             <a href="${verificationUrl}" style="display: inline-block; background-color: #2563eb; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500; font-size: 16px;">
               Verify Email Address
@@ -80,12 +98,39 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
             </p>
             <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 32px 0;">
             <p style="color: #a1a1aa; font-size: 12px; margin: 0;">
-              Linxora - Professional Freelancer Marketplace
+              Linxova - Professional Freelancer Marketplace
             </p>
           </div>
         </body>
-      </html>
-    `,
+      </html>`;
+
+  // Provider 1: SendGrid (authenticated domain via CNAMEs you add at your
+  // registrar — em4731.linxova.com, domainkeys, dmarc, link branding).
+  const sg = getSendGridCredentials();
+  if (sg) {
+    sgMail.setApiKey(sg.apiKey);
+    try {
+      const [resp] = await sgMail.send({
+        from: sg.fromEmail,
+        to: toEmail,
+        subject,
+        html,
+      });
+      return resp;
+    } catch (err: any) {
+      const detail = err?.response?.body || err?.message || err;
+      console.error('SendGrid send failed:', detail);
+      throw new Error('Failed to send verification email (SendGrid)');
+    }
+  }
+
+  // Provider 2: Resend
+  const { client, fromEmail } = await getResendClient();
+  const { data, error } = await client.emails.send({
+    from: fromEmail,
+    to: toEmail,
+    subject,
+    html,
   });
 
   if (error) {
