@@ -11,3 +11,5 @@ vite.config.ts.*
 .local/
 .agents/
 .config/
+
+found_paths.txt
