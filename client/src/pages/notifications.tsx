@@ -24,7 +24,7 @@ interface Notification {
   metadata?: any;
 }
 
-const SPAM_TYPES = ["job_request"];
+const SPAM_TYPES = ["direct_message_unknown"];
 
 export default function NotificationsPage() {
   const [, setLocation] = useLocation();
@@ -36,6 +36,9 @@ export default function NotificationsPage() {
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
+    // Poll so new notifications appear live, matching the header bell
+    // (which refetches on an interval), instead of requiring a refresh.
+    refetchInterval: 5000,
   });
 
   const { data: settings } = useQuery<UserPreferences>({
@@ -60,8 +63,11 @@ export default function NotificationsPage() {
 
   const spamFilterEnabled = settings?.spamFilterEnabled ?? false;
 
-  const allActive = (notifications || []).filter((n) => !SPAM_TYPES.includes(n.type));
-  const spamNotifications = (notifications || []).filter((n) => SPAM_TYPES.includes(n.type));
+  const isSpamNotification = (n: Notification) =>
+    spamFilterEnabled && SPAM_TYPES.includes(n.type);
+
+  const allActive = (notifications || []).filter((n) => !isSpamNotification(n));
+  const spamNotifications = (notifications || []).filter(isSpamNotification);
 
   const unreadActive = allActive.filter((n) => !n.read).length;
 
@@ -121,6 +127,7 @@ export default function NotificationsPage() {
         setLocation("/moderation");
         return;
       case "direct_message":
+      case "direct_message_unknown":
         if (sourceId) {
           setLocation(`/messages/${sourceId}`);
         } else {
@@ -203,9 +210,9 @@ export default function NotificationsPage() {
           </div>
           <div className="flex-1 min-w-0">
             {notification.title && (
-              <p className="text-sm font-medium mb-1">{notification.title}</p>
+              <p className="text-sm font-medium mb-1 break-words">{notification.title}</p>
             )}
-            <p className="text-sm text-muted-foreground mb-1">{notification.message}</p>
+            <p className="text-sm text-muted-foreground mb-1 break-words">{notification.message}</p>
             <p className="text-xs text-muted-foreground">
               {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
             </p>
@@ -272,12 +279,14 @@ export default function NotificationsPage() {
                   <Badge variant="secondary" className="ml-2">{allActive.length}</Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="spam" data-testid="tab-log-spam">
-                Spam
-                {spamNotifications.length > 0 && (
-                  <Badge variant="secondary" className="ml-2">{spamNotifications.length}</Badge>
-                )}
-              </TabsTrigger>
+              {spamFilterEnabled && (
+                <TabsTrigger value="spam" data-testid="tab-log-spam">
+                  Spam
+                  {spamNotifications.length > 0 && (
+                    <Badge variant="secondary" className="ml-2">{spamNotifications.length}</Badge>
+                  )}
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="all" className="space-y-3">
@@ -288,21 +297,21 @@ export default function NotificationsPage() {
               )}
             </TabsContent>
 
-            <TabsContent value="spam" className="space-y-3">
-              {spamNotifications.length === 0 ? (
-                <div className="text-center py-12">
-                  <ShieldAlert className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <h3 className="text-lg font-semibold mb-2">No spam notifications</h3>
-                  <p className="text-muted-foreground">
-                    {spamFilterEnabled
-                      ? "No job application notifications detected"
-                      : "Enable Spam Filter in Settings to automatically route job applications here"}
-                  </p>
-                </div>
-              ) : (
-                spamNotifications.map((n) => <NotificationCard key={n.id} notification={n} />)
-              )}
-            </TabsContent>
+            {spamFilterEnabled && (
+              <TabsContent value="spam" className="space-y-3">
+                {spamNotifications.length === 0 ? (
+                  <div className="text-center py-12">
+                    <ShieldAlert className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                    <h3 className="text-lg font-semibold mb-2">No spam notifications</h3>
+                    <p className="text-muted-foreground">
+                      No new messages from people you have never interacted with
+                    </p>
+                  </div>
+                ) : (
+                  spamNotifications.map((n) => <NotificationCard key={n.id} notification={n} />)
+                )}
+              </TabsContent>
+            )}
           </Tabs>
         </CardContent>
       </Card>

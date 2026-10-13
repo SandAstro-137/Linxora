@@ -88,12 +88,14 @@ import RoleUpgradeReviewPage from "@/pages/role-upgrade-review";
 import AdminPage from "@/pages/admin";
 import TeamManagementPage from "@/pages/team-management";
 import MeetingsPage from "@/pages/meetings";
+import MeetingRoomPage from "@/pages/meeting-room";
 import MyDisputesPage from "@/pages/my-disputes";
 import TeamRoomPage from "@/pages/team-room";
 import MessagesPage from "@/pages/messages";
 import SettingsPage from "@/pages/settings";
 import VerifyEmailPage from "@/pages/verify-email";
 import VaultPage from "@/pages/vault";
+import CompanyVaultPage from "@/pages/company-vault";
 import FriendsPage from "@/pages/friends";
 import MyApplicationsPage from "@/pages/my-applications";
 import UserProfilePage from "@/pages/user-profile";
@@ -241,9 +243,19 @@ function Router() {
           <VaultPage />
         </ProtectedRoute>
       </Route>
+      <Route path="/company-vault">
+        <ProtectedRoute allowedRoles={["founder"]}>
+          <CompanyVaultPage />
+        </ProtectedRoute>
+      </Route>
       <Route path="/messages/:userId?">
         <ProtectedRoute>
           <MessagesPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/meeting/:id">
+        <ProtectedRoute>
+          <MeetingRoomPage />
         </ProtectedRoute>
       </Route>
       <Route path="/settings">
@@ -421,7 +433,7 @@ function AppContent() {
       setShowOnboarding(false);
       refetchUser();
       toast({
-        title: "Welcome to Linxora!",
+        title: "Welcome to Linxova!",
         description: "You're all set to get started.",
       });
     } catch (error) {
@@ -458,19 +470,19 @@ function AppContent() {
                 <div className="flex flex-wrap items-center gap-2">
                   <img 
                     src={logoLight} 
-                    alt="Linxora Logo" 
+                    alt="Linxova Logo" 
                     className="h-10 max-h-12 dark:hidden"
                     style={{ objectFit: "contain" }}
                     data-testid="img-logo-light"
                   />
                   <img 
                     src={logoDark} 
-                    alt="Linxora Logo" 
+                    alt="Linxova Logo" 
                     className="h-10 max-h-12 hidden dark:block"
                     style={{ objectFit: "contain" }}
                     data-testid="img-logo-dark"
                   />
-                  <span className="text-lg font-semibold" data-testid="text-app-name">Linxora</span>
+                  <span className="text-lg font-semibold" data-testid="text-app-name">Linxova</span>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">

@@ -12,9 +12,9 @@
   --background: 0 0% 100%;
   --foreground: 0 0% 9%;
   --border: 0 0% 91%;
-  --card: 0 0% 98%;
+  --card: 0 0% 95%;
   --card-foreground: 0 0% 9%;
-  --card-border: 0 0% 95%;
+  --card-border: 0 0% 87%;
   --sidebar: 0 0% 96%;
   --sidebar-foreground: 0 0% 9%;
   --sidebar-border: 0 0% 92%;
@@ -285,4 +285,36 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+}
+
+/* ── Themed scrollbars everywhere ───────────────────────────────────────────
+   The default scrollbar paints a stark white track/thumb in dark mode on
+   every scrollable surface (main content, long forms like Post New Job,
+   dialogs, selects...). Replace it globally with a thin scrollbar whose
+   track is transparent and whose thumb is a subtle theme color, so no white
+   boxes ever show while native scrolling keeps working. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+/* The sidebar gets an even subtler thumb to match its rail. */
+[data-slot="sidebar-content"] {
+  scrollbar-color: hsl(var(--sidebar-border)) transparent;
+}
+[data-slot="sidebar-content"]::-webkit-scrollbar-thumb {
+  background: hsl(var(--sidebar-border));
 }

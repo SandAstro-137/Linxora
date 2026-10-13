@@ -44,6 +44,7 @@ export default function IncomingRecommendationsPage() {
 
   const { data: recommendations = [], isLoading } = useQuery<IncomingRecommendation[]>({
     queryKey: ["/api/recommendations/customer"],
+    refetchInterval: 5000, // New recommendations appear without a manual refresh
   });
 
   const pendingRecommendations = recommendations.filter(r => r.status === "pending");
@@ -136,7 +137,9 @@ export default function IncomingRecommendationsPage() {
                       </span>
                       <span className="flex items-center gap-1">
                         <Star className="w-3 h-3 text-yellow-500" />
-                        {rec.recommendedFreelancer?.rating || "N/A"} ({rec.recommendedFreelancer?.ratingCount || 0} reviews)
+                        {rec.recommendedFreelancer?.ratingCount
+                          ? `${rec.recommendedFreelancer?.rating} (${rec.recommendedFreelancer?.ratingCount} reviews)`
+                          : "N/A"}
                       </span>
                       <span className="flex items-center gap-1">
                         <Briefcase className="w-3 h-3" />

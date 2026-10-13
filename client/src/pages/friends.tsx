@@ -94,14 +94,17 @@ export default function FriendsPage() {
 
   const { data: friends = [], isLoading: friendsLoading } = useQuery<FriendData[]>({
     queryKey: ["/api/friends"],
+    refetchInterval: 3000, // Accepted requests and new friends appear without a manual refresh
   });
 
   const { data: incomingRequests = [], isLoading: incomingLoading } = useQuery<FriendRequestData[]>({
     queryKey: ["/api/friend-requests"],
+    refetchInterval: 3000, // Incoming requests appear without a manual refresh
   });
 
   const { data: outgoingRequests = [], isLoading: outgoingLoading } = useQuery<FriendRequestData[]>({
     queryKey: ["/api/friend-requests/outgoing"],
+    refetchInterval: 3000, // Accepted/declined outgoing requests update without a manual refresh
   });
 
   const searchMutation = useMutation({

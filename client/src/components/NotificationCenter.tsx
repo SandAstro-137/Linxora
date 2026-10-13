@@ -28,7 +28,7 @@ import { useAuth } from "@/lib/auth-context";
 import type { Notification, UserPreferences } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
-const SPAM_TYPES = ["job_request"];
+const SPAM_TYPES = ["direct_message_unknown"];
 
 function isSpamNotification(n: Notification, spamFilterEnabled: boolean): boolean {
   return spamFilterEnabled && SPAM_TYPES.includes(n.type);
@@ -45,7 +45,7 @@ export function NotificationCenter() {
   const { data: notifications = [] } = useQuery<Notification[]>({
     queryKey: ["/api/notifications"],
     enabled: true,
-    refetchInterval: 10000,
+    refetchInterval: 5000, // Same cadence as the unread-count badge so the list never lags behind the number
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
@@ -55,6 +55,41 @@ export function NotificationCenter() {
   });
 
   const prevUnreadCount = useRef<number | undefined>(undefined);
+  const soundCtxRef = useRef<AudioContext | null>(null);
+
+  // Small pleasant two-tone chime when a new notification arrives.
+  const playNotificationSound = () => {
+    try {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return;
+      if (!soundCtxRef.current) soundCtxRef.current = new Ctx();
+      const ctx = soundCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const now = ctx.currentTime;
+      const makeTone = (start: number, end: number, freq: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.0001, now + start);
+        gain.gain.exponentialRampToValueAtTime(0.08, now + start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + end);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + start);
+        osc.stop(now + end);
+      };
+      makeTone(0, 0.18, 880); // A5
+      makeTone(0.12, 0.32, 1318.51); // E6 — soft rising finish
+    } catch {
+      // Audio unavailable (autoplay policy, missing API) — stay silent.
+    }
+  };
+
+  const { data: settings } = useQuery<UserPreferences>({
+    queryKey: ["/api/settings"],
+  });
+
   useEffect(() => {
     const currentCount = unreadData?.count;
     if (prevUnreadCount.current !== undefined && currentCount !== undefined && currentCount > prevUnreadCount.current) {
@@ -62,13 +97,22 @@ export function NotificationCenter() {
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      // Sound and visible pings only when the user has opted into them.
+      // The master "Enable Notifications" switch silences arrival effects
+      // (badge growth is suppressed separately); the dedicated "Notification
+      // Sound" switch controls the chime itself. The inbox always receives
+      // notifications regardless of either switch.
+      if (
+        (settings?.notificationsEnabled ?? true) &&
+        (settings?.notificationSoundEnabled ?? true) &&
+        unreadData &&
+        currentCount !== undefined
+      ) {
+        playNotificationSound();
+      }
     }
     prevUnreadCount.current = currentCount;
-  }, [unreadData?.count]);
-
-  const { data: settings } = useQuery<UserPreferences>({
-    queryKey: ["/api/settings"],
-  });
+  }, [unreadData?.count, settings?.notificationsEnabled, settings?.notificationSoundEnabled]);
 
   const markAsReadMutation = useMutation({
     mutationFn: (id: string) => apiRequest("PUT", `/api/notifications/${id}/read`, {}),
@@ -125,7 +169,24 @@ export function NotificationCenter() {
 
   // Unread count excludes spam
   const unreadCount = (unreadData?.count ?? 0) - spamNotifications.filter((n) => !n.read).length;
-  const displayUnreadCount = Math.max(0, unreadCount);
+  const rawUnreadCount = Math.max(0, unreadCount);
+
+  // The master "Enable Notifications" switch means "don't notify me" — it
+  // does NOT stop notifications from arriving in the inbox. What it silences
+  // is the red badge: while the switch is off, the displayed count is frozen
+  // at the level seen when the switch was turned off (it can still drop when
+  // the user reads notifications, but it never grows). Turning the switch
+  // back on reveals the true count again.
+  const badgeBaselineRef = useRef<number | null>(null);
+  const notificationsOff = settings?.notificationsEnabled === false;
+  if (notificationsOff) {
+    if (badgeBaselineRef.current === null || rawUnreadCount < badgeBaselineRef.current) {
+      badgeBaselineRef.current = rawUnreadCount;
+    }
+  } else {
+    badgeBaselineRef.current = null;
+  }
+  const displayUnreadCount = notificationsOff ? (badgeBaselineRef.current ?? 0) : rawUnreadCount;
 
   const showDeleteConfirmation = settings?.deleteConfirmationEnabled ?? true;
 
@@ -192,6 +253,7 @@ export function NotificationCenter() {
         setLocation("/moderation?tab=reports");
         return;
       case "direct_message":
+      case "direct_message_unknown":
         if (sourceId) {
           setLocation(`/messages/${sourceId}`);
         } else {
@@ -222,6 +284,27 @@ export function NotificationCenter() {
       case "pto_approved":
       case "pto_rejected":
         setLocation("/pto");
+        return;
+      case "job_left":
+        if (sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else if (notification.relatedId) {
+          setLocation(`/jobs/${notification.relatedId}`);
+        }
+        return;
+      case "leadership_vote":
+        if (sourceId) {
+          setLocation(`/jobs/${sourceId}`);
+        } else if (notification.relatedId) {
+          setLocation(`/jobs/${notification.relatedId}`);
+        } else {
+          setLocation("/current-job");
+        }
+        return;
+      case "meeting_started":
+        if (notification.relatedId) {
+          setLocation(`/meeting/${notification.relatedId}`);
+        }
         return;
       case "dispute_opened":
         setLocation("/moderation?tab=disputes");
@@ -334,16 +417,23 @@ export function NotificationCenter() {
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="relative" data-testid="button-notifications">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative"
+            aria-label="Notifications"
+            data-testid="button-notifications"
+          >
             <Bell className="h-5 w-5" />
             {displayUnreadCount > 0 && (
-              <Badge
-                variant="destructive"
-                className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+              <span
+                className={`absolute top-0.5 right-0.5 flex h-[18px] items-center justify-center rounded-full bg-destructive text-destructive-foreground border-2 border-background text-[10px] font-bold leading-none tabular-nums shadow-sm ${
+                  displayUnreadCount > 99 ? "min-w-[26px] px-1" : "w-[18px]"
+                }`}
                 data-testid="badge-unread-count"
               >
                 {displayUnreadCount > 99 ? "99+" : displayUnreadCount}
-              </Badge>
+              </span>
             )}
           </Button>
         </PopoverTrigger>

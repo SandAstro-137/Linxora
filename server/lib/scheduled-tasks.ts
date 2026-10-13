@@ -1,5 +1,5 @@
 import { storage } from "../storage";
-import { JobStatus, EscrowStatus, ScheduledTaskStatus, getLevelPayout } from "@shared/schema";
+import { JobStatus, EscrowStatus, ScheduledTaskStatus, getLevelPayout, getLevelFromEarnings } from "@shared/schema";
 
 export async function runScheduledTasks() {
   const now = new Date();
@@ -63,10 +63,15 @@ async function handleAutoComplete(jobId: string) {
     await storage.updateEscrow(escrow.id, { status: EscrowStatus.RELEASED });
   }
 
+  // All freelancers on this job (lead + collaborators + job_freelancers), deduped.
+  const freelancerIdSet = new Set<string>();
+  if (job.freelancerId) freelancerIdSet.add(job.freelancerId);
+  if (job.collaborators) {
+    for (const id of job.collaborators) freelancerIdSet.add(id);
+  }
   const jobFreelancers = await storage.getJobFreelancers(job.id);
-  const allFreelancerIds = jobFreelancers.length > 0
-    ? jobFreelancers.map(jf => jf.freelancerId)
-    : job.freelancerId ? [job.freelancerId] : [];
+  for (const jf of jobFreelancers) freelancerIdSet.add(jf.freelancerId);
+  const allFreelancerIds = Array.from(freelancerIdSet);
 
   const budget = parseFloat(job.budget);
   const numFreelancers = allFreelancerIds.length;
@@ -136,7 +141,9 @@ async function handleAutoComplete(jobId: string) {
 
   // NOW update freelancer stats after job is marked completed (increment completed count)
   for (const freelancerId of allFreelancerIds) {
-    await updateFreelancerStats(freelancerId, true);
+    const fl = await storage.getUser(freelancerId);
+    const earnedIncrement = sharePerFreelancer * getLevelPayout(fl?.level || 1);
+    await updateFreelancerStats(freelancerId, true, earnedIncrement);
   }
 
   await storage.createNotification({
@@ -165,17 +172,23 @@ async function handleJobExpiration(jobId: string) {
     await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
   }
 
-  const budget = parseFloat(job.budget);
-  await storage.adjustPendingBalance(job.customerId, -budget);
+  // Refund the customer's full locked amount (budget + premium), never just the budget,
+  // and actually credit the wallet (previously it only recorded a transaction).
+  const refundAmount = escrow && parseFloat(escrow.totalAmount)
+    ? parseFloat(escrow.totalAmount)
+    : (parseFloat(job.budget) + (parseFloat(job.premiumAmount || "0") || 0));
+  await storage.adjustPendingBalance(job.customerId, -refundAmount);
 
   const customerWallet = await storage.getWallet(job.customerId);
   if (customerWallet) {
+    const currentBalance = parseFloat(customerWallet.usdtBalance || "0");
+    await storage.updateWallet(job.customerId, { usdtBalance: (currentBalance + refundAmount).toFixed(8) });
     await storage.createTransaction({
       walletId: customerWallet.id,
       type: "refund",
       currency: "USDT",
-      amount: budget.toFixed(8),
-      usdAmount: budget.toFixed(2),
+      amount: refundAmount.toFixed(8),
+      usdAmount: refundAmount.toFixed(2),
       status: "completed",
       transactionHash: `job-expired-refund-${job.id}`,
     });
@@ -194,6 +207,111 @@ async function handleJobExpiration(jobId: string) {
     sourceType: "job",
     sourceId: job.id,
   });
+}
+
+// ── Project deadline reminders + deadline-arrival lifecycle ───────────────────
+// Deadline reminder cadence escalates as the deadline approaches:
+//   > 365 days out  -> no reminders yet
+//   30–365 days     -> monthly (every 30 days)
+//   7–30 days       -> weekly (every 7 days)
+//   <= 7 days       -> daily (every 1 day)
+// Reminders are gated by each freelancer's "Enable Notifications" preference.
+const REMINDER_STATUSES: string[] = [
+  JobStatus.IN_PROGRESS,
+  JobStatus.CLAIMED,
+  JobStatus.SUBMITTED,
+  JobStatus.AWAITING_CUSTOMER,
+];
+
+function getJobFreelancerIds(job: any): string[] {
+  const set = new Set<string>();
+  if (job.freelancerId) set.add(job.freelancerId);
+  if (job.collaborators) for (const id of job.collaborators) set.add(id);
+  return Array.from(set);
+}
+
+export async function processDeadlines(): Promise<void> {
+  const now = new Date();
+  const allJobs = await storage.getJobs({});
+
+  for (const job of allJobs) {
+    if (!job.deadline) continue;
+
+    const isWorking = REMINDER_STATUSES.includes(job.status);
+    // A job is "taken" if any freelancer is assigned to it; otherwise it is still
+    // a live market listing that nobody accepted before the deadline.
+    const isLiveListing = job.status === JobStatus.ACTIVE;
+    const hasFreelancer = !!(job.freelancerId || (job.collaborators && job.collaborators.length));
+    if (!isWorking && !isLiveListing) continue;
+
+    const deadl = new Date(job.deadline);
+    const msUntil = deadl.getTime() - now.getTime();
+    const daysUntil = msUntil / 86400000;
+
+    // Timeline reminder for the freelancer(s) while the deadline is in the future.
+    // Only relevant for jobs that have actually been taken (working statuses); a live
+    // listing that nobody applied to has no freelancer worth reminding.
+    if (isWorking && daysUntil > 0) {
+      let intervalDays: number | null = null;
+      if (daysUntil <= 7) intervalDays = 1;               // daily
+      else if (daysUntil <= 30) intervalDays = 7;         // weekly
+      else if (daysUntil <= 365) intervalDays = 30;       // monthly
+      // daysUntil > 365 -> no reminder yet
+
+      if (intervalDays !== null) {
+        const last = job.lastDeadlineReminderAt ? new Date(job.lastDeadlineReminderAt).getTime() : 0;
+        const due = !job.lastDeadlineReminderAt || (now.getTime() - last) >= intervalDays * 86400000;
+        if (due) {
+          const freelancerIds = getJobFreelancerIds(job);
+          for (const freelancerId of freelancerIds) {
+            const prefs = await storage.getUserPreferences(freelancerId);
+            if (prefs && prefs.notificationsEnabled === false) continue;
+            await storage.createNotification({
+              userId: freelancerId,
+              type: "reminder",
+              title: "Project deadline approaching",
+              message: `Quick reminder: your project deadline is approaching. Please share a progress update with the client and make sure everything stays on track.`,
+              relatedId: job.id,
+              sourceType: "job",
+              sourceId: job.id,
+              redirectUrl: `/jobs/${job.id}`,
+            });
+          }
+          await storage.updateJob(job.id, { lastDeadlineReminderAt: new Date() });
+        }
+      }
+    }
+
+    // The deadline has arrived: flip the job into a "deadline reached" state and tell
+    // the customer once (clicking the notification opens the job).
+    if (msUntil <= 0) {
+      if (job.status !== JobStatus.DEADLINE_REACHED) {
+        await storage.updateJob(job.id, { status: JobStatus.DEADLINE_REACHED });
+      }
+      if (!job.deadlineArrivalNotified) {
+        const prefs = await storage.getUserPreferences(job.customerId);
+        if (!prefs || prefs.notificationsEnabled !== false) {
+          // If nobody ever accepted the job, the customer's only sensible options are to
+          // extend the deadline or delete the listing (there's no freelancer to pay/refund,
+          // and no work to review). Otherwise they can extend / relist / end.
+          const message = hasFreelancer
+            ? `The deadline for "${job.title}" has arrived. Please review your options: extend the deadline, end the job, or put it back on the market.`
+            : `The deadline for "${job.title}" has arrived and no freelancer accepted it. Please extend the deadline so more freelancers can apply, or delete the job.`;
+          await storage.createNotification({
+            userId: job.customerId,
+            type: "reminder",
+            title: "Your project's deadline has arrived!",
+            message,
+            relatedId: job.id,
+            sourceType: "job",
+            sourceId: job.id,
+            redirectUrl: `/jobs/${job.id}`,
+          });
+        }
+        await storage.updateJob(job.id, { deadlineArrivalNotified: true });
+      }
+    }
+  }
 }
 
 async function handleCustomerReminder(jobId: string) {
@@ -276,45 +394,33 @@ async function handleCancellationEscalation(jobId: string, metadata: { negotiati
   }
 }
 
-async function updateFreelancerStats(freelancerId: string, incrementCompleted: boolean = false) {
+async function updateFreelancerStats(freelancerId: string, incrementCompleted: boolean = false, earnedIncrement: number = 0) {
   const freelancer = await storage.getUser(freelancerId);
   if (!freelancer) return;
 
-  // Get current stats - preserve existing completedJobs count
+  // Counter-based completion rate: completedJobs / totalJobs (lifetime finished jobs).
   let completedJobs = freelancer.completedJobs || 0;
-  
-  // If incrementing (job just completed), add 1 to existing count
+  let totalJobs = freelancer.totalJobs || 0;
+
+  // If incrementing (job just completed), add 1 to both counters.
   if (incrementCompleted) {
     completedJobs = completedJobs + 1;
+    totalJobs = totalJobs + 1;
   }
 
-  // Calculate level based on completed jobs
-  let newLevel = 1;
-  if (completedJobs >= 50) newLevel = 5;
-  else if (completedJobs >= 30) newLevel = 4;
-  else if (completedJobs >= 15) newLevel = 3;
-  else if (completedJobs >= 5) newLevel = 2;
+  const completionPercentage = totalJobs > 0
+    ? ((completedJobs / totalJobs) * 100).toFixed(2)
+    : "0.00";
 
-  // Calculate completion percentage from actual job records for display
-  const allJobs = await storage.getJobs();
-  const assignedJobsMap = new Map();
-
-  for (const j of allJobs) {
-    if (j.freelancerId === freelancerId || j.collaborators?.includes(freelancerId)) {
-      if (["claimed", "in_progress", "completed"].includes(j.status)) {
-        assignedJobsMap.set(j.id, j);
-      }
-    }
-  }
-
-  const assignedJobs = Array.from(assignedJobsMap.values());
-  const activeJobsCount = assignedJobs.length;
-  const completedInActiveJobs = assignedJobs.filter(j => j.status === "completed").length;
-  const completionPercentage = activeJobsCount > 0 ? ((completedInActiveJobs / activeJobsCount) * 100).toFixed(2) : "100.00";
+  // Level is based on lifetime earnings, not completed jobs.
+  const totalEarned = parseFloat(freelancer.totalEarned || "0") + earnedIncrement;
+  const newLevel = getLevelFromEarnings(totalEarned);
 
   await storage.updateUser(freelancerId, {
     completedJobs,
+    totalJobs,
     completionPercentage,
+    totalEarned: totalEarned.toFixed(2),
     level: newLevel,
   });
 }
@@ -399,6 +505,39 @@ async function runWeeklyPayouts(): Promise<void> {
   }
 }
 
+
+// ── Old job retention cleanup (daily) ───────────────────────────────────────
+// Cancelled/completed jobs are deleted after a retention period so the store
+// doesn't grow unbounded. Default 180 days; override with JOB_RETENTION_DAYS.
+let lastRetentionRunDay: string | null = null;
+
+export async function cleanupOldJobs(): Promise<void> {
+  const todayKey = new Date().toDateString();
+  if (lastRetentionRunDay === todayKey) return;
+  lastRetentionRunDay = todayKey;
+
+  const retentionDays = parseInt(process.env.JOB_RETENTION_DAYS || "180", 10);
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+  try {
+    const allJobs = await storage.getJobs({});
+    const stale = allJobs.filter(j =>
+      (j.status === JobStatus.CANCELLED || j.status === JobStatus.COMPLETED) &&
+      j.updatedAt && new Date(j.updatedAt) < cutoff
+    );
+
+    for (const job of stale) {
+      await storage.deleteJob(job.id);
+      console.log(`[Retention] Deleted ${job.status} job "${job.title}" (id ${job.id})`);
+    }
+    if (stale.length > 0) {
+      console.log(`[Retention] Cleaned up ${stale.length} old job(s)`);
+    }
+  } catch (error) {
+    console.error("[Retention] Error during job cleanup:", error);
+  }
+}
+
 let taskRunnerInterval: NodeJS.Timeout | null = null;
 
 export function startScheduledTaskRunner(intervalMs: number = 60000) {
@@ -410,10 +549,14 @@ export function startScheduledTaskRunner(intervalMs: number = 60000) {
 
   runScheduledTasks();
   checkWeeklyPayouts();
+  cleanupOldJobs();
+  processDeadlines();
 
   taskRunnerInterval = setInterval(() => {
     runScheduledTasks();
     checkWeeklyPayouts();
+    cleanupOldJobs();
+    processDeadlines();
   }, intervalMs);
 }
 

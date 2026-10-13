@@ -93,6 +93,14 @@ export default function VaultPage() {
   const isHeadOfModeration = user?.role === "head_of_moderation";
   const vaultBalance = parseFloat(vault?.balance || "0");
 
+  // How much the company actually holds to move into the vault (founder only)
+  const { data: companyVault } = useQuery<{ companyHeld: number }>({
+    queryKey: ["/api/company-vault"],
+    enabled: isFounder,
+  });
+  const companyAvailable = companyVault?.companyHeld ?? 0;
+  const depositExceedsAvailable = isFounder && depositAmount && parseFloat(depositAmount) > companyAvailable;
+
   if (vaultLoading) {
     return (
       <div className="p-6 space-y-6">
@@ -188,9 +196,18 @@ export default function VaultPage() {
                   data-testid="textarea-deposit-note"
                 />
               </div>
+              <div className="rounded-lg bg-muted/40 p-3 text-sm">
+                <p className="text-xs text-muted-foreground">Deposits draw from the company's held funds</p>
+                <p className="font-semibold">Available: ${companyAvailable.toFixed(2)}</p>
+              </div>
+              {depositExceedsAvailable && (
+                <p className="text-xs text-destructive">
+                  Amount exceeds the company's available funds (${companyAvailable.toFixed(2)}).
+                </p>
+              )}
               <Button
                 onClick={() => depositMutation.mutate({ amount: depositAmount, note: depositNote })}
-                disabled={!depositAmount || parseFloat(depositAmount) < 1 || depositMutation.isPending}
+                disabled={!depositAmount || parseFloat(depositAmount) < 1 || depositMutation.isPending || !!depositExceedsAvailable}
                 className="w-full"
                 data-testid="button-deposit"
               >

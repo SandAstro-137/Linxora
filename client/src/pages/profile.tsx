@@ -8,20 +8,24 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Shield, DollarSign, FileCheck, CalendarDays, CheckCircle, XCircle, Award, Users, Target } from "lucide-react";
+import { Briefcase, Star, TrendingUp, Clock, Edit2, Save, Shield, DollarSign, FileCheck, CalendarDays, CheckCircle, XCircle, Award, Users, Link2 } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { JobCard } from "@/components/job-card";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { formatAccountCreated } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import type { WorkingHours } from "@shared/schema";
+import { getLevelProgressFromEarnings, getEarningsToNextLevel, type WorkingHours } from "@shared/schema";
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const [isEditingHours, setIsEditingHours] = useState(false);
   const [isEditingSpecialization, setIsEditingSpecialization] = useState(false);
+  const [isEditingPortfolio, setIsEditingPortfolio] = useState(false);
   const [specializationValue, setSpecializationValue] = useState("");
+  const [portfolioValue, setPortfolioValue] = useState("");
   const [workingHours, setWorkingHours] = useState({
     monday: { start: "", end: "" },
     tuesday: { start: "", end: "" },
@@ -34,6 +38,7 @@ export default function ProfilePage() {
 
   const { data: completedJobs } = useQuery({
     queryKey: ["/api/profile/completed-jobs"],
+    refetchInterval: 10000, // Keep completed-job count current without a manual refresh
   });
 
   const { data: savedWorkingHours } = useQuery({
@@ -43,12 +48,33 @@ export default function ProfilePage() {
 
   const { data: profileStats } = useQuery<any>({
     queryKey: ["/api/profile/stats"],
+    refetchInterval: 10000, // Keep level / earnings progress current without a manual refresh
   });
 
   const { data: moderatorTasks, isError: moderatorTasksError } = useQuery<any[]>({
     queryKey: ["/api/moderator-tasks"],
     enabled: user?.role === "moderator" || user?.role === "head_of_moderation",
     retry: false,
+  });
+
+  const updatePortfolioMutation = useMutation({
+    mutationFn: (portfolio: string) => apiRequest("PUT", "/api/profile/portfolio", { portfolio }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      refetchUser();
+      setIsEditingPortfolio(false);
+      toast({
+        title: "Portfolio updated",
+        description: "Your portfolio link has been saved",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to update portfolio",
+        description: error?.message || "Please enter a valid http(s) URL",
+        variant: "destructive",
+      });
+    },
   });
 
   const updateWorkingHoursMutation = useMutation({
@@ -75,7 +101,9 @@ export default function ProfilePage() {
   const updateSpecializationMutation = useMutation({
     mutationFn: (specialization: string) => apiRequest("PUT", "/api/profile/specialization", { specialization }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      // The user object comes from AuthContext (plain fetch), not react-query,
+      // so we must refetch it directly — invalidateQueries alone does nothing here.
+      refetchUser();
       setIsEditingSpecialization(false);
       toast({
         title: "Specialization updated",
@@ -100,53 +128,12 @@ export default function ProfilePage() {
     .toUpperCase()
     .slice(0, 2);
 
-  // Calculate level progress based on actual level system
-  // Level 1: 0-4, Level 2: 5-14, Level 3: 15-29, Level 4: 30-49, Level 5: 50+
-  const calculateLevelProgress = () => {
-    const completed = user.completedJobs || 0;
-    const level = user.level || 1;
-    
-    let progress = 0;
-    
-    if (level === 1) {
-      // 0-4 jobs, need 5 for next level
-      progress = (completed / 5) * 100;
-    } else if (level === 2) {
-      // 5-14 jobs, need 15 for next level
-      progress = ((completed - 5) / 10) * 100;
-    } else if (level === 3) {
-      // 15-29 jobs, need 30 for next level
-      progress = ((completed - 15) / 15) * 100;
-    } else if (level === 4) {
-      // 30-49 jobs, need 50 for next level
-      progress = ((completed - 30) / 20) * 100;
-    } else {
-      // Level 5 (50+), max level reached
-      progress = 100;
-    }
-    
-    // Clamp progress between 0 and 100 to handle race conditions
-    return Math.min(100, Math.max(0, progress));
-  };
-  
-  const getJobsUntilNextLevel = () => {
-    const completed = user.completedJobs || 0;
-    const level = user.level || 1;
-    
-    let remaining = 0;
-    
-    if (level === 1) remaining = 5 - completed;
-    else if (level === 2) remaining = 15 - completed;
-    else if (level === 3) remaining = 30 - completed;
-    else if (level === 4) remaining = 50 - completed;
-    else remaining = 0; // Max level
-    
-    // Ensure remaining is never negative
-    return Math.max(0, remaining);
-  };
-  
-  const levelProgress = calculateLevelProgress();
-  const jobsUntilNext = getJobsUntilNextLevel();
+  // Level progression is based on lifetime earnings (USD), not completed jobs.
+  // Level 1 is the base level; higher levels unlock at $20, $50, $100, $250, $450, $750, and $1500.
+  const totalEarned = parseFloat(user.totalEarned || "0");
+  const levelProgress = getLevelProgressFromEarnings(totalEarned);
+  const earningsToNextLevel = getEarningsToNextLevel(totalEarned);
+  const earningsToNextFormatted = earningsToNextLevel.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
   const getRoleTitle = () => {
     switch (user.role) {
@@ -200,15 +187,12 @@ export default function ProfilePage() {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium" data-testid="text-level">Level {user.level}</span>
-                    <span className="text-sm text-muted-foreground" data-testid="text-completed-jobs">
-                      {user.completedJobs || 0} jobs
-                    </span>
                   </div>
                   <Progress value={levelProgress} className="h-2" data-testid="progress-level" />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {(user.level || 1) === 5 
+                    {(user.level || 1) >= 8 
                       ? "Max level reached!" 
-                      : `${jobsUntilNext} job${jobsUntilNext !== 1 ? 's' : ''} until next level`}
+                      : `Earn ${earningsToNextFormatted} More To Level Up!`}
                   </p>
                 </div>
 
@@ -219,7 +203,7 @@ export default function ProfilePage() {
                     <Star className="w-4 h-4 text-yellow-500" />
                     <span className="text-sm font-medium">Rating</span>
                     <span className="ml-auto text-sm font-bold" data-testid="text-rating-value">
-                      {user.rating ? `${user.rating}/5` : "N/A"}
+                      {(user.totalRatings || 0) > 0 && user.rating ? `${user.rating}/5` : "N/A"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -234,6 +218,13 @@ export default function ProfilePage() {
                     <span className="text-sm font-medium">Completed Jobs</span>
                     <span className="ml-auto text-sm font-bold" data-testid="text-completed-count">
                       {user.completedJobs || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Account Created</span>
+                    <span className="ml-auto text-sm font-bold">
+                      {formatAccountCreated(user.createdAt)}
                     </span>
                   </div>
                 </div>
@@ -287,9 +278,9 @@ export default function ProfilePage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Account Age</span>
+                    <span className="text-sm font-medium">Account Created</span>
                     <span className="ml-auto text-sm font-bold">
-                      {profileStats.accountAgeDays || 0} days
+                      {formatAccountCreated(user.createdAt)}
                     </span>
                   </div>
                 </div>
@@ -328,13 +319,6 @@ export default function ProfilePage() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Target className="w-4 h-4 text-blue-500" />
-                    <span className="text-sm font-medium">Accuracy Score</span>
-                    <span className="ml-auto text-sm font-bold">
-                      {profileStats.accuracyScore || 0}%
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-yellow-500" />
                     <span className="text-sm font-medium">Pending Queue</span>
                     <span className="ml-auto text-sm font-bold">
@@ -343,9 +327,9 @@ export default function ProfilePage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Account Age</span>
+                    <span className="text-sm font-medium">Account Created</span>
                     <span className="ml-auto text-sm font-bold">
-                      {profileStats.accountAgeDays || 0} days
+                      {formatAccountCreated(user.createdAt)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -421,12 +405,6 @@ export default function ProfilePage() {
                   icon={Users}
                   description="Reports handled"
                 />
-                <StatsCard
-                  title="Accuracy Score"
-                  value={`${profileStats.accuracyScore || 0}%`}
-                  icon={Target}
-                  description="Decision accuracy"
-                />
               </>
             )}
           </div>
@@ -480,6 +458,68 @@ export default function ProfilePage() {
                 ) : (
                   <p className="text-muted-foreground">
                     {user.specialization || "No specialization set. Click Edit to add one."}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {user.role === "freelancer" && (
+            <Card data-testid="card-portfolio">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle>Portfolio</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isEditingPortfolio) {
+                        updatePortfolioMutation.mutate(portfolioValue);
+                      } else {
+                        setPortfolioValue(user.portfolio || "");
+                        setIsEditingPortfolio(true);
+                      }
+                    }}
+                    disabled={updatePortfolioMutation.isPending}
+                    data-testid="button-edit-portfolio"
+                  >
+                    {isEditingPortfolio ? (
+                      <>
+                        <Save className="w-4 h-4 mr-1" />
+                        Save
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="w-4 h-4 mr-1" />
+                        {user.portfolio ? "Edit" : "Add"}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isEditingPortfolio ? (
+                  <Input
+                    placeholder="https://yourportfolio.com"
+                    value={portfolioValue}
+                    onChange={(e) => setPortfolioValue(e.target.value)}
+                    maxLength={300}
+                    data-testid="input-portfolio"
+                  />
+                ) : user.portfolio ? (
+                  <a
+                    href={user.portfolio}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline inline-flex items-center gap-1"
+                    data-testid="link-portfolio"
+                  >
+                    <Link2 className="w-4 h-4" />
+                    {user.portfolio}
+                  </a>
+                ) : (
+                  <p className="text-muted-foreground">
+                    No portfolio set. Click Add to link your portfolio.
                   </p>
                 )}
               </CardContent>
@@ -661,11 +701,13 @@ export default function ProfilePage() {
               </CardHeader>
               <CardContent>
                 {Array.isArray(completedJobs) && completedJobs.length > 0 ? (
-                  <div className="grid gap-4">
-                    {completedJobs.slice(0, 3).map((job: any) => (
-                      <JobCard key={job.id} job={job} showActions={false} />
-                    ))}
-                  </div>
+                  <ScrollArea className="h-[500px] pr-3">
+                    <div className="grid gap-4">
+                      {completedJobs.map((job: any) => (
+                        <JobCard key={job.id} job={job} showActions={false} />
+                      ))}
+                    </div>
+                  </ScrollArea>
                 ) : (
                   <p className="text-center py-8 text-muted-foreground">
                     No completed jobs yet

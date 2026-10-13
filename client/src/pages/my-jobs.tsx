@@ -12,6 +12,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Briefcase, DollarSign, Calendar, User, X, Check, Trash2 } from "lucide-react";
 import type { Job } from "@shared/schema";
+import { formatEasternDateTime } from "@/lib/timezone";
 
 type EnrichedJob = Job & { hasRating?: boolean };
 import { formatDistanceToNow } from "date-fns";
@@ -235,12 +236,12 @@ export default function MyJobsPage() {
                 {(needsChanges || isRejected) && job.moderatorFeedback && (
                   <div className="bg-destructive/10 border border-destructive/20 rounded-md p-4">
                     <h4 className="font-semibold text-destructive mb-2">Moderator Feedback</h4>
-                    <p className="text-sm whitespace-pre-wrap" data-testid={`text-moderator-feedback-${job.id}`}>
+                    <p className="text-sm whitespace-pre-wrap break-words" data-testid={`text-moderator-feedback-${job.id}`}>
                       {job.moderatorFeedback}
                     </p>
                   </div>
                 )}
-                <p className="text-muted-foreground line-clamp-2" data-testid={`text-description-${job.id}`}>
+                <p className="text-muted-foreground line-clamp-2 break-all" data-testid={`text-description-${job.id}`}>
                   {job.description}
                 </p>
 
@@ -261,7 +262,7 @@ export default function MyJobsPage() {
                       <div>
                         <p className="text-sm text-muted-foreground">Deadline</p>
                         <p className="font-semibold" data-testid={`text-deadline-${job.id}`}>
-                          {new Date(job.deadline).toLocaleDateString()}
+                          {formatEasternDateTime(job.deadline)} (ET)
                         </p>
                       </div>
                     </div>

@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Briefcase, DollarSign, Calendar, User, Check, X, ChevronDown, ChevronUp, Users, Wallet, Eye } from "lucide-react";
 import { Link } from "wouter";
-import { format } from "date-fns";
+import { formatEasternDateTime } from "@/lib/timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface TeamMember {
@@ -74,11 +74,15 @@ export default function JobInvitationsPage() {
   // Fetch recommendation-based invitations
   const { data: recommendationInvitations = [], isLoading: isLoadingRecommendations } = useQuery<JobInvitation[]>({
     queryKey: ["/api/recommendations/invitations"],
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true, // New invitations appear even when this tab is in the background
   });
 
   // Fetch direct team invitations (from Offer Team feature)
   const { data: directInvitations = [], isLoading: isLoadingDirect } = useQuery<JobInvitation[]>({
     queryKey: ["/api/invitations/pending"],
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true, // New invitations appear even when this tab is in the background
   });
 
   // Combine both types of invitations
@@ -221,7 +225,7 @@ export default function JobInvitationsPage() {
                   {invitation.job?.deadline && (
                     <div className="flex items-center gap-2">
                       <Calendar className="w-4 h-4 text-muted-foreground" />
-                      <span>Deadline: {format(new Date(invitation.job.deadline), "MMM d, yyyy")}</span>
+                      <span>Deadline: {formatEasternDateTime(invitation.job.deadline)} (ET)</span>
                     </div>
                   )}
                 </div>
@@ -232,12 +236,12 @@ export default function JobInvitationsPage() {
                     <div className="flex flex-wrap gap-2">
                       {invitation.teamMembers.map((member) => (
                         <Link key={member.id} href={`/user/${member.id}`} onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2 bg-background p-2 rounded-md border hover-elevate cursor-pointer">
+                          <div className="flex items-center gap-2 bg-background p-2 rounded-md border hover-elevate cursor-pointer min-w-0">
                             <Avatar className="h-6 w-6">
                               <AvatarImage src={member.avatar || undefined} />
                               <AvatarFallback className="text-xs">{member.username.charAt(0).toUpperCase()}</AvatarFallback>
                             </Avatar>
-                            <span className="text-sm">{member.username}</span>
+                            <span className="text-sm truncate">{member.username}</span>
                             <Badge variant="outline" className="text-xs">Lvl {member.level}</Badge>
                           </div>
                         </Link>
@@ -278,7 +282,7 @@ export default function JobInvitationsPage() {
                     {invitation.job?.description && (
                       <div className="bg-muted/30 p-4 rounded-lg border">
                         <h4 className="font-medium mb-2">Full Job Description</h4>
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                           {invitation.job.description}
                         </p>
                       </div>

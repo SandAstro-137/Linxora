@@ -1,11 +1,11 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Job, CancellationRequest, Report, PTORequest, User as UserType } from "@shared/schema";
+import { Job, CancellationRequest, AbandonRequest, Report, PTORequest, User as UserType } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History, DollarSign, Wallet } from "lucide-react";
+import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History, DollarSign, Wallet, ChevronDown, LogOut } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -24,11 +24,18 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useState, useEffect } from "react";
-import { Link, useSearch } from "wouter";
+import { Link, useSearch, useLocation } from "wouter";
 
 interface EnrichedCancellationRequest extends CancellationRequest {
   jobTitle?: string;
+  freelancerUsername?: string;
+}
+
+interface EnrichedAbandonRequest extends AbandonRequest {
+  jobTitle?: string;
+  jobBudget?: string;
   freelancerUsername?: string;
 }
 
@@ -42,6 +49,7 @@ interface EnrichedDispute {
   jobId: string;
   openedByUserId: string;
   reason: string;
+  category?: string | null;
   status: string;
   moderatorId: string | null;
   resolution: string | null;
@@ -52,7 +60,31 @@ interface EnrichedDispute {
   jobTitle?: string;
   jobBudget?: string;
   openedByUsername?: string;
-  moderatorUsername?: string;
+  openedByUserRole?: string | null;
+  moderator?: { id: string; username: string } | null;
+}
+
+
+function DisputeDetails({ reason }: { reason: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="text-xs font-medium text-primary hover:underline inline-flex items-center gap-1"
+        onClick={() => setOpen(o => !o)}
+        data-testid="button-dispute-details"
+      >
+        {open ? "Hide details" : "View details"}
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md mt-1.5 whitespace-pre-wrap break-words" data-testid="dispute-details-text">
+          {reason}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface EnrichedRoleUpgradeRequest {
@@ -75,12 +107,38 @@ interface EnrichedRoleUpgradeRequest {
     completedJobs: number;
     level: number;
     rating: string;
+    portfolio: string | null;
   } | null;
 }
 
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    pending: { label: "Pending", cls: "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" },
+    pending_approval: { label: "Pending Approval", cls: "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" },
+    pending_acceptance: { label: "Available", cls: "bg-green-500/10 text-green-700 dark:text-green-400" },
+    active: { label: "Available", cls: "bg-green-500/10 text-green-700 dark:text-green-400" },
+    claimed: { label: "Taken", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-400" },
+    in_progress: { label: "In Progress", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-400" },
+    submitted: { label: "Submitted", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-400" },
+    awaiting_customer: { label: "Awaiting Review", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-400" },
+    freelancer_requested: { label: "Taken", cls: "bg-blue-500/10 text-blue-700 dark:text-blue-400" },
+    dispute: { label: "Disputed", cls: "bg-red-500/10 text-red-700 dark:text-red-400" },
+    cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground" },
+    completed: { label: "Completed", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
+    expired: { label: "Expired", cls: "bg-muted text-muted-foreground" },
+  };
+  const m = map[status] || { label: status, cls: "bg-muted text-muted-foreground" };
+  return <Badge variant="secondary" className={m.cls}>{m.label}</Badge>;
+}
+
 export default function ModerationPage() {
+  // Per-request toggle: whether approving a cancellation should count against
+  // the freelancer(s) completion rate. Defaults to ON (affect the rate).
+  const [affectCompletionRates, setAffectCompletionRates] = useState<Record<string, boolean>>({});
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const [, setLocation] = useLocation();
   const searchString = useSearch();
   const searchParams = new URLSearchParams(searchString);
   const tabFromUrl = searchParams.get("tab");
@@ -98,10 +156,31 @@ export default function ModerationPage() {
 
   const { data: pendingJobs, isLoading: jobsLoading } = useQuery<Job[]>({
     queryKey: ["/api/moderation/pending"],
+    refetchInterval: 10000, // Keep the pending-jobs queue current without a manual refresh
   });
+
+  const { data: allModJobs = [], isLoading: allJobsLoading } = useQuery<Job[]>({
+    queryKey: ["/api/moderation/all-jobs"],
+    refetchInterval: 10000, // Keep the all-jobs view current
+  });
+  const [allJobsFilter, setAllJobsFilter] = useState<string>("all");
+  const allJobsCategory = (job: Job): string => {
+    if (job.status === "dispute") return "disputed";
+    if (job.status === "cancelled") return "cancelled";
+    if (job.status === "completed") return "completed";
+    if (["claimed", "in_progress", "submitted", "awaiting_customer", "freelancer_requested"].includes(job.status)) return "taken";
+    return "available";
+  };
+  const filteredAllJobs = allModJobs.filter(j => allJobsFilter === "all" || allJobsCategory(j) === allJobsFilter);
 
   const { data: cancellationRequests, isLoading: requestsLoading } = useQuery<EnrichedCancellationRequest[]>({
     queryKey: ["/api/cancellation-requests"],
+    refetchInterval: 10000, // Keep the cancellation queue current without a manual refresh
+  });
+
+  const { data: abandonRequests = [], isLoading: abandonLoading } = useQuery<EnrichedAbandonRequest[]>({
+    queryKey: ["/api/abandon-requests"],
+    refetchInterval: 10000, // Keep the abandon queue current without a manual refresh
   });
 
   const { data: pendingReports, isLoading: reportsLoading } = useQuery<Report[]>({
@@ -114,6 +193,7 @@ export default function ModerationPage() {
 
   const { data: disputes, isLoading: disputesLoading } = useQuery<EnrichedDispute[]>({
     queryKey: ["/api/disputes"],
+    refetchInterval: 10000, // Keep the dispute list current without a manual refresh
   });
 
   const { data: roleUpgradeRequests = [], isLoading: upgradesLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
@@ -152,6 +232,20 @@ export default function ModerationPage() {
     },
     onError: (error: any) => {
       toast({ title: "Failed to update", description: error?.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const createMeetingMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest("POST", "/api/meetings", { jobId });
+      return res.json();
+    },
+    onSuccess: (meeting: any) => {
+      toast({ title: "Meeting opened", description: "A court-room meeting has been created for this job." });
+      if (meeting?.id) setLocation(`/meeting/${meeting.id}`);
+    },
+    onError: (error: any) => {
+      toast({ title: "Could not open meeting", description: error?.message || "Please try again.", variant: "destructive" });
     },
   });
 
@@ -217,6 +311,8 @@ export default function ModerationPage() {
   const [disputeResolution, setDisputeResolution] = useState("");
   const [freelancerAmount, setFreelancerAmount] = useState("");
   const [customerRefund, setCustomerRefund] = useState("");
+  // Defaults to ON: the resolution counts against the freelancer(s) completion rate.
+  const [affectCompletionRate, setAffectCompletionRate] = useState(true);
 
   const claimDisputeMutation = useMutation({
     mutationFn: (disputeId: string) =>
@@ -239,16 +335,18 @@ export default function ModerationPage() {
   });
 
   const resolveDisputeMutation = useMutation({
-    mutationFn: ({ disputeId, resolution, freelancerAmount, customerRefund }: {
+    mutationFn: ({ disputeId, resolution, freelancerAmount, customerRefund, affectCompletionRate }: {
       disputeId: string; 
       resolution: string; 
       freelancerAmount: string; 
       customerRefund: string;
+      affectCompletionRate: boolean;
     }) =>
       apiRequest("POST", `/api/disputes/${disputeId}/resolve`, { 
         resolutionNotes: resolution, 
         freelancerAmount: parseFloat(freelancerAmount), 
-        customerRefund: parseFloat(customerRefund) 
+        customerRefund: parseFloat(customerRefund),
+        affectCompletionRate,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
@@ -271,8 +369,34 @@ export default function ModerationPage() {
     },
   });
 
+  const closeDisputeMutation = useMutation({
+    mutationFn: ({ disputeId, resolutionNotes }: { disputeId: string; resolutionNotes: string }) =>
+      apiRequest("POST", `/api/disputes/${disputeId}/close`, { resolutionNotes }),
+    onSuccess: () => {
+      toast({
+        title: "Dispute closed",
+        description: "The dispute has been closed. The job continues as normal.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+      setDisputeDialogOpen(false);
+      setSelectedDispute(null);
+      setDisputeResolution("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to close dispute",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const openDisputes = disputes?.filter(d => d.status === "open") || [];
-  const inProgressDisputes = disputes?.filter(d => d.status === "in_progress") || [];
+  const inProgressDisputes = disputes?.filter(d => d.status === "under_review" || d.status === "in_progress") || [];
+
+  const canManageDispute = (dispute: EnrichedDispute) =>
+    dispute.moderatorId === currentUser?.id ||
+    ["staff", "head_of_moderation", "founder"].includes(currentUser?.role || "");
 
   const approvePTOMutation = useMutation({
     mutationFn: (ptoId: string) =>
@@ -373,8 +497,10 @@ export default function ModerationPage() {
   });
 
   const approveRequestMutation = useMutation({
-    mutationFn: (requestId: string) =>
-      apiRequest("POST", `/api/cancellation-requests/${requestId}/approve`, {}),
+    mutationFn: (data: { requestId: string; affectCompletionRate: boolean }) =>
+      apiRequest("POST", `/api/cancellation-requests/${data.requestId}/approve`, {
+        affectCompletionRate: data.affectCompletionRate,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cancellation-requests"] });
       toast({
@@ -429,7 +555,47 @@ export default function ModerationPage() {
     },
   });
 
+  const abandonApproveMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/moderator-approve`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      toast({
+        title: "Abandon request approved",
+        description: "The freelancer has been excused from the job without a completion-rate penalty.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to approve abandon request",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const abandonDeclineMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/moderator-decline`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests"] });
+      toast({
+        title: "Abandon request declined",
+        description: "The freelancer is not excused and must continue on the job.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to decline abandon request",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const pendingRequestsCount = cancellationRequests?.filter(r => r.status === "pending").length || 0;
+  const pendingAbandonCount = abandonRequests.filter(r => r.status === "pending_moderator").length || 0;
   const pendingReportsCount = pendingReports?.length || 0;
 
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
@@ -497,6 +663,10 @@ export default function ModerationPage() {
     }
   };
 
+  const resolveBudget = parseFloat(selectedDispute?.jobBudget || "0");
+  const resolveTotal = parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0");
+  const resolveTotalMatches = Math.abs(resolveTotal - resolveBudget) < 0.001;
+
   return (
     <div className="space-y-6">
       <div>
@@ -516,11 +686,25 @@ export default function ModerationPage() {
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="all-jobs" data-testid="tab-all-jobs">
+            <Briefcase className="w-4 h-4 mr-1" />
+            All Jobs
+          </TabsTrigger>
           <TabsTrigger value="requests" data-testid="tab-requests">
             Cancellation Requests
             {pendingRequestsCount > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {pendingRequestsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="abandon" data-testid="tab-abandon">
+            <LogOut className="w-4 h-4 mr-1" />
+            Abandon Requests
+            {pendingAbandonCount > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {pendingAbandonCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -630,7 +814,7 @@ export default function ModerationPage() {
                       <div>
                         <h4 className="font-semibold mb-2">Deadline</h4>
                         <p className="text-sm text-muted-foreground">
-                          {new Date(job.deadline).toLocaleDateString()}
+                          {formatEasternDateTime(job.deadline)} (ET)
                         </p>
                       </div>
                     )}
@@ -667,6 +851,16 @@ export default function ModerationPage() {
                         <AlertCircle className="w-4 h-4" />
                         Request Changes
                       </Button>
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => createMeetingMutation.mutate(job.id)}
+                        disabled={createMeetingMutation.isPending}
+                        data-testid={`button-meeting-job-${job.id}`}
+                      >
+                        <Gavel className="w-4 h-4" />
+                        Meeting
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -684,6 +878,79 @@ export default function ModerationPage() {
                 </div>
               </CardContent>
             </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="all-jobs">
+          {allJobsLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { value: "all", label: "All" },
+                  { value: "available", label: "Available" },
+                  { value: "taken", label: "Taken" },
+                  { value: "disputed", label: "Disputed" },
+                  { value: "cancelled", label: "Cancelled" },
+                  { value: "completed", label: "Completed" },
+                ].map((f) => (
+                  <Button
+                    key={f.value}
+                    size="sm"
+                    variant={allJobsFilter === f.value ? "default" : "outline"}
+                    onClick={() => setAllJobsFilter(f.value)}
+                    data-testid={`button-alljobs-filter-${f.value}`}
+                  >
+                    {f.label}
+                  </Button>
+                ))}
+              </div>
+              {filteredAllJobs.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <Briefcase className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                    <h3 className="text-lg font-semibold mb-2">No jobs found</h3>
+                    <p className="text-muted-foreground">No jobs in this category.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-4">
+                  {filteredAllJobs.map((job) => (
+                    <Card key={job.id} data-testid={`card-all-job-${job.id}`}>
+                      <CardHeader>
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                          <div className="flex-1">
+                            <CardTitle className="mb-2">{job.title}</CardTitle>
+                            <div className="flex gap-2 flex-wrap">
+                              <Badge variant="outline">{job.category}</Badge>
+                              <Badge variant="secondary">${job.budget}</Badge>
+                              <StatusBadge status={job.status} />
+                            </div>
+                          </div>
+                        </div>
+                        <CardDescription className="mt-2">
+                          Posted {formatDistanceToNow(new Date(job.createdAt!), { addSuffix: true })}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <p className="text-sm text-muted-foreground line-clamp-2">{job.description}</p>
+                        <Link href={`/jobs/${job.id}`}>
+                          <Button variant="outline" size="sm" data-testid={`button-view-all-job-${job.id}`}>
+                            <ExternalLink className="w-4 h-4 mr-1" />
+                            View Job
+                          </Button>
+                        </Link>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </TabsContent>
 
@@ -732,7 +999,7 @@ export default function ModerationPage() {
                   <CardContent className="space-y-4">
                     <div>
                       <h4 className="font-semibold mb-2">Reason</h4>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                         {request.reason}
                       </p>
                     </div>
@@ -756,16 +1023,37 @@ export default function ModerationPage() {
                     {request.reviewNotes && (
                       <div>
                         <h4 className="font-semibold mb-2">Review Notes</h4>
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                           {request.reviewNotes}
                         </p>
                       </div>
                     )}
 
                     {request.status === "pending" && (
-                      <div className="flex gap-2 pt-4 border-t flex-wrap">
+                      <>
+                        <div className="flex items-center justify-between gap-3 pt-4 border-t">
+                          <div className="space-y-0.5">
+                            <Label className="text-sm font-medium">Affect freelancer completion rate</Label>
+                            <p className="text-xs text-muted-foreground">
+                              On: this cancellation counts against the assigned freelancer(s) completion rate.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={affectCompletionRates[request.id] !== false}
+                            onCheckedChange={(checked) =>
+                              setAffectCompletionRates((prev) => ({ ...prev, [request.id]: checked }))
+                            }
+                            data-testid={`switch-affect-completion-${request.id}`}
+                          />
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
                         <Button
-                          onClick={() => approveRequestMutation.mutate(request.id)}
+                          onClick={() =>
+                            approveRequestMutation.mutate({
+                              requestId: request.id,
+                              affectCompletionRate: affectCompletionRates[request.id] !== false,
+                            })
+                          }
                           disabled={approveRequestMutation.isPending}
                           className="gap-2"
                           data-testid={`button-approve-request-${request.id}`}
@@ -793,7 +1081,18 @@ export default function ModerationPage() {
                           <FileText className="w-4 h-4" />
                           Request More Evidence
                         </Button>
-                      </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => createMeetingMutation.mutate(request.jobId)}
+                          disabled={createMeetingMutation.isPending}
+                          className="gap-2"
+                          data-testid={`button-meeting-request-${request.id}`}
+                        >
+                          <Gavel className="w-4 h-4" />
+                          Meeting
+                        </Button>
+                        </div>
+                      </>
                     )}
                   </CardContent>
                 </Card>
@@ -807,6 +1106,137 @@ export default function ModerationPage() {
                   <h3 className="text-lg font-semibold mb-2">No cancellation requests</h3>
                   <p className="text-muted-foreground">
                     All cancellation requests have been processed
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="abandon">
+          {abandonLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-48 w-full" />
+              ))}
+            </div>
+          ) : abandonRequests.length > 0 ? (
+            <div className="space-y-4">
+              {abandonRequests.map((request) => (
+                <Card key={request.id} className="border-2" data-testid={`card-abandon-${request.id}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex-1">
+                        <CardTitle className="mb-2">
+                          {request.jobTitle || "Unknown Job"}
+                        </CardTitle>
+                        <div className="flex gap-2 flex-wrap">
+                          <Badge variant="outline">
+                            By: {request.freelancerUsername || "Unknown"}
+                          </Badge>
+                          <Badge
+                            variant="secondary"
+                            className={
+                              request.status === "pending_moderator"
+                                ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
+                                : request.status === "approved"
+                                ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                                : request.status === "declined"
+                                ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                                : "bg-blue-500/10 text-blue-700 dark:text-blue-400"
+                            }
+                          >
+                            {request.status.replace("_", " ")}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                    <CardDescription className="mt-2">
+                      Submitted {request.createdAt ? formatDistanceToNow(new Date(request.createdAt), { addSuffix: true }) : "Unknown"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold mb-2">Reason</h4>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                        {request.reason}
+                      </p>
+                    </div>
+
+                    {request.links && request.links.trim() && (
+                      <div>
+                        <h4 className="font-semibold mb-2">Linked References</h4>
+                        <div className="flex flex-col gap-1.5">
+                          {request.links.split(/s+/).filter(Boolean).map((link: string, i: number) => {
+                            const href = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+                            return (
+                            <a
+                              key={i}
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary underline break-all inline-flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              {link}
+                            </a>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {request.proofUrl && (
+                      <div>
+                        <h4 className="font-semibold mb-2">Proof File</h4>
+                        <a
+                          href={request.proofUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary underline break-all inline-flex items-center gap-1"
+                          data-testid="link-abandon-proof-mod"
+                        >
+                          <FileText className="w-3 h-3" />
+                          View proof file
+                        </a>
+                      </div>
+                    )}
+
+                    {request.status === "pending_moderator" && (
+                      <div className="flex gap-2 flex-wrap pt-2 border-t">
+                        <Button
+                          onClick={() => abandonApproveMutation.mutate(request.id)}
+                          disabled={abandonApproveMutation.isPending}
+                          className="gap-2"
+                          data-testid={`button-approve-abandon-mod-${request.id}`}
+                        >
+                          <Check className="w-4 h-4" />
+                          Approve — excuse freelancer
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          onClick={() => abandonDeclineMutation.mutate(request.id)}
+                          disabled={abandonDeclineMutation.isPending}
+                          className="gap-2"
+                          data-testid={`button-decline-abandon-mod-${request.id}`}
+                        >
+                          <X className="w-4 h-4" />
+                          Decline — freelancer stays
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-12">
+                <div className="text-center">
+                  <LogOut className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">No abandon requests</h3>
+                  <p className="text-muted-foreground">
+                    Abandon requests appear here once a customer forwards them to moderation.
                   </p>
                 </div>
               </CardContent>
@@ -855,7 +1285,7 @@ export default function ModerationPage() {
                     {report.description && (
                       <div>
                         <h4 className="font-semibold mb-2">Additional Details</h4>
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                           {report.description}
                         </p>
                       </div>
@@ -1052,7 +1482,7 @@ export default function ModerationPage() {
                       {request.reason && (
                         <div className="sm:col-span-2">
                           <p className="text-sm font-medium text-muted-foreground">Reason</p>
-                          <p className="text-sm">{request.reason}</p>
+                          <p className="text-sm break-words">{request.reason}</p>
                         </div>
                       )}
                     </div>
@@ -1106,19 +1536,20 @@ export default function ModerationPage() {
                     </div>
                     <CardDescription className="mt-2">
                       Opened {formatDistanceToNow(new Date(dispute.createdAt), { addSuffix: true })}
-                      {dispute.openedByUsername && ` by ${dispute.openedByUsername}`}
+                      {dispute.openedByUsername && ` by ${dispute.openedByUsername}${dispute.openedByUserRole ? ` (${dispute.openedByUserRole === "customer" ? "Customer" : "Freelancer"})` : ""}`}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
                       <h4 className="font-semibold mb-2">Reason for Dispute</h4>
-                      <p className="text-sm text-muted-foreground">{dispute.reason}</p>
+                      <p className="text-sm font-medium">{dispute.category || "Other / Custom Issue"}</p>
+                      <DisputeDetails reason={dispute.reason} />
                     </div>
 
-                    {dispute.moderatorUsername && (
+                    {dispute.moderator && (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <User className="w-4 h-4" />
-                        <span>Assigned to: {dispute.moderatorUsername}</span>
+                        <span>Assigned to: {dispute.moderator.username}</span>
                       </div>
                     )}
 
@@ -1140,20 +1571,46 @@ export default function ModerationPage() {
                           {claimDisputeMutation.isPending ? "Claiming..." : "Claim Dispute"}
                         </Button>
                       )}
-                      {dispute.status === "in_progress" && (
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setSelectedDispute(dispute);
-                            setFreelancerAmount(dispute.jobBudget || "0");
-                            setCustomerRefund("0");
-                            setDisputeDialogOpen(true);
-                          }}
-                          data-testid={`button-resolve-dispute-${dispute.id}`}
-                        >
-                          <Gavel className="w-4 h-4 mr-1" />
-                          Resolve Dispute
-                        </Button>
+                      {dispute.status !== "open" && canManageDispute(dispute) && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => createMeetingMutation.mutate(dispute.jobId)}
+                            disabled={createMeetingMutation.isPending}
+                            data-testid={`button-meeting-dispute-${dispute.id}`}
+                          >
+                            <Gavel className="w-4 h-4 mr-1" />
+                            Meeting
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setSelectedDispute(dispute);
+                              setFreelancerAmount(dispute.jobBudget || "0");
+                              setCustomerRefund("0");
+                              setDisputeDialogOpen(true);
+                            }}
+                            data-testid={`button-resolve-dispute-${dispute.id}`}
+                          >
+                            <Gavel className="w-4 h-4 mr-1" />
+                            Resolve Dispute
+                          </Button>
+                        
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedDispute(dispute);
+                              setDisputeResolution("");
+                              setFreelancerAmount("0");
+                              setCustomerRefund("0");
+                              closeDisputeMutation.mutate({ disputeId: dispute.id, resolutionNotes: "Dispute closed without action — job continues as normal." });
+                            }}
+                            disabled={closeDisputeMutation.isPending}>
+                            <XCircle className="w-4 h-4 mr-1" />
+                            Close Dispute
+                          </Button></>
                       )}
                     </div>
                   </CardContent>
@@ -1268,6 +1725,22 @@ export default function ModerationPage() {
                       </div>
                     )}
 
+                    {request.user?.portfolio && (
+                      <div className="space-y-2">
+                        <p className="font-medium">Linked Portfolio (Profile):</p>
+                        <a
+                          href={request.user.portfolio}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline inline-flex items-center gap-1"
+                          data-testid={`link-profile-portfolio-${request.id}`}
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          {request.user.portfolio}
+                        </a>
+                      </div>
+                    )}
+
                     <p className="text-xs text-muted-foreground">
                       Submitted {formatEasternDateTime(request.createdAt)} (ET)
                     </p>
@@ -1364,7 +1837,7 @@ export default function ModerationPage() {
                       {bug.description && (
                         <div>
                           <h4 className="font-semibold mb-2">Bug Description</h4>
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                             {bug.description}
                           </p>
                         </div>
@@ -1373,7 +1846,7 @@ export default function ModerationPage() {
                       {bug.reviewNotes && (
                         <div>
                           <h4 className="font-semibold mb-2">Moderator Notes</h4>
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                             {bug.reviewNotes}
                           </p>
                         </div>
@@ -1744,10 +2217,29 @@ export default function ModerationPage() {
               />
             </div>
             {selectedDispute && (
-              <p className="text-sm text-muted-foreground">
-                Total: ${(parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0")).toFixed(2)} / ${selectedDispute.jobBudget || "0"}
-              </p>
+              <>
+                <p className={resolveTotalMatches ? "text-sm text-green-600 dark:text-green-400" : "text-sm text-red-600 dark:text-red-400"}>
+                  Total distributed: ${resolveTotal.toFixed(2)} / ${resolveBudget.toFixed(2)}
+                  {resolveTotalMatches ? " ✓" : ` — must total exactly $${resolveBudget.toFixed(2)}`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  The full budget must be distributed between the freelancer and customer. The freelancer's payout is reduced by the platform fee based on their level.
+                </p>
+              </>
             )}
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Affect freelancer completion rate</Label>
+                <p className="text-xs text-muted-foreground">
+                  On: this resolution counts against the assigned freelancer(s) completion rate.
+                </p>
+              </div>
+              <Switch
+                checked={affectCompletionRate}
+                onCheckedChange={setAffectCompletionRate}
+                data-testid="switch-dispute-affect-completion"
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="resolution">Resolution Notes</Label>
               <Textarea
@@ -1769,6 +2261,7 @@ export default function ModerationPage() {
                 setDisputeResolution("");
                 setFreelancerAmount("");
                 setCustomerRefund("");
+                setAffectCompletionRate(true);
               }}
               data-testid="button-cancel-resolve"
             >
@@ -1791,10 +2284,10 @@ export default function ModerationPage() {
                   return;
                 }
                 
-                if (freelancerAmt + customerAmt > budget) {
+                if (Math.abs(freelancerAmt + customerAmt - budget) > 0.001) {
                   toast({
-                    title: "Amounts exceed budget",
-                    description: `Total distribution cannot exceed the job budget of $${budget}.`,
+                    title: "Full amount must be distributed",
+                    description: `Freelancer amount + customer refund must total exactly $${budget.toFixed(2)}.`,
                     variant: "destructive",
                   });
                   return;
@@ -1805,9 +2298,10 @@ export default function ModerationPage() {
                   resolution: disputeResolution,
                   freelancerAmount: freelancerAmt.toString(),
                   customerRefund: customerAmt.toString(),
+                  affectCompletionRate,
                 });
               }}
-              disabled={!disputeResolution.trim() || resolveDisputeMutation.isPending}
+              disabled={!disputeResolution.trim() || !resolveTotalMatches || parseFloat(freelancerAmount || "0") < 0 || parseFloat(customerRefund || "0") < 0 || resolveDisputeMutation.isPending}
               data-testid="button-confirm-resolve"
             >
               {resolveDisputeMutation.isPending ? "Resolving..." : "Resolve Dispute"}

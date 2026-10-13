@@ -6,11 +6,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Gavel, ExternalLink, User, DollarSign, Clock, AlertTriangle, CheckCircle } from "lucide-react";
+import { Gavel, ExternalLink, User, DollarSign, Clock, AlertTriangle, CheckCircle, MessageSquare, UserMinus, XCircle, ChevronDown } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 
@@ -19,6 +20,7 @@ interface Dispute {
   jobId: string;
   status: string;
   reason: string;
+  category?: string | null;
   resolution: string | null;
   createdAt: string;
   resolvedAt: string | null;
@@ -29,14 +31,42 @@ interface Dispute {
   jobTitle?: string;
   jobBudget?: string;
   openedByUsername?: string;
+  openedByUserRole?: string | null;
   customerUsername?: string;
   freelancerUsername?: string;
   customerId?: string;
   freelancerId?: string;
 }
 
+
+function DisputeDetails({ reason }: { reason: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="text-xs font-medium text-primary hover:underline inline-flex items-center gap-1"
+        onClick={() => setOpen(o => !o)}
+        data-testid="button-dispute-details"
+      >
+        {open ? "Hide details" : "View details"}
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md mt-1.5 whitespace-pre-wrap break-words" data-testid="dispute-details-text">
+          {reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MyDisputesPage() {
+  // Whether resolving this dispute should count against the freelancer(s)
+  // completion rate. Defaults to ON (affect the rate).
+  const [affectCompletionRate, setAffectCompletionRate] = useState(true);
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [selectedDispute, setSelectedDispute] = useState<Dispute | null>(null);
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
   const [freelancerAmount, setFreelancerAmount] = useState("");
@@ -47,12 +77,57 @@ export default function MyDisputesPage() {
     queryKey: ["/api/disputes/mine"],
   });
 
+  const createMeetingMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest("POST", "/api/meetings", { jobId });
+      return res.json();
+    },
+    onSuccess: (meeting: any) => {
+      toast({ title: "Meeting opened", description: "A court-room meeting has been created for this job." });
+      if (meeting?.id) setLocation(`/meeting/${meeting.id}`);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not open meeting", description: error.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const relinquishDisputeMutation = useMutation({
+    mutationFn: async (disputeId: string) => {
+      const res = await apiRequest("POST", `/api/disputes/${disputeId}/relinquish`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Dispute relinquished", description: "The dispute has been returned to the moderation queue." });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not relinquish dispute", description: error.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const closeDisputeMutation = useMutation({
+    mutationFn: async (disputeId: string) => {
+      const res = await apiRequest("POST", `/api/disputes/${disputeId}/close`, { resolutionNotes: "Dispute closed without action — job continues as normal." });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Dispute closed", description: "The dispute has been closed. The job continues as normal." });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/disputes"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not close dispute", description: error.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
   const resolveDisputeMutation = useMutation({
-    mutationFn: async (data: { disputeId: string; resolution: string; freelancerAmount: string; customerRefund: string }) => {
+    mutationFn: async (data: { disputeId: string; resolution: string; freelancerAmount: string; customerRefund: string; affectCompletionRate: boolean }) => {
       const res = await apiRequest("POST", `/api/disputes/${data.disputeId}/resolve`, {
         resolutionNotes: data.resolution,
         freelancerAmount: parseFloat(data.freelancerAmount),
         customerRefund: parseFloat(data.customerRefund),
+        affectCompletionRate: data.affectCompletionRate,
       });
       return res.json();
     },
@@ -90,6 +165,10 @@ export default function MyDisputesPage() {
     );
   }
 
+  const resolveBudget = parseFloat(selectedDispute?.jobBudget || "0");
+  const resolveTotal = parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0");
+  const resolveTotalMatches = Math.abs(resolveTotal - resolveBudget) < 0.001;
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
@@ -116,7 +195,7 @@ export default function MyDisputesPage() {
                     <CardTitle className="mb-2">{dispute.jobTitle || "Dispute"}</CardTitle>
                     <CardDescription>
                       Opened {formatDistanceToNow(new Date(dispute.createdAt), { addSuffix: true })}
-                      {dispute.openedByUsername && ` by ${dispute.openedByUsername}`}
+                      {dispute.openedByUsername && ` by ${dispute.openedByUsername}${dispute.openedByUserRole ? ` (${dispute.openedByUserRole === "customer" ? "Customer" : "Freelancer"})` : ""}`}
                     </CardDescription>
                   </div>
                   <div className="flex gap-2 flex-wrap">
@@ -136,9 +215,8 @@ export default function MyDisputesPage() {
               <CardContent className="space-y-4">
                 <div>
                   <h4 className="font-semibold mb-2">Dispute Reason</h4>
-                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
-                    {dispute.reason}
-                  </p>
+                  <p className="text-sm font-medium">{dispute.category || "Other / Custom Issue"}</p>
+                  <DisputeDetails reason={dispute.reason} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 text-sm">
@@ -168,18 +246,47 @@ export default function MyDisputesPage() {
                     </Button>
                   </Link>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => createMeetingMutation.mutate(dispute.jobId)}
+                    disabled={createMeetingMutation.isPending}
+                    data-testid={`button-meeting-${dispute.id}`}
+                  >
+                    <MessageSquare className="w-4 h-4 mr-1" />
+                    Meeting
+                  </Button>
+                  <Button
                     size="sm"
                     onClick={() => {
                       setSelectedDispute(dispute);
                       setFreelancerAmount(dispute.jobBudget || "0");
                       setCustomerRefund("0");
                       setResolution("");
+                      setAffectCompletionRate(true);
                       setResolveDialogOpen(true);
                     }}
                     data-testid={`button-resolve-${dispute.id}`}
                   >
                     <Gavel className="w-4 h-4 mr-1" />
                     Resolve Dispute
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => relinquishDisputeMutation.mutate(dispute.id)}
+                    disabled={relinquishDisputeMutation.isPending}
+                    data-testid={`button-relinquish-${dispute.id}`}
+                  >
+                    <UserMinus className="w-4 h-4 mr-1" />
+                    Relinquish
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => closeDisputeMutation.mutate(dispute.id)}
+                    disabled={closeDisputeMutation.isPending}>
+                    <XCircle className="w-4 h-4 mr-1" />
+                    Close Dispute
                   </Button>
                 </div>
               </CardContent>
@@ -289,10 +396,29 @@ export default function MyDisputesPage() {
               />
             </div>
             {selectedDispute && (
-              <p className="text-sm text-muted-foreground">
-                Total: ${(parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0")).toFixed(2)} / ${selectedDispute.jobBudget || "0"}
-              </p>
+              <>
+                <p className={resolveTotalMatches ? "text-sm text-green-600 dark:text-green-400" : "text-sm text-red-600 dark:text-red-400"}>
+                  Total distributed: ${resolveTotal.toFixed(2)} / ${resolveBudget.toFixed(2)}
+                  {resolveTotalMatches ? " ✓" : ` — must total exactly $${resolveBudget.toFixed(2)}`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  The full budget must be distributed between the freelancer and customer. The freelancer's payout is reduced by the platform fee based on their level.
+                </p>
+              </>
             )}
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Affect freelancer completion rate</Label>
+                <p className="text-xs text-muted-foreground">
+                  On: this resolution counts against the assigned freelancer(s) completion rate.
+                </p>
+              </div>
+              <Switch
+                checked={affectCompletionRate}
+                onCheckedChange={setAffectCompletionRate}
+                data-testid="switch-affect-completion"
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="resolution">Resolution Notes</Label>
               <Textarea
@@ -336,10 +462,10 @@ export default function MyDisputesPage() {
                   return;
                 }
                 
-                if (freelancerAmt + customerAmt > budget) {
+                if (Math.abs(freelancerAmt + customerAmt - budget) > 0.001) {
                   toast({
-                    title: "Amounts exceed budget",
-                    description: `Total distribution cannot exceed the job budget of $${budget}.`,
+                    title: "Full amount must be distributed",
+                    description: `Freelancer amount + customer refund must total exactly $${budget.toFixed(2)}.`,
                     variant: "destructive",
                   });
                   return;
@@ -350,9 +476,10 @@ export default function MyDisputesPage() {
                   resolution,
                   freelancerAmount: freelancerAmt.toString(),
                   customerRefund: customerAmt.toString(),
+                  affectCompletionRate,
                 });
               }}
-              disabled={!resolution.trim() || resolveDisputeMutation.isPending}
+              disabled={!resolution.trim() || !resolveTotalMatches || parseFloat(freelancerAmount || "0") < 0 || parseFloat(customerRefund || "0") < 0 || resolveDisputeMutation.isPending}
               data-testid="button-confirm-resolve"
             >
               {resolveDisputeMutation.isPending ? "Resolving..." : "Resolve Dispute"}

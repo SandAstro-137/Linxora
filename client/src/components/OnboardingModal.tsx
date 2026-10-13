@@ -34,7 +34,7 @@ const moderatorSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Reviewing and approving new job posts</li>
           <li>Handling cancellation requests with fairness</li>
-          <li>Maintaining platform quality standards</li>
+          <li>Resolving disputes and moderating meetings</li>
         </ul>
       </div>
     ),
@@ -71,15 +71,30 @@ const moderatorSteps: OnboardingStep[] = [
     ),
   },
   {
-    title: "PTO Approvals",
-    description: "Manage freelancer paid time off requests.",
+    title: "Disputes & Meetings",
+    description: "Resolve disputes as a neutral mediator.",
     content: (
       <div className="space-y-4">
-        <p>Handling disputes properly:</p>
+        <p>When handling disputes:</p>
         <ul className="list-disc pl-6 space-y-2">
-          <li>Do not sway in favor of either side</li>
-          <li>Act as a neutral third party, you are the jury and judge, so do not abuse power</li>
-          <li>If they feel you are unfair and provide sufficient evidence, you may be let go</li>
+          <li>Claim a dispute in My Disputes before taking any action</li>
+          <li>Open a meeting so both sides can defend themselves</li>
+          <li>Do not sway in favor of either side - you are the jury and judge</li>
+          <li>Distribute the job budget fairly when closing a case</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "PTO",
+    description: "Request time off as a moderator.",
+    content: (
+      <div className="space-y-4">
+        <p>Moderators can request paid time off:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Submit requests from the PTO Requests page</li>
+          <li>The Head of Moderation reviews and approves them</li>
+          <li>Approved PTO appears on the team calendar</li>
         </ul>
       </div>
     ),
@@ -88,7 +103,7 @@ const moderatorSteps: OnboardingStep[] = [
 
 const freelancerSteps: OnboardingStep[] = [
   {
-    title: "Welcome to Linxora!",
+    title: "Welcome to Linxova!",
     description: "Start earning as a freelancer on our platform.",
     content: (
       <div className="space-y-4">
@@ -111,9 +126,9 @@ const freelancerSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Use search and filter to find jobs</li>
           <li>Click on jobs to see full details and budget</li>
-          <li>Click "Claim Job" if eligible</li>
-          <li><strong>One job at a time:</strong> Finish your current job before claiming another</li>
-          <li>Cancel jobs anytime but you'll need a good reason</li>
+          <li>Click "Apply for Job" - the customer will review your application</li>
+          <li><strong>One job at a time:</strong> Finish your current job before applying for another</li>
+          <li>Leaving a job counts against your completion rate, so only leave when necessary</li>
         </ul>
       </div>
     ),
@@ -127,7 +142,7 @@ const freelancerSteps: OnboardingStep[] = [
         <ul className="list-disc pl-6 space-y-2">
           <li>Click "Offer Team" to request to join</li>
           <li>Or invite friends to jobs you're working on</li>
-          <li>Profits split equally among all team members regardless of participation</li>
+          <li>Profit is split among team members, and each member's share depends on their level payout</li>
           <li>Collaborate in the Current Job tab on job details</li>
         </ul>
       </div>
@@ -141,8 +156,8 @@ const freelancerSteps: OnboardingStep[] = [
         <p>Set up your profile:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Go to Profile to set your working hours</li>
-          <li>Your level (1-5) determines payout percentage: Level 1 = 60%, Level 2 = 70%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%</li>
-          <li>Level up by completing more jobs successfully</li>
+          <li>Your level (1-8) determines payout percentage: Level 1 = 65%, Level 2 = 75%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%, Level 6 = 93%, Level 7 = 95%, Level 8 = 97%</li>
+          <li>Level up as your lifetime earnings grow ($20, $50, $100, $250, $450, $750, $1500)</li>
         </ul>
       </div>
     ),
@@ -173,9 +188,9 @@ const customerSteps: OnboardingStep[] = [
         <p>When creating a job:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Write a clear title and detailed description</li>
-          <li>Set a fair budget in USD</li>
+          <li>Set a fair budget in USD (minimum $5)</li>
           <li>Choose the appropriate category</li>
-          <li>Set a deadline (minimum 3 weeks out)</li>
+          <li>Set a required deadline (date and time in Eastern Time)</li>
         </ul>
         <p className="text-sm text-muted-foreground mt-4">
           Jobs must be approved by moderators before going live.
@@ -311,13 +326,13 @@ const headOfModerationSteps: OnboardingStep[] = [
 const founderSteps: OnboardingStep[] = [
   {
     title: "Welcome, Founder!",
-    description: "You have full administrative access to Linxora.",
+    description: "You have full administrative access to Linxova.",
     content: (
       <div className="space-y-4">
         <p>As the Founder, you can:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Access all platform features and data</li>
-          <li>Manage the moderation vault</li>
+          <li>Manage the moderation team vault and Company Vault</li>
           <li>Oversee all users, jobs, and transactions</li>
           <li>Make critical platform decisions</li>
         </ul>
@@ -335,6 +350,21 @@ const founderSteps: OnboardingStep[] = [
           <li>Pending moderation queue status</li>
           <li>Active disputes and escalations</li>
           <li>Platform revenue and growth metrics</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    title: "Company Vault",
+    description: "Monitor the platform's finances in real time.",
+    content: (
+      <div className="space-y-4">
+        <p>Your financial overview includes:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Funds held by customers, freelancers, and the company</li>
+          <li>Pending money and moderation team funds</li>
+          <li>Profit trends and forecasts</li>
+          <li>Deposits into the moderation team vault, limited to company funds</li>
         </ul>
       </div>
     ),

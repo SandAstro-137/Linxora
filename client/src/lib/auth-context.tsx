@@ -10,7 +10,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   suspensionInfo: SuspensionInfo | null;
-  login: (discordId?: string) => void;
+  login: (demoId: string) => Promise<void>;
   logout: () => void;
   refetchUser: () => Promise<void>;
   clearSuspension: () => void;
@@ -27,10 +27,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
+  // Keep presence fresh while a tab is open: heartbeat every minute.
+  useEffect(() => {
+    if (!user) return;
+    const ping = () => {
+      fetch("/api/heartbeat", { method: "POST", credentials: "include" }).catch(() => {});
+    };
+    ping();
+    const interval = setInterval(ping, 60000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   const checkAuth = async () => {
     try {
+      // no-store: profile edits (e.g. specialization) call refetchUser() right
+      // after saving; without this the browser can satisfy the request from its
+      // HTTP cache (304) and the UI keeps showing the old value until reload.
       const response = await fetch("/api/auth/me", {
         credentials: "include",
+        cache: "no-store",
       });
       if (response.ok) {
         const userData = await response.json();
@@ -60,19 +75,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (discordId?: string) => {
-    if (discordId) {
-      try {
+  const login = async (demoId: string) => {
+    try {
         const response = await fetch("/api/auth/dev-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discordId }),
+          body: JSON.stringify({ discordId: demoId }),
           credentials: "include",
         });
         if (response.ok) {
           const userData = await response.json();
           setUser(userData);
           setSuspensionInfo(null);
+          // Remember this tab's demo account so a second tab can log into a
+          // different account at the same time.
+          sessionStorage.setItem("demoUserId", demoId);
           window.location.href = "/dashboard";
         } else if (response.status === 403) {
           const data = await response.json();
@@ -87,9 +104,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error("Login failed:", error);
       }
-    } else {
-      window.location.href = "/api/auth/discord";
-    }
   };
 
   const logout = async () => {
@@ -98,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
       });
+      sessionStorage.removeItem("demoUserId");
       setUser(null);
       setSuspensionInfo(null);
       window.location.href = "/";

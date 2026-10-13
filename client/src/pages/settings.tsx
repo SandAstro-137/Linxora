@@ -762,24 +762,28 @@ export default function SettingsPage() {
               data-testid="switch-delete-confirmation"
             />
           </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="team-request-notifications">Team Request Notifications</Label>
-              <p className="text-sm text-muted-foreground">Receive notifications when someone requests to join your team</p>
-            </div>
-            <Switch
-              id="team-request-notifications"
-              checked={settings?.teamRequestNotificationsEnabled ?? true}
-              onCheckedChange={(checked) => toggleSetting("teamRequestNotificationsEnabled", checked)}
-              data-testid="switch-team-request-notifications"
-            />
-          </div>
+          {user?.role === "customer" && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="team-request-notifications">Team Request Notifications</Label>
+                  <p className="text-sm text-muted-foreground">Receive notifications when someone requests to join your team</p>
+                </div>
+                <Switch
+                  id="team-request-notifications"
+                  checked={settings?.teamRequestNotificationsEnabled ?? true}
+                  onCheckedChange={(checked) => toggleSetting("teamRequestNotificationsEnabled", checked)}
+                  data-testid="switch-team-request-notifications"
+                />
+              </div>
+            </>
+          )}
           <Separator />
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="spam-filter">Spam Filter</Label>
-              <p className="text-sm text-muted-foreground">Automatically move job application notifications to your Spam tab</p>
+              <p className="text-sm text-muted-foreground">Automatically move notifications about new messages from people you have never interacted with to your Spam tab</p>
             </div>
             <Switch
               id="spam-filter"
@@ -835,7 +839,7 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              <strong>Associates</strong> are people you share a job with or have exchanged messages with before.
+              <strong>Associates</strong> are people you aren't friends with but have interacted with: you've shared a job, previously exchanged direct messages, or you've both spoken in the same group chat.
               Moderators and staff can always message you regardless of this setting.
             </p>
           </div>

@@ -12,12 +12,15 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { MessageCircle, Send, Calendar, DollarSign, User, Briefcase, Users, ExternalLink } from "lucide-react";
 import { Link } from "wouter";
+import { formatEasternDateTime } from "@/lib/timezone";
 import type { Job, ChatMessage, TeamMessage } from "@shared/schema";
+import LeadershipVoteCard, { type ActiveLeadershipVote } from "@/components/LeadershipVoteCard";
 import { formatDistanceToNow } from "date-fns";
 
 type EnrichedJob = Job & {
   customerUsername?: string;
   customerDiscordId?: string;
+  customerAvatar?: string | null;
   collaboratorData?: Array<{
     id: string;
     username: string;
@@ -30,7 +33,28 @@ type EnrichedJob = Job & {
     amount: number;
     percentage: number;
   }>;
+  projectLeaderId?: string | null;
+  projectLeaderUsername?: string | null;
+  activeLeadershipVote?: ActiveLeadershipVote | null;
 };
+
+function formatJobStatus(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "Pending",
+    active: "Open",
+    pending_acceptance: "Open",
+    claimed: "Filled",
+    in_progress: "In Progress",
+    submitted: "Submitted",
+    awaiting_customer: "Awaiting Customer",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    dispute: "Dispute",
+    expired: "Expired",
+    rejected: "Rejected",
+  };
+  return labels[status] || status.replace(/_/g, " ").replace(/w/g, (c) => c.toUpperCase());
+}
 
 export default function CurrentJobPage() {
   const { user } = useAuth();
@@ -44,11 +68,12 @@ export default function CurrentJobPage() {
   // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
   const { data: freelancerJobs = [], isLoading: isLoadingJobs, isError, error } = useQuery<Job[]>({
     queryKey: ["/api/freelancer/jobs"],
+    refetchInterval: 10000, // Keep the active job + rewards current without a manual refresh
   });
 
 
   // Active job statuses - jobs that are currently being worked on
-  const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
+  const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer", "dispute"];
 
   // Find the current active job
   // The API already returns only jobs assigned to this user (primary, collaborator, or team member)
@@ -61,6 +86,7 @@ export default function CurrentJobPage() {
   const { data: enrichedJob } = useQuery<EnrichedJob>({
     queryKey: ["/api/jobs", currentJob?.id],
     enabled: !!currentJob?.id,
+    refetchInterval: 10000, // Keep the team list current when freelancers leave or are kicked
   });
 
   // Get chat messages
@@ -93,10 +119,6 @@ export default function CurrentJobPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", currentJob?.id, "chat"] });
       setMessage("");
-      toast({
-        title: "Message sent",
-        description: "Your message has been delivered",
-      });
     },
     onError: () => {
       toast({
@@ -236,7 +258,7 @@ export default function CurrentJobPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge data-testid={`badge-status-${currentJob.status}`}>
-                    {currentJob.status}
+                    {formatJobStatus(currentJob.status)}
                   </Badge>
                   <Link href={`/jobs/${currentJob.id}`}>
                     <Button variant="outline" size="sm" data-testid="button-view-job-details">
@@ -250,7 +272,7 @@ export default function CurrentJobPage() {
             <CardContent className="space-y-4">
               <div>
                 <h3 className="font-semibold mb-2">Description</h3>
-                <p className="text-muted-foreground" data-testid="text-job-description">
+                <p className="text-muted-foreground whitespace-pre-wrap break-words" data-testid="text-job-description">
                   {currentJob.description}
                 </p>
               </div>
@@ -258,7 +280,7 @@ export default function CurrentJobPage() {
               {currentJob.requirements && (
                 <div>
                   <h3 className="font-semibold mb-2">Requirements</h3>
-                  <p className="text-muted-foreground" data-testid="text-job-requirements">
+                  <p className="text-muted-foreground whitespace-pre-wrap break-words" data-testid="text-job-requirements">
                     {currentJob.requirements}
                   </p>
                 </div>
@@ -283,7 +305,7 @@ export default function CurrentJobPage() {
                     <div>
                       <p className="text-sm text-muted-foreground">Deadline</p>
                       <p className="font-semibold" data-testid="text-job-deadline">
-                        {new Date(currentJob.deadline).toLocaleDateString()}
+                        {formatEasternDateTime(currentJob.deadline)} (ET)
                       </p>
                     </div>
                   </div>
@@ -331,6 +353,16 @@ export default function CurrentJobPage() {
                     </div>
                   </div>
                 </>
+              )}
+
+              {enrichedJob && (
+                <LeadershipVoteCard
+                  job={enrichedJob}
+                  onChanged={() => {
+                    queryClient.invalidateQueries({ queryKey: [`/api/jobs`, currentJob?.id] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+                  }}
+                />
               )}
             </CardContent>
           </Card>
@@ -382,7 +414,7 @@ export default function CurrentJobPage() {
                                   : "bg-muted"
                               }`}
                             >
-                              <p className="text-sm">{msg.message}</p>
+                              <p className="text-sm break-words">{msg.message}</p>
                               <p className="text-xs opacity-70 mt-1">
                                 {formatDistanceToNow(new Date(msg.createdAt!), { addSuffix: true })}
                               </p>
@@ -448,7 +480,7 @@ export default function CurrentJobPage() {
                                 {!isSender && (
                                   <p className="text-xs font-medium mb-1">{senderInfo?.username || "Team Member"}</p>
                                 )}
-                                <p className="text-sm">{msg.content}</p>
+                                <p className="text-sm break-words">{msg.content}</p>
                                 <p className="text-xs opacity-70 mt-1">
                                   {formatDistanceToNow(new Date(msg.createdAt!), { addSuffix: true })}
                                 </p>
@@ -489,22 +521,19 @@ export default function CurrentJobPage() {
               <CardTitle className="text-lg">Customer</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center gap-3 mb-4">
-                <Avatar>
-                  <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${enrichedJob?.customerUsername}`} />
+              <Link href={`/user/${enrichedJob?.customerId}`} className="flex items-center gap-3 mb-4 group" data-testid="link-customer-profile">
+                <Avatar className="h-10 w-10 cursor-pointer">
+                  <AvatarImage src={enrichedJob?.customerAvatar || undefined} />
                   <AvatarFallback>
                     {enrichedJob?.customerUsername?.[0]?.toUpperCase() || "C"}
                   </AvatarFallback>
                 </Avatar>
-                <div>
-                  <p className="font-semibold" data-testid="text-customer-username">
+                <div className="min-w-0">
+                  <p className="font-semibold group-hover:underline" data-testid="text-customer-username">
                     {enrichedJob?.customerUsername || "Customer"}
                   </p>
-                  <p className="text-sm text-muted-foreground" data-testid="text-customer-discord">
-                    {enrichedJob?.customerDiscordId}
-                  </p>
                 </div>
-              </div>
+              </Link>
             </CardContent>
           </Card>
 
@@ -515,30 +544,40 @@ export default function CurrentJobPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {enrichedJob.collaboratorData.map((collab) => (
-                    <div
-                      key={collab.id}
-                      className="flex items-center gap-3"
-                      data-testid={`team-member-${collab.id}`}
-                    >
-                      <Link href={`/user/${collab.id}`}>
-                        <Avatar className="w-8 h-8 cursor-pointer">
-                          <AvatarImage src={collab.avatar || undefined} />
-                          <AvatarFallback>{collab.username[0].toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                      </Link>
-                      <div className="flex-1 min-w-0">
-                        <Link href={`/user/${collab.id}`} className="text-sm font-medium hover:underline truncate block">
-                          {collab.username}
+                  {enrichedJob.collaboratorData.map((collab) => {
+                    const isLeader = collab.id === (enrichedJob.projectLeaderId || enrichedJob.freelancerId);
+                    return (
+                      <div
+                        key={collab.id}
+                        className={`flex items-center gap-3 p-2 rounded-md ${
+                          isLeader ? "bg-muted/80 border-l-4 border-primary" : ""
+                        }`}
+                        data-testid={`team-member-${collab.id}`}
+                      >
+                        <Link href={`/user/${collab.id}`}>
+                          <Avatar className="w-8 h-8 cursor-pointer">
+                            <AvatarImage src={collab.avatar || undefined} />
+                            <AvatarFallback>{collab.username[0].toUpperCase()}</AvatarFallback>
+                          </Avatar>
                         </Link>
-                        {collab.specialization && (
-                          <p className="text-xs text-muted-foreground truncate">
-                            {collab.specialization}
-                          </p>
-                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Link href={`/user/${collab.id}`} className="text-sm font-medium hover:underline truncate block">
+                              {collab.username}
+                            </Link>
+                            {isLeader && (
+                              <Badge variant="secondary" className="text-xs shrink-0">Project Leader</Badge>
+                            )}
+                          </div>
+                          {collab.specialization && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {collab.specialization}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

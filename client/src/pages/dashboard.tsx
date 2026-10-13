@@ -1,5 +1,6 @@
 import { useAuth } from "@/lib/auth-context";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { StatsCard } from "@/components/stats-card";
 import { JobCard } from "@/components/job-card";
 import { Briefcase, DollarSign, TrendingUp, Users, Shield, CalendarDays, AlertCircle, UserCheck, Star, Award } from "lucide-react";
@@ -39,20 +40,37 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
 
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
+    refetchInterval: 10000, // Keep the stat cards current without a manual refresh
   });
 
   const { data: recentJobs, isLoading: jobsLoading } = useQuery<Job[]>({
     queryKey: ["/api/jobs/recent"],
+    enabled: user?.role === "customer",
+    refetchInterval: 10000, // Keep the recent-jobs list current
+  });
+
+  const { data: premiumJobs, isLoading: premiumJobsLoading } = useQuery<Job[]>({
+    queryKey: ["/api/jobs/available-premium"],
+    enabled: user?.role === "freelancer",
+    refetchInterval: 10000, // Keep the available-jobs list current
   });
 
   const { data: recommendations = [], isLoading: recommendationsLoading } = useQuery<RecommendedFreelancer[]>({
     queryKey: ["/api/freelancers/recommendations"],
     enabled: user?.role === "customer",
+    refetchInterval: 10000, // Keep the recommended-freelancers list current
   });
+
+  // Some stat cards (completed jobs, level, rating) read from the auth user,
+  // which only updates on login — poll it so those cards stay current too.
+  useEffect(() => {
+    const id = setInterval(() => { refetchUser(); }, 10000);
+    return () => clearInterval(id);
+  }, [refetchUser]);
 
   if (!user) return null;
 
@@ -73,7 +91,7 @@ export default function DashboardPage() {
         />
         <StatsCard
           title="Rating"
-          value={user.rating || "N/A"}
+          value={(user.totalRatings || 0) > 0 && user.rating ? user.rating : "N/A"}
           icon={Users}
           description="Average rating"
         />
@@ -90,21 +108,21 @@ export default function DashboardPage() {
           <CardTitle>Available Jobs</CardTitle>
         </CardHeader>
         <CardContent>
-          {jobsLoading ? (
+          {premiumJobsLoading ? (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-32 w-full" />
               ))}
             </div>
-          ) : recentJobs && recentJobs.length > 0 ? (
+          ) : premiumJobs && premiumJobs.length > 0 ? (
             <div className="grid gap-4 md:grid-cols-2">
-              {recentJobs.slice(0, 4).map((job) => (
+              {premiumJobs.slice(0, 4).map((job) => (
                 <JobCard key={job.id} job={job} />
               ))}
             </div>
           ) : (
             <p className="text-center text-muted-foreground py-8">
-              No jobs available at the moment
+              No premium jobs available at the moment
             </p>
           )}
         </CardContent>

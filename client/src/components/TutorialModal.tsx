@@ -5,17 +5,19 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, Briefcase, Wallet, Star, Shield, Clock, Users, Bell } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { LEVEL_PAYOUTS, LEVEL_EARNINGS_THRESHOLDS } from "@shared/schema";
 
 interface TutorialSlide {
   title: string;
   description: string;
   icon: typeof Briefcase;
   tips: string[];
+  table?: { headers: string[]; rows: (string | number)[][] };
 }
 
 const freelancerSlides: TutorialSlide[] = [
   {
-    title: "Welcome to Linxora",
+    title: "Welcome to Linxova",
     description: "Your professional freelance marketplace. Let's get you started with the key features.",
     icon: Star,
     tips: [
@@ -26,12 +28,12 @@ const freelancerSlides: TutorialSlide[] = [
   },
   {
     title: "Finding Jobs",
-    description: "Browse available jobs and claim the ones that match your skills.",
+    description: "Browse available jobs and apply for the ones that match your skills.",
     icon: Briefcase,
     tips: [
       "Use the search bar to find specific job types",
       "Filter by budget range to find well-paying gigs",
-      "Check job deadlines before claiming"
+      "Apply to jobs and the customer will review your application"
     ]
   },
   {
@@ -40,8 +42,9 @@ const freelancerSlides: TutorialSlide[] = [
     icon: Users,
     tips: [
       "You can only work on one job at a time",
-      "Invite team members for larger projects",
-      "Use team chat for real-time communication"
+      "The first freelancer accepted becomes the Project Leader",
+      "Invite team members and use team chat for larger projects",
+      "Leaving a job counts against your completion rate"
     ]
   },
   {
@@ -60,25 +63,42 @@ const freelancerSlides: TutorialSlide[] = [
     icon: Clock,
     tips: [
       "Configure working hours from your profile",
-      "Request PTO up to 3 weeks in advance",
       "All times displayed in Eastern Time (ET)"
     ]
   },
   {
     title: "Growing Your Career",
-    description: "Level up by completing jobs and earning great ratings.",
+    description: "Level up as your lifetime earnings grow.",
     icon: Star,
     tips: [
-      "Complete 5 jobs to reach Level 2",
+      "Earn $20 to reach Level 2",
       "Higher levels unlock more opportunities",
       "Apply to become a Moderator at level 5 "
+    ]
+  },
+  {
+    title: "Levels, Rates & Net Profit",
+    description: "Each level keeps a bigger share of every job. Levels are based on your lifetime net earnings.",
+    icon: Star,
+    table: {
+      headers: ["Level", "Rate", "Net Profit Needed"],
+      rows: Object.entries(LEVEL_PAYOUTS).map(([level, rate]) => [
+        `Level ${level}`,
+        `${Math.round(rate * 100)}%`,
+        `$${LEVEL_EARNINGS_THRESHOLDS[Number(level) - 1].toLocaleString()}`,
+      ]),
+    },
+    tips: [
+      "Rate = your share of the job budget (the rest covers platform costs)",
+      "Net Profit Needed = lifetime net earnings to unlock that level",
+      "Your progress updates automatically as jobs complete"
     ]
   }
 ];
 
 const customerSlides: TutorialSlide[] = [
   {
-    title: "Welcome to Linxora",
+    title: "Welcome to Linxova",
     description: "Post jobs and find talented freelancers for your projects.",
     icon: Star,
     tips: [
@@ -151,6 +171,17 @@ const moderatorSlides: TutorialSlide[] = [
     ]
   },
   {
+    title: "Cancellations & Disputes",
+    description: "Resolve cancellation requests and disputes fairly.",
+    icon: Shield,
+    tips: [
+      "Review cancellation requests in the Moderation Queue",
+      "Claim a dispute before taking any action on it",
+      "Open a meeting to mediate between customer and freelancer",
+      "Stay neutral - you are the jury and judge"
+    ]
+  },
+  {
     title: "Role Upgrade Reviews",
     description: "Review applications from users wanting to upgrade their roles.",
     icon: Users,
@@ -190,6 +221,7 @@ const headOfModerationSlides: TutorialSlide[] = [
     tips: [
       "Assign tasks to moderators",
       "Schedule team meetings and check-ins",
+      "Use the shared Team Calendar for events and PTO approvals",
       "Monitor team performance and workload"
     ]
   },
@@ -235,6 +267,40 @@ const headOfModerationSlides: TutorialSlide[] = [
   }
 ];
 
+const founderSlides: TutorialSlide[] = [
+  {
+    title: "Welcome Founder",
+    description: "You have full administrative access to Linxova.",
+    icon: Shield,
+    tips: [
+      "Manage users, jobs, and platform settings from the Admin Panel",
+      "Monitor all platform activity from the dashboard",
+      "Oversee the moderation team"
+    ]
+  },
+  {
+    title: "Company Vault",
+    description: "Monitor every dollar flowing through the platform.",
+    icon: Wallet,
+    tips: [
+      "View funds held by customers, freelancers, and the company",
+      "Track pending money and moderation team funds",
+      "Add funds to the moderation team vault from company funds",
+      "Review profit trends and forecasts"
+    ]
+  },
+  {
+    title: "Team Room",
+    description: "Collaborate in real-time with your moderation team.",
+    icon: Users,
+    tips: [
+      "Use team chat and voice calls",
+      "Join or start calls alongside your team",
+      "Close a call only when it needs to end for everyone"
+    ]
+  }
+];
+
 interface TutorialModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -245,9 +311,8 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const getSlides = (): TutorialSlide[] | null => {
-    // Founder doesn't need onboarding tutorial
     if (user?.role === "founder") {
-      return null;
+      return founderSlides;
     }
     if (user?.role === "head_of_moderation") {
       return headOfModerationSlides;
@@ -271,10 +336,12 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
     return null;
   }
   
-  const slide = slides[currentSlide];
-  const progress = ((currentSlide + 1) / slides.length) * 100;
-  const isLastSlide = currentSlide === slides.length - 1;
-  const isFirstSlide = currentSlide === 0;
+  // Clamp the index so out-of-range state (e.g. from rapid clicking) can never crash the modal.
+  const safeSlideIndex = Math.min(Math.max(currentSlide, 0), slides.length - 1);
+  const slide = slides[safeSlideIndex];
+  const progress = ((safeSlideIndex + 1) / slides.length) * 100;
+  const isLastSlide = safeSlideIndex === slides.length - 1;
+  const isFirstSlide = safeSlideIndex === 0;
 
   const handleNext = () => {
     if (isLastSlide) {
@@ -317,6 +384,32 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
         </DialogHeader>
 
         <div className="py-4">
+          {slide.table && (
+            <div className="mb-4 overflow-x-auto" data-testid="table-levels">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr>
+                    {slide.table.headers.map((header, i) => (
+                      <th key={i} className={`px-2 py-1.5 border-b text-muted-foreground font-medium ${i === 0 ? "text-left" : "text-right"}`}>
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {slide.table.rows.map((row, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      {row.map((cell, j) => (
+                        <td key={j} className={`px-2 py-1.5 ${j === 0 ? "text-left font-medium" : "text-right tabular-nums"}`}>
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <h4 className="text-sm font-medium mb-3 text-muted-foreground">Quick Tips:</h4>
           <ul className="space-y-2">
             {slide.tips.map((tip, index) => (

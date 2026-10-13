@@ -16,10 +16,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, DollarSign, Clock, User, Users, UserPlus, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase, Send, Link, AlertTriangle, CheckCircle2, Gavel } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, User, Users, UserPlus, Calendar, XCircle, Upload, FileText, CheckSquare, MessageSquare, Plus, Trash2, Edit2, Check, X, Star, Flag, Briefcase, Send, Link, AlertTriangle, CheckCircle2, Gavel, LogOut } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ReportDialog } from "@/components/ReportDialog";
+import LeadershipVoteCard, { type ActiveLeadershipVote } from "@/components/LeadershipVoteCard";
 import { formatDistanceToNow } from "date-fns";
-import { formatEasternDate, TIMEZONE_LABEL } from "@/lib/timezone";
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import { formatEasternDateTime, TIMEZONE, TIMEZONE_LABEL } from "@/lib/timezone";
 import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -36,6 +39,8 @@ interface EnrichedJob {
   deadline: Date | null;
   status: string;
   freelancerId: string | null;
+  projectLeaderId?: string | null;
+  projectLeaderUsername?: string | null;
   collaborators: string[] | null;
   isLocked?: boolean;
   autoCompleteAt?: Date | null;
@@ -53,6 +58,7 @@ interface EnrichedJob {
     amount: string;
   }>;
   teamMemberIds?: string[];
+  activeLeadershipVote?: ActiveLeadershipVote | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -105,6 +111,7 @@ interface JobRequestWithFreelancer {
     rating: string;
     completedJobs: number;
     completionPercentage: string;
+    portfolio: string | null;
   } | null;
 }
 
@@ -127,12 +134,39 @@ interface TeamMemberInfo {
   avatar?: string | null;
 }
 
+const CUSTOMER_DISPUTE_REASONS = [
+  "Freelancer stopped working or disappeared",
+  "Work quality is below what was agreed",
+  "Missed the agreed deadline",
+  "Freelancer asking for extra pay not in the job",
+  "Work was changed without my approval",
+  "Freelancer submitted stolen or copied work",
+  "Freelancer shared my project details with others",
+  "Freelancer broke the job agreement",
+  "Other / Custom Issue",
+];
+
+const FREELANCER_DISPUTE_REASONS = [
+  "Customer demanding work outside the original job",
+  "Customer refusing to pay or release funds",
+  "Customer unresponsive or won't communicate",
+  "Customer behaving inappropriately",
+  "Customer provided false job details",
+  "Customer threatened bad review or retaliation",
+  "Customer broke the job agreement",
+  "Other / Custom Issue",
+];
+
+const DISPUTE_REASON_PRESETS = [...CUSTOMER_DISPUTE_REASONS, ...FREELANCER_DISPUTE_REASONS];
+
 function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isCustomer: boolean; job: EnrichedJob }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [newMessage, setNewMessage] = useState("");
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesBoxRef = useRef<HTMLDivElement>(null);
+  const prevPartnerRef = useRef<string>("");
 
   // For customers: get all team members to choose from
   // For freelancers: the partner is always the customer
@@ -181,8 +215,16 @@ function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isC
   });
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const partnerChanged = prevPartnerRef.current !== partnerId;
+    prevPartnerRef.current = partnerId;
+    // Don't scroll when switching conversation partners - only when new messages
+    // arrive in the conversation you are already viewing.
+    if (partnerChanged) return;
+    const box = messagesBoxRef.current;
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [messages, partnerId]);
 
   const selectedPartnerName = isCustomer 
     ? teamMembers.find(m => m.id === selectedPartnerId)?.username || "Team Member"
@@ -219,7 +261,7 @@ function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isC
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="h-64 overflow-y-auto space-y-3 border rounded-md p-3">
+        <div ref={messagesBoxRef} className="h-64 overflow-y-auto space-y-3 border rounded-md p-3">
           {isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-12 w-full" />
@@ -303,19 +345,28 @@ function CustomerFreelancerChat({ jobId, isCustomer, job }: { jobId: string; isC
   );
 }
 
-function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: boolean }) {
+function JobRequestsViewer({ jobId, isJobOwner, isLeadFreelancer = false, jobStatus = "active" }: { jobId: string; isJobOwner: boolean; isLeadFreelancer?: boolean; jobStatus?: string }) {
   const { toast } = useToast();
   const [sortBy, setSortBy] = useState<"date" | "level" | "rating" | "jobs">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
+  // For taken jobs (claimed / in_progress), the queue holds team join requests
+  // handled via the join-requests endpoints; for active jobs it holds regular
+  // applications handled via approve/reject-freelancer.
+  const isJoinFlow = jobStatus === "claimed" || jobStatus === "in_progress";
+  const viewerTitle = isJoinFlow ? "Team Join Requests" : "Freelancer Applications";
+
   const { data: requests = [], isLoading } = useQuery<JobRequestWithFreelancer[]>({
     queryKey: ["/api/jobs", jobId, "requests"],
-    enabled: !!jobId && isJobOwner,
+    enabled: !!jobId && (isJobOwner || isLeadFreelancer),
+    refetchInterval: 5000, // New join requests appear without a manual refresh
   });
 
   const approveFreelancerMutation = useMutation({
-    mutationFn: (freelancerId: string) => 
-      apiRequest("POST", `/api/jobs/${jobId}/approve-freelancer`, { freelancerId }),
+    mutationFn: (request: { id: string; freelancerId: string }) =>
+      isJoinFlow
+        ? apiRequest("POST", `/api/jobs/${jobId}/join-requests/${request.id}/approve`, {})
+        : apiRequest("POST", `/api/jobs/${jobId}/approve-freelancer`, { freelancerId: request.freelancerId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "requests"] });
@@ -323,13 +374,13 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
       queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       toast({
-        title: "Freelancer approved!",
-        description: "The freelancer has been assigned to your job.",
+        title: isJoinFlow ? "Freelancer joined the team!" : "Freelancer approved!",
+        description: isJoinFlow ? "The freelancer has been added to your team." : "The freelancer has been assigned to your job.",
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Failed to approve freelancer",
+        title: isJoinFlow ? "Failed to approve join request" : "Failed to approve freelancer",
         description: error.message || "Please try again later.",
         variant: "destructive",
       });
@@ -337,18 +388,20 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
   });
 
   const rejectFreelancerMutation = useMutation({
-    mutationFn: (freelancerId: string) => 
-      apiRequest("POST", `/api/jobs/${jobId}/reject-freelancer`, { freelancerId }),
+    mutationFn: (request: { id: string; freelancerId: string }) =>
+      isJoinFlow
+        ? apiRequest("POST", `/api/jobs/${jobId}/join-requests/${request.id}/decline`, {})
+        : apiRequest("POST", `/api/jobs/${jobId}/reject-freelancer`, { freelancerId: request.freelancerId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "requests"] });
       toast({
-        title: "Application declined",
+        title: isJoinFlow ? "Join request declined" : "Application declined",
         description: "The freelancer has been notified.",
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Failed to decline application",
+        title: isJoinFlow ? "Failed to decline join request" : "Failed to decline application",
         description: error.message || "Please try again later.",
         variant: "destructive",
       });
@@ -385,7 +438,7 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Freelancer Applications</CardTitle>
+          <CardTitle>{viewerTitle}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-3">
@@ -403,7 +456,7 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Users className="w-5 h-5" />
-            Freelancer Applications
+            {viewerTitle}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -421,7 +474,7 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
         <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="flex items-center gap-2">
             <Users className="w-5 h-5" />
-            Freelancer Applications ({pendingRequests.length})
+            {viewerTitle} ({pendingRequests.length})
           </CardTitle>
           <div className="flex items-center gap-2">
             <select
@@ -454,15 +507,23 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
             data-testid={`job-request-${request.id}`}
           >
             <div className="flex items-center gap-4">
-              <Avatar className="h-12 w-12">
-                <AvatarImage src={request.freelancer?.avatar || undefined} />
-                <AvatarFallback>
-                  {request.freelancer?.username?.charAt(0).toUpperCase() || "?"}
-                </AvatarFallback>
-              </Avatar>
+              <RouterLink href={`/user/${request.freelancerId}`}>
+                <Avatar className="h-12 w-12 cursor-pointer hover:opacity-80">
+                  <AvatarImage src={request.freelancer?.avatar || undefined} />
+                  <AvatarFallback>
+                    {request.freelancer?.username?.charAt(0).toUpperCase() || "?"}
+                  </AvatarFallback>
+                </Avatar>
+              </RouterLink>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="font-medium">{request.freelancer?.username || "Unknown"}</p>
+                  <RouterLink
+                    href={`/user/${request.freelancerId}`}
+                    className="font-medium hover:underline"
+                    data-testid={`link-applicant-${request.freelancerId}`}
+                  >
+                    {request.freelancer?.username || "Unknown"}
+                  </RouterLink>
                   <Badge variant="secondary" className="text-xs">
                     Level {request.freelancer?.level || 1}
                   </Badge>
@@ -470,7 +531,9 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Star className="w-3 h-3" />
-                    {parseFloat(request.freelancer?.rating || "0").toFixed(1)}
+                    {parseFloat(request.freelancer?.rating || "0") > 0
+                      ? parseFloat(request.freelancer?.rating || "0").toFixed(1)
+                      : "N/A"}
                   </span>
                   <span>{request.freelancer?.completedJobs || 0} jobs</span>
                   <span>
@@ -478,16 +541,28 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
                   </span>
                 </div>
                 {request.message && (
-                  <p className="text-sm mt-1 text-muted-foreground italic">
+                  <p className="text-sm mt-1 text-muted-foreground italic break-words">
                     "{request.message}"
                   </p>
+                )}
+                {request.freelancer?.portfolio && (
+                  <a
+                    href={request.freelancer.portfolio}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm mt-1 text-primary hover:underline inline-flex items-center gap-1"
+                    data-testid={`link-portfolio-${request.freelancerId}`}
+                  >
+                    <Link className="w-3 h-3" />
+                    Portfolio
+                  </a>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                onClick={() => approveFreelancerMutation.mutate(request.freelancerId)}
+                onClick={() => approveFreelancerMutation.mutate({ id: request.id, freelancerId: request.freelancerId })}
                 disabled={approveFreelancerMutation.isPending || rejectFreelancerMutation.isPending}
                 data-testid={`button-approve-${request.freelancerId}`}
               >
@@ -497,7 +572,7 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => rejectFreelancerMutation.mutate(request.freelancerId)}
+                onClick={() => rejectFreelancerMutation.mutate({ id: request.id, freelancerId: request.freelancerId })}
                 disabled={approveFreelancerMutation.isPending || rejectFreelancerMutation.isPending}
                 data-testid={`button-reject-${request.freelancerId}`}
               >
@@ -513,8 +588,9 @@ function JobRequestsViewer({ jobId, isJobOwner }: { jobId: string; isJobOwner: b
 }
 
 function PublicTeamViewer({ job, isCustomer }: { job: EnrichedJob; isCustomer?: boolean }) {
-  const leadFreelancer = job.collaboratorData?.find(c => c.id === job.freelancerId);
-  const otherCollaborators = job.collaboratorData?.filter(c => c.id !== job.freelancerId) || [];
+  const leaderId = job.projectLeaderId || job.freelancerId;
+  const leadFreelancer = job.collaboratorData?.find(c => c.id === leaderId);
+  const otherCollaborators = job.collaboratorData?.filter(c => c.id !== leaderId) || [];
 
   return (
     <Card>
@@ -547,7 +623,7 @@ function PublicTeamViewer({ job, isCustomer }: { job: EnrichedJob; isCustomer?: 
                     <RouterLink href={`/user/${leadFreelancer.id}`} className="font-medium hover:underline">
                       {leadFreelancer.username}
                     </RouterLink>
-                    <div><Badge variant="secondary" className="text-xs">Lead Freelancer</Badge></div>
+                    <div><Badge variant="secondary" className="text-xs">Project Leader</Badge></div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -628,10 +704,12 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
 
   const { data: notes = [], isLoading: notesLoading } = useQuery<TeamNote[]>({
     queryKey: ["/api/team-notes", jobId],
+    refetchInterval: 5000,
   });
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<TeamTask[]>({
     queryKey: ["/api/team-tasks", jobId],
+    refetchInterval: 5000,
   });
 
   const { data: messages = [], isLoading: messagesLoading } = useQuery<TeamMessage[]>({
@@ -732,18 +810,24 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
             <Textarea
               placeholder="Add a note for the team..."
               value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
+              onChange={(e) => setNewNote(e.target.value.slice(0, 125))}
+              maxLength={125}
               data-testid="textarea-new-note"
             />
-            <Button
-              onClick={() => createNoteMutation.mutate(newNote)}
-              disabled={!newNote.trim() || createNoteMutation.isPending}
-              size="sm"
-              data-testid="button-create-note"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add Note
-            </Button>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground" data-testid="new-note-count">
+                {newNote.length}/125
+              </span>
+              <Button
+                onClick={() => createNoteMutation.mutate(newNote)}
+                disabled={!newNote.trim() || createNoteMutation.isPending}
+                size="sm"
+                data-testid="button-create-note"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add Note
+              </Button>
+            </div>
           </div>
 
           {notesLoading ? (
@@ -767,10 +851,15 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                     <div className="space-y-2">
                       <Textarea
                         value={editingNoteContent}
-                        onChange={(e) => setEditingNoteContent(e.target.value)}
+                        onChange={(e) => setEditingNoteContent(e.target.value.slice(0, 125))}
+                        maxLength={125}
                         data-testid="textarea-edit-note"
                       />
-                      <div className="flex gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground" data-testid="edit-note-count">
+                          {editingNoteContent.length}/125
+                        </span>
+                        <div className="flex gap-2">
                         <Button
                           size="sm"
                           onClick={() => {
@@ -794,11 +883,12 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                           <X className="w-4 h-4 mr-1" />
                           Cancel
                         </Button>
+                        </div>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                      <p className="text-sm whitespace-pre-wrap break-words">{note.content}</p>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>
                           {note.authorUsername} •{" "}
@@ -923,9 +1013,9 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                       <div className="w-4 h-4 border-2 rounded" />
                     )}
                   </Button>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p
-                      className={`font-medium ${
+                      className={`font-medium break-words ${
                         task.status === "done" ? "line-through text-muted-foreground" : ""
                       }`}
                     >
@@ -1025,7 +1115,7 @@ function TeamCollaboration({ jobId }: { jobId: string }) {
                         })}
                       </span>
                     </div>
-                    <p className="text-sm">{message.content}</p>
+                    <p className="text-sm break-words">{message.content}</p>
                   </div>
                   {message.senderId === user?.id && (
                     <Button
@@ -1083,7 +1173,7 @@ interface JobSubmission {
 export default function JobDetailPage() {
   const [, params] = useRoute("/jobs/:id");
   const [, setLocation] = useLocation();
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const [userIdInput, setUserIdInput] = useState("");
   const [selectedUser, setSelectedUser] = useState<any>(null);
@@ -1095,11 +1185,22 @@ export default function JobDetailPage() {
   const [ratingScore, setRatingScore] = useState(0);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [ratingReview, setRatingReview] = useState("");
+  const [isCustomerRatingDialogOpen, setIsCustomerRatingDialogOpen] = useState(false);
+  const [customerRatingScore, setCustomerRatingScore] = useState(0);
+  const [customerRatingReview, setCustomerRatingReview] = useState("");
+  const [ratingTargetId, setRatingTargetId] = useState<string | null>(null);
   const [isSubmitWorkDialogOpen, setIsSubmitWorkDialogOpen] = useState(false);
+  const [isAcceptConfirmOpen, setIsAcceptConfirmOpen] = useState(false);
   const [workProofLinks, setWorkProofLinks] = useState<string[]>([""]);
   const [workNotes, setWorkNotes] = useState("");
   const [isDisputeDialogOpen, setIsDisputeDialogOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
+  const [disputeCategory, setDisputeCategory] = useState("");
+  const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
+  const [abandonSkipConfirm, setAbandonSkipConfirm] = useState(false);
+  const [abandonReasonOpen, setAbandonReasonOpen] = useState(false);
+  const [abandonReason, setAbandonReason] = useState("");
+  const [abandonProofFile, setAbandonProofFile] = useState<File | null>(null);
 
   const cancellationFormSchema = z.object({
     reason: z.string().min(10, "Reason must be at least 10 characters"),
@@ -1117,6 +1218,13 @@ export default function JobDetailPage() {
   const { data: job, isLoading } = useQuery<EnrichedJob>({
     queryKey: ["/api/jobs", jobId],
     enabled: !!jobId,
+    refetchInterval: 5000, // Keep the team list / actions current when freelancers leave or are kicked
+  });
+
+  const { data: abandonRequests = [] } = useQuery<any[]>({
+    queryKey: ["/api/abandon-requests/job", jobId],
+    enabled: !!jobId,
+    refetchInterval: 5000, // Clear resolved abandon requests without a manual refresh
   });
 
   // Fetch customer statistics
@@ -1152,10 +1260,20 @@ export default function JobDetailPage() {
     retry: false,
   });
 
-  const { data: existingRating } = useQuery<any>({
-    queryKey: ["/api/jobs", jobId, "rating"],
+  const { data: existingRatings = [] } = useQuery<any[]>({
+    queryKey: ["/api/jobs", jobId, "ratings"],
     queryFn: async () => {
-      const response = await fetch(`/api/jobs/${jobId}/rating`, { credentials: "include" });
+      const response = await fetch(`/api/jobs/${jobId}/ratings`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch ratings");
+      return response.json();
+    },
+    enabled: !!jobId && job?.status === "completed",
+  });
+
+  const { data: existingCustomerRating } = useQuery<any>({
+    queryKey: ["/api/jobs", jobId, "customer-rating"],
+    queryFn: async () => {
+      const response = await fetch(`/api/jobs/${jobId}/customer-rating`, { credentials: "include" });
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("Failed to fetch rating");
       return response.json();
@@ -1195,6 +1313,228 @@ export default function JobDetailPage() {
     },
   });
 
+  const abandonRequestMutation = useMutation({
+    mutationFn: async ({ reason, proofUrl }: { reason: string; proofUrl?: string }) => {
+      let uploadedUrl: string | null = null;
+      if (abandonProofFile) {
+        const reader = new FileReader();
+        const fileData = await new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(abandonProofFile);
+        });
+        const uploadRes = await apiRequest("POST", "/api/uploads", {
+          fileName: abandonProofFile.name,
+          fileData,
+        });
+        const uploadBody = (await uploadRes.json()) as { url: string };
+        uploadedUrl = uploadBody.url;
+      }
+      return apiRequest("POST", `/api/jobs/${jobId}/abandon-request`, {
+        reason,
+        proofUrl: uploadedUrl || proofUrl || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
+      setAbandonReasonOpen(false);
+      setAbandonReason("");
+      setAbandonProofFile(null);
+      toast({
+        title: "Abandon request sent",
+        description: "The customer has been asked to approve your request. You stay on the job until it is approved.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not send abandon request",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const customerApproveAbandonMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/customer-approve`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      toast({
+        title: "Abandon request approved",
+        description: "The freelancer has been excused from the job.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not approve request",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // ── Deadline lifecycle state + mutations ──
+  const [extendOpen, setExtendOpen] = useState(false);
+  const [extendDeadline, setExtendDeadline] = useState("");
+  const [remarketOpen, setRemarketOpen] = useState(false);
+  const [rmTitle, setRmTitle] = useState("");
+  const [rmDescription, setRmDescription] = useState("");
+  const [rmBudget, setRmBudget] = useState("");
+  const [rmRequirements, setRmRequirements] = useState("");
+  const [rmDeadline, setRmDeadline] = useState("");
+  const [endOpen, setEndOpen] = useState(false);
+  const [endResponseOpen, setEndResponseOpen] = useState(false);
+  const [endResponseDone, setEndResponseDone] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const refreshJobQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+    refetchUser && refetchUser();
+  };
+
+  const extendDeadlineMutation = useMutation({
+    mutationFn: (deadline: string) =>
+      apiRequest("POST", `/api/jobs/${jobId}/deadline-extend`, {
+        deadline: fromZonedTime(deadline, TIMEZONE).toISOString(),
+      }),
+    onSuccess: () => {
+      refreshJobQueries();
+      setExtendOpen(false);
+      setExtendDeadline("");
+      toast({ title: "Deadline extended", description: "Reminders will adjust to the new deadline." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not extend deadline",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const remarketMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/jobs/${jobId}/remarket`, {
+        title: rmTitle,
+        description: rmDescription,
+        budget: rmBudget,
+        requirements: rmRequirements || undefined,
+        deadline: fromZonedTime(rmDeadline, TIMEZONE).toISOString(),
+      }),
+    onSuccess: () => {
+      refreshJobQueries();
+      setRemarketOpen(false);
+      toast({ title: "Job back on the market", description: "The job is now open for new applications." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not relist job",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const endJobMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/end`, {}),
+    onSuccess: () => {
+      refreshJobQueries();
+      setEndOpen(false);
+      toast({ title: "Job ended", description: "You will be refunded and the freelancer will be asked whether the work was completed." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not end job",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteJobMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/jobs/${jobId}`, {}),
+    onSuccess: () => {
+      refreshJobQueries();
+      setDeleteOpen(false);
+      setLocation(`/my-jobs`);
+      toast({ title: "Job deleted", description: "The job was removed and the budget refunded to your wallet." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not delete job",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const endResponseMutation = useMutation({
+    mutationFn: (completed: boolean) =>
+      apiRequest("POST", `/api/jobs/${jobId}/end-response`, { completed }),
+    onSuccess: (_data, completed) => {
+      refreshJobQueries();
+      setEndResponseDone(true);
+      toast({
+        title: completed ? "Response recorded" : "Job closed",
+        description: completed
+          ? "A dispute has been opened for a moderator to decide."
+          : "Thanks for confirming. The job has been closed.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not record response",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const customerDeclineAbandonMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/customer-decline`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
+      toast({
+        title: "Request forwarded to moderation",
+        description: "The abandon request has been sent to the moderation queue for review.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not decline request",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAbandonClick = () => {
+    if (localStorage.getItem("linxova-skip-abandon-confirm") === "true") {
+      setAbandonReasonOpen(true);
+    } else {
+      setAbandonConfirmOpen(true);
+    }
+  };
+
+  const handleAbandonConfirmYes = () => {
+    if (abandonSkipConfirm) {
+      localStorage.setItem("linxova-skip-abandon-confirm", "true");
+    }
+    setAbandonConfirmOpen(false);
+    setAbandonReasonOpen(true);
+  };
+
+  const handleSendAbandonRequest = () => {
+    abandonRequestMutation.mutate({ reason: abandonReason.trim() });
+  };
+
   const acceptWorkMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/accept-work`, {}),
     onSuccess: () => {
@@ -1203,6 +1543,11 @@ export default function JobDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "submissions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      // Refresh freelancer-facing data (rewards, stats, level progress)
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/profile/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/profile/completed-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       toast({
         title: "Work accepted!",
         description: "The job is now complete and payment has been released.",
@@ -1237,12 +1582,13 @@ export default function JobDetailPage() {
   });
 
   const openDisputeMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/dispute`, { reason: disputeReason }),
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/dispute`, { reason: disputeReason, category: disputeCategory }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       setIsDisputeDialogOpen(false);
       setDisputeReason("");
+      setDisputeCategory("");
       toast({
         title: "Dispute opened",
         description: "A moderator will review your dispute and contact both parties.",
@@ -1259,14 +1605,21 @@ export default function JobDetailPage() {
 
   const submitRatingMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/rating`, {
+      freelancerId: ratingTargetId,
       score: ratingScore,
       review: ratingReview,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "rating"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "ratings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      // Refresh the rated freelancer's profile + rating list so it updates immediately
+      if (ratingTargetId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/users", ratingTargetId, "profile"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/freelancers", ratingTargetId, "ratings"] });
+      }
       setIsRatingDialogOpen(false);
+      setRatingTargetId(null);
       setRatingScore(0);
       setRatingReview("");
       toast({
@@ -1283,12 +1636,70 @@ export default function JobDetailPage() {
     },
   });
 
+  const submitCustomerRatingMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/customer-rating`, {
+      score: customerRatingScore,
+      review: customerRatingReview,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId, "customer-rating"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      // Refresh the customer's profile + rating list so it updates immediately
+      if (job?.customerId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/users", job.customerId, "profile"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/customers", job.customerId, "ratings"] });
+      }
+      setIsCustomerRatingDialogOpen(false);
+      setCustomerRatingScore(0);
+      setCustomerRatingReview("");
+      toast({
+        title: "Rating submitted!",
+        description: "Thank you for rating this customer.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to submit rating",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Freelancer's own applications/join requests — used to detect a pending
+  // team join request on taken jobs.
+  const { data: myJobRequestsData } = useQuery<{ applications: any[] }>({
+    queryKey: ["/api/my-job-requests"],
+    enabled: user?.role === "freelancer",
+    refetchInterval: 5000,
+  });
+  const myJobRequests = myJobRequestsData?.applications ?? [];
+
+  const joinTeamMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/join-request`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-job-requests"] });
+      toast({
+        title: "Request sent!",
+        description: "The customer and team lead will review your request to join the team.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to send join request",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const claimJobMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/jobs/${jobId}/claim`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-job-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
       toast({
         title: "Application submitted!",
         description: "The customer will review your application.",
@@ -1325,6 +1736,30 @@ export default function JobDetailPage() {
     },
   });
 
+  // Project leader proposes an invite — it goes to the customer's Recommendations for review
+  const proposeInviteMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiRequest("POST", `/api/jobs/${jobId}/propose-invite`, { userId }),
+    onSuccess: () => {
+      setIsInviteDialogOpen(false);
+      setUserIdInput("");
+      setSelectedUser(null);
+      setLookupError(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      toast({
+        title: "Invite sent to the customer",
+        description: "It will show up in the customer's Recommendations for approval.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to send invite",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const cancelJobMutation = useMutation({
     mutationFn: async (data: z.infer<typeof cancellationFormSchema>) => {
       let proofUrl = null;
@@ -1336,11 +1771,12 @@ export default function JobDetailPage() {
           reader.readAsDataURL(proofFile);
         });
 
-        const uploadResponse = await apiRequest("POST", "/api/uploads", {
+        const uploadRes = await apiRequest("POST", "/api/uploads", {
           fileName: proofFile.name,
           fileData,
-        }) as { url: string };
-        proofUrl = uploadResponse.url;
+        });
+        const uploadBody = (await uploadRes.json()) as { url: string };
+        proofUrl = uploadBody.url;
       }
 
       return apiRequest("POST", "/api/cancellation-requests", {
@@ -1405,7 +1841,11 @@ export default function JobDetailPage() {
   const isEligibleToClaim = job.status === "active" && user?.role === "freelancer";
   const isCustomer = job.customerId === user?.id;
   const isFreelancerOwner = job.freelancerId === user?.id;
-  const canOfferTeam = isJobTaken && !isFreelancerOwner && !isCustomer;
+  const canLeaderInvite =
+    !isCustomer &&
+    !!user &&
+    user.id === (job.projectLeaderId || job.freelancerId) &&
+    (job.status === "claimed" || job.status === "in_progress" || job.status === "submitted" || job.status === "awaiting_customer");
   const canCustomerInvite = isCustomer && (job.status === "active" || job.status === "claimed" || job.status === "in_progress");
   const activeJobStatuses = ["claimed", "in_progress", "submitted", "awaiting_customer"];
   
@@ -1415,6 +1855,10 @@ export default function JobDetailPage() {
     job.teamMemberIds?.includes(user?.id || "") ||
     false;
 
+  const myPendingAbandonRequest = (abandonRequests as any[]).find(
+    (r: any) => r.freelancerId === user?.id && (r.status === "pending_customer" || r.status === "pending_moderator")
+  );
+
   const isTeamMember = 
     user?.id === job.customerId || 
     isFreelancerByAssignment;
@@ -1422,6 +1866,10 @@ export default function JobDetailPage() {
   const isFreelancerOnJob = 
     isFreelancerByAssignment &&
     activeJobStatuses.includes(job.status.toLowerCase());
+
+  const hasPendingJoinRequest =
+    user?.role === "freelancer" &&
+    myJobRequests.some((r: any) => r.jobId === jobId && r.status === "pending");
 
   // Workspace is freelancer-team only (not customers)
   const canAccessWorkspace = 
@@ -1482,12 +1930,15 @@ export default function JobDetailPage() {
       case "dispute": return "In Dispute";
       case "cancelled": return "Cancelled";
       case "expired": return "Expired";
+      case "deadline_reached": return "Deadline Reached";
+      case "ended": return "Ended";
       default: return status;
     }
   };
 
   const isAwaitingCustomer = job.status.toLowerCase() === "awaiting_customer";
-  const canSubmitWork = isFreelancerOnJob && !isAwaitingCustomer;
+  const isProjectLeader = user?.id === (job.projectLeaderId || job.freelancerId);
+  const canSubmitWork = isFreelancerOnJob && isProjectLeader && !isAwaitingCustomer;
   const canReviewWork = isCustomer && isAwaitingCustomer;
   const canOpenDispute = (isCustomer || isFreelancerOwner) && 
     ["claimed", "in_progress", "awaiting_customer"].includes(job.status.toLowerCase());
@@ -1538,7 +1989,7 @@ export default function JobDetailPage() {
       />
 
       <div className="grid gap-6 md:grid-cols-3">
-        <div className="md:col-span-2">
+        <div className="md:col-span-2 min-w-0">
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className={`grid w-full ${getTabGridCols()}`} data-testid="tabs-job-detail">
               <TabsTrigger value="overview" data-testid="tab-overview">
@@ -1571,24 +2022,24 @@ export default function JobDetailPage() {
                   <CardTitle>Job Description</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <p className="text-muted-foreground whitespace-pre-wrap" data-testid="text-job-description">
-                    {job.description}
-                  </p>
-                  {job.requirements && (
-                    <>
-                      <Separator />
-                      <div>
-                        <h3 className="font-semibold mb-2">Requirements</h3>
-                        <p className="text-muted-foreground whitespace-pre-wrap">
-                          {job.requirements}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+                  <p className="text-muted-foreground whitespace-pre-wrap break-words" data-testid="text-job-description">
+                      {job.description}
+                    </p>
+                    {job.requirements && (
+                      <>
+                        <Separator />
+                        <div>
+                          <h3 className="font-semibold mb-2">Requirements</h3>
+                          <p className="text-muted-foreground whitespace-pre-wrap break-words">
+                            {job.requirements}
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
 
-              {job.profitSplits && job.profitSplits.length > 0 && (
+                {job.profitSplits && job.profitSplits.length > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Team & Profit Sharing</CardTitle>
@@ -1599,10 +2050,13 @@ export default function JobDetailPage() {
                         const split = job.profitSplits?.find(
                           (s) => s.userId === collaborator.id
                         );
+                        const isLeader = collaborator.id === (job.projectLeaderId || job.freelancerId);
                         return (
                           <div
                             key={collaborator.id}
-                            className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                            className={`flex items-center justify-between p-3 rounded-md ${
+                              isLeader ? "bg-muted/80 border-l-4 border-primary" : "bg-muted/50"
+                            }`}
                             data-testid={`team-member-${index}`}
                           >
                             <div className="flex items-center gap-3">
@@ -1615,9 +2069,14 @@ export default function JobDetailPage() {
                                 </Avatar>
                               </RouterLink>
                               <div>
-                                <RouterLink href={`/user/${collaborator.id}`} className="font-medium hover:underline">
-                                  {collaborator.username}
-                                </RouterLink>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <RouterLink href={`/user/${collaborator.id}`} className="font-medium hover:underline">
+                                    {collaborator.username}
+                                  </RouterLink>
+                                  {isLeader && (
+                                    <Badge variant="secondary" className="text-xs">Project Leader</Badge>
+                                  )}
+                                </div>
                                 {collaborator.specialization && (
                                   <p className="text-sm text-muted-foreground">
                                     {collaborator.specialization}
@@ -1639,21 +2098,39 @@ export default function JobDetailPage() {
                 </Card>
               )}
 
-              {/* Show job requests queue for customers when job is active */}
-              {isCustomer && job.status === "active" && (
-                <JobRequestsViewer jobId={jobId!} isJobOwner={isCustomer} />
+              <LeadershipVoteCard
+                job={job}
+                onChanged={() => {
+                  queryClient.invalidateQueries({ queryKey: [`/api/jobs`, jobId] });
+                }}
+              />
+
+              {/* Show the requests queue: applications for active jobs (customer),
+                  team join requests for taken jobs (customer or lead freelancer) */}
+              {(isCustomer || (isFreelancerOwner && isJobTaken)) && (
+                <JobRequestsViewer
+                  jobId={jobId!}
+                  isJobOwner={isCustomer}
+                  isLeadFreelancer={isFreelancerOwner && isJobTaken}
+                  jobStatus={job.status}
+                />
               )}
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6 mt-6">
               <PublicTeamViewer job={job} isCustomer={isCustomer} />
-              {isCustomer && (
-                <JobRequestsViewer jobId={jobId!} isJobOwner={true} />
+              {(isCustomer || (isFreelancerOwner && isJobTaken)) && (
+                <JobRequestsViewer
+                  jobId={jobId!}
+                  isJobOwner={isCustomer}
+                  isLeadFreelancer={isFreelancerOwner && isJobTaken}
+                  jobStatus={job.status}
+                />
               )}
             </TabsContent>
 
             {canAccessWorkspace && (
-              <TabsContent value="workspace" className="space-y-6 mt-6">
+              <TabsContent value="workspace" className="space-y-6 mt-6 min-w-0">
                 <TeamCollaboration jobId={jobId!} />
               </TabsContent>
             )}
@@ -1686,7 +2163,7 @@ export default function JobDetailPage() {
                   <div>
                     <p className="text-sm">Deadline (ET)</p>
                     <p className="text-sm text-foreground">
-                      {formatEasternDate(job.deadline)} ({formatDistanceToNow(new Date(job.deadline), {
+                      {formatEasternDateTime(job.deadline)} ({formatDistanceToNow(new Date(job.deadline), {
                         addSuffix: true,
                       })})
                     </p>
@@ -1799,7 +2276,29 @@ export default function JobDetailPage() {
                   {claimJobMutation.isPending ? "Applying..." : "Apply for Job"}
                 </Button>
               )}
-              {isJobTaken && (
+              {isJobTaken && user?.role === "freelancer" && !isFreelancerOnJob && (
+                hasPendingJoinRequest ? (
+                  <Button
+                    className="w-full"
+                    variant="secondary"
+                    disabled
+                    data-testid="button-join-requested"
+                  >
+                    Join Requested
+                  </Button>
+                ) : (
+                  <Button
+                    className="w-full"
+                    onClick={() => joinTeamMutation.mutate()}
+                    disabled={joinTeamMutation.isPending}
+                    data-testid="button-request-join-team"
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    {joinTeamMutation.isPending ? "Sending..." : "Request to Join Team"}
+                  </Button>
+                )
+              )}
+              {isJobTaken && !(user?.role === "freelancer" && !isFreelancerOnJob) && (
                 <Button
                   className="w-full"
                   variant="secondary"
@@ -1809,24 +2308,25 @@ export default function JobDetailPage() {
                   Job Already Taken
                 </Button>
               )}
-              {canOfferTeam && (
+              {canLeaderInvite && (
                 <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
                   <DialogTrigger asChild>
                     <Button
                       className="w-full"
                       variant="outline"
-                      data-testid="button-offer-team"
+                      data-testid="button-leader-invite-freelancer"
                     >
-                      <Users className="w-4 h-4 mr-2" />
-                      Offer Team
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Invite Freelancer
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Invite Team Member</DialogTitle>
+                      <DialogTitle>Invite Freelancer</DialogTitle>
                       <DialogDescription>
-                        Enter the User ID of the freelancer you want to invite. Profits will be
-                        split equally among all team members.
+                        Enter the User ID of the freelancer you want to invite. The invite goes to
+                        the customer's Recommendations for review — the freelancer is only invited
+                        once the customer accepts it. Profits are split equally among all team members.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
@@ -1906,18 +2406,262 @@ export default function JobDetailPage() {
                       <Button
                         onClick={() => {
                           if (selectedUser) {
-                            inviteMutation.mutate(selectedUser.id);
+                            proposeInviteMutation.mutate(selectedUser.id);
                           }
                         }}
-                        disabled={!selectedUser || inviteMutation.isPending}
+                        disabled={!selectedUser || proposeInviteMutation.isPending}
                         data-testid="button-send-invitation"
                       >
-                        {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
+                        {proposeInviteMutation.isPending ? "Sending..." : "Send to Customer"}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
               )}
+              {/* Abandon requests — customer approval */}
+              {isCustomer && abandonRequests.filter((r: any) => r.status !== "declined").length > 0 && (
+                <div className="space-y-3">
+                  {abandonRequests.filter((r: any) => r.status !== "declined").map((request: any) => (
+                    <div key={request.id} className="border rounded-md p-3 space-y-2" data-testid={`abandon-request-${request.id}`}>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="font-medium text-sm">
+                          {request.freelancerUsername} wants to abandon this job
+                        </p>
+                        <Badge variant="secondary">
+                          {request.status === "pending_customer"
+                            ? "Awaiting your approval"
+                            : request.status === "pending_moderator"
+                            ? "Forwarded to moderation"
+                            : request.status}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                        <span className="font-medium text-foreground">Reason: </span>
+                        {request.reason}
+                      </p>
+                      {request.links && request.links.trim() && (
+                        <div className="flex flex-wrap gap-2">
+                          {request.links.split(/s+/).filter(Boolean).map((link: string, i: number) => {
+                            const href = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+                            return (
+                            <a
+                              key={i}
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary underline break-all"
+                            >
+                              {link}
+                            </a>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {request.proofUrl && (
+                        <a
+                          href={request.proofUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-xs text-primary underline break-all"
+                          data-testid="link-abandon-proof"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          View proof file
+                        </a>
+                      )}
+                      {request.status === "pending_customer" && (
+                        <div className="flex gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            onClick={() => customerApproveAbandonMutation.mutate(request.id)}
+                            disabled={customerApproveAbandonMutation.isPending}
+                            data-testid={`button-approve-abandon-${request.id}`}
+                          >
+                            <Check className="w-4 h-4 mr-1" /> Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => customerDeclineAbandonMutation.mutate(request.id)}
+                            disabled={customerDeclineAbandonMutation.isPending}
+                            data-testid={`button-decline-abandon-${request.id}`}
+                          >
+                            <X className="w-4 h-4 mr-1" /> Decline
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Ended job — ask the freelancer whether they completed the work */}
+              {isFreelancerByAssignment && job.status === "ended" && (
+                <div className="border rounded-md p-3 space-y-3" data-testid="end-response-panel">
+                  <p className="text-sm font-medium">The job was ended after the deadline passed.</p>
+                  {!endResponseDone ? (
+                    <>
+                      <p className="text-sm text-muted-foreground">Did you complete the work before the deadline?</p>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => endResponseMutation.mutate(true)}
+                          disabled={endResponseMutation.isPending}
+                          data-testid="button-completed-yes"
+                        >
+                          Yes, I completed the work
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          onClick={() => endResponseMutation.mutate(false)}
+                          disabled={endResponseMutation.isPending}
+                          data-testid="button-completed-no"
+                        >
+                          No
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Response recorded — thank you for confirming.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Abandon request status for assigned freelancers */}
+              {isFreelancerByAssignment && myPendingAbandonRequest && (
+                <div className="text-sm text-muted-foreground border rounded-md p-3 bg-muted/50" data-testid="abandon-request-status">
+                  <p className="font-medium text-foreground mb-1">Abandon request pending</p>
+                  <p>
+                    {myPendingAbandonRequest.status === "pending_customer"
+                      ? "Waiting for the customer to approve your request to leave."
+                      : "The customer declined — a moderator is now reviewing your request."}
+                  </p>
+                </div>
+              )}
+
+              {/* Abandon Job Button for assigned freelancers */}
+              {isFreelancerByAssignment && !myPendingAbandonRequest && job.status !== "ended" && (
+                <Button
+                  className="w-full"
+                  variant="destructive"
+                  onClick={handleAbandonClick}
+                  disabled={abandonRequestMutation.isPending}
+                  data-testid="button-abandon-job"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  {abandonRequestMutation.isPending ? "Sending Request..." : "Request to Abandon Job"}
+                </Button>
+              )}
+
+              {/* Are-you-sure dialog (skippable) */}
+              <Dialog open={abandonConfirmOpen} onOpenChange={setAbandonConfirmOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Are you sure you want to leave this job?</DialogTitle>
+                    <DialogDescription>
+                      Your request will be sent to the customer for approval. You will stay on
+                      the job until they approve it. If they decline, a moderator will review it.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="skip-abandon-confirm"
+                      checked={abandonSkipConfirm}
+                      onCheckedChange={(v) => setAbandonSkipConfirm(!!v)}
+                      data-testid="checkbox-skip-abandon-confirm"
+                    />
+                    <Label htmlFor="skip-abandon-confirm" className="text-sm cursor-pointer">
+                      Don't show this message in the future
+                    </Label>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setAbandonConfirmOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="destructive" onClick={handleAbandonConfirmYes}>
+                      Yes, Request to Leave
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              {/* Abandon request dialog — reason + optional links sent to the customer */}
+              <Dialog
+                open={abandonReasonOpen}
+                onOpenChange={(open) => {
+                  setAbandonReasonOpen(open);
+                  if (!open) {
+                    setAbandonReason("");
+                    setAbandonProofFile(null);
+                  }
+                }}
+              >
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Why do you want to leave?</DialogTitle>
+                    <DialogDescription>
+                      Your reason (and any proof file) will be sent to the customer for approval. You
+                      will stay on the job until they approve your request.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="abandon-reason">Reason</Label>
+                      <Textarea
+                        id="abandon-reason"
+                        placeholder="Explain why you need to leave (e.g., workload, scope change, health)..."
+                        value={abandonReason}
+                        onChange={(e) => setAbandonReason(e.target.value)}
+                        data-testid="textarea-leave-reason"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="abandon-proof">Proof (Optional)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="abandon-proof"
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => setAbandonProofFile(e.target.files?.[0] || null)}
+                          data-testid="input-abandon-proof"
+                        />
+                        {abandonProofFile && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setAbandonProofFile(null)}
+                            data-testid="button-remove-abandon-proof"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                      {abandonProofFile && (
+                        <p className="text-sm text-muted-foreground">
+                          Selected: {abandonProofFile.name}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setAbandonReasonOpen(false)}
+                      data-testid="button-cancel-abandon-request"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSendAbandonRequest}
+                      disabled={abandonRequestMutation.isPending || abandonReason.trim().length < 10}
+                      data-testid="button-send-abandon-request"
+                    >
+                      {abandonRequestMutation.isPending ? "Sending..." : "Send Request"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
               {/* Submit Work Button for Freelancers */}
               {canSubmitWork && (
                 <Dialog open={isSubmitWorkDialogOpen} onOpenChange={setIsSubmitWorkDialogOpen}>
@@ -2005,7 +2749,7 @@ export default function JobDetailPage() {
 
               {/* Customer Review Section */}
               {canReviewWork && submissions.length > 0 && (
-                <Card className="border-purple-500/50 bg-purple-500/5">
+                <Card className="border-purple-500/50 bg-purple-500/5 min-w-0 overflow-hidden">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <CheckSquare className="w-4 h-4 text-purple-500" />
@@ -2025,11 +2769,11 @@ export default function JobDetailPage() {
                                 href={href}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-sm text-primary hover:underline flex items-center gap-1"
+                                className="text-sm text-primary hover:underline flex items-center gap-1 min-w-0 max-w-full"
                                 data-testid={`link-proof-${i}`}
                               >
-                                <Link className="w-3 h-3" />
-                                {link}
+                                <Link className="w-3 h-3 shrink-0" />
+                                <span className="break-all">{link}</span>
                               </a>
                             );
                           })}
@@ -2039,19 +2783,38 @@ export default function JobDetailPage() {
                     {submissions[0]?.notes && (
                       <div>
                         <p className="text-sm font-medium mb-1">Notes:</p>
-                        <p className="text-sm text-muted-foreground">{submissions[0].notes}</p>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{submissions[0].notes}</p>
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2 pt-2">
                       <Button
                         className="flex-1 min-w-[140px]"
-                        onClick={() => acceptWorkMutation.mutate()}
+                        onClick={() => setIsAcceptConfirmOpen(true)}
                         disabled={acceptWorkMutation.isPending}
                         data-testid="button-accept-work"
                       >
                         <CheckCircle2 className="w-4 h-4 mr-2" />
                         {acceptWorkMutation.isPending ? "Accepting..." : "Accept & Pay"}
                       </Button>
+                      <Dialog open={isAcceptConfirmOpen} onOpenChange={setIsAcceptConfirmOpen}>
+                        <DialogContent data-testid="dialog-confirm-accept">
+                          <DialogHeader>
+                            <DialogTitle>Accept work and release payment?</DialogTitle>
+                            <DialogDescription>
+                              This will mark the job as complete and immediately release the escrowed funds to the freelancer. This action cannot be undone.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setIsAcceptConfirmOpen(false)} data-testid="button-cancel-accept">
+                              Cancel
+                            </Button>
+                            <Button onClick={() => { setIsAcceptConfirmOpen(false); acceptWorkMutation.mutate(); }} data-testid="button-confirm-accept">
+                              <CheckCircle2 className="w-4 h-4 mr-2" />
+                              Yes, Accept & Pay
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                       <Dialog>
                         <DialogTrigger asChild>
                           <Button variant="outline" className="flex-1 min-w-[140px]" data-testid="button-request-revision">
@@ -2090,6 +2853,7 @@ export default function JobDetailPage() {
                 </Card>
               )}
 
+
               {/* Open Dispute Button */}
               {canOpenDispute && (
                 <Dialog open={isDisputeDialogOpen} onOpenChange={setIsDisputeDialogOpen}>
@@ -2110,8 +2874,26 @@ export default function JobDetailPage() {
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="disputeReasonPreset">What is the issue?</Label>
+                        <Select
+                          value={(isCustomer ? CUSTOMER_DISPUTE_REASONS : FREELANCER_DISPUTE_REASONS).includes(disputeCategory) ? disputeCategory : undefined}
+                          onValueChange={(value) => { setDisputeCategory(value); setDisputeReason(value); }}
+                        >
+                          <SelectTrigger data-testid="select-dispute-reason">
+                            <SelectValue placeholder="Select an issue type (optional)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(isCustomer ? CUSTOMER_DISPUTE_REASONS : FREELANCER_DISPUTE_REASONS).map((preset) => (
+                              <SelectItem key={preset} value={preset} data-testid={`dispute-preset-${preset}`}>
+                                {preset}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <Textarea
-                        placeholder="Describe the issue in detail..."
+                        placeholder="Describe the issue in detail — the preset above is just a starting point..."
                         value={disputeReason}
                         onChange={(e) => setDisputeReason(e.target.value)}
                         className="min-h-32"
@@ -2343,47 +3125,324 @@ export default function JobDetailPage() {
                 </Dialog>
               )}
               
-              {/* Rating UI for customers on completed jobs */}
+              {/* Deadline reached — customer decision panel */}
+              {isCustomer && job.status === "deadline_reached" && (() => {
+                const hasFreelancer = !!(job.freelancerId || (job.collaborators && job.collaborators.length));
+                return (
+                  <div className="border-t pt-3 mt-3 space-y-3">
+                    <div className="rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-3 py-2 text-sm" data-testid="deadline-reached-panel">
+                      <p className="font-medium">Deadline reached</p>
+                      <p className="text-muted-foreground">
+                        {hasFreelancer
+                          ? "The work deadline has passed. Choose what to do with this job."
+                          : "The deadline passed and no freelancer accepted this job. You can extend the deadline so more freelancers can apply, or delete the job and get your budget back."}
+                      </p>
+                    </div>
+                    <Button className="w-full" onClick={() => {
+                      setExtendDeadline(formatInTimeZone(new Date(job.deadline!), TIMEZONE, "yyyy-MM-dd'T'HH:mm"));
+                      setExtendOpen(true);
+                    }} data-testid="button-extend-deadline">
+                      Extend Deadline
+                    </Button>
+                    {hasFreelancer ? (
+                      <>
+                        <Button className="w-full" variant="outline" onClick={() => {
+                          setRmTitle(job.title);
+                          setRmDescription(job.description || "");
+                          setRmBudget(String(job.budget));
+                          setRmRequirements(job.requirements || "");
+                          setRmDeadline(formatInTimeZone(new Date(job.deadline!), TIMEZONE, "yyyy-MM-dd'T'HH:mm"));
+                          setRemarketOpen(true);
+                        }} data-testid="button-remarket">
+                          Put Back on Market
+                        </Button>
+                        <Button className="w-full" variant="destructive" onClick={() => setEndOpen(true)} data-testid="button-end-job">
+                          End Job
+                        </Button>
+                      </>
+                    ) : (
+                      <Button className="w-full" variant="destructive" onClick={() => setDeleteOpen(true)} data-testid="button-delete-job">
+                        Delete Job
+                      </Button>
+                    )}
+
+
+                  {/* Extend deadline dialog */}
+                  <Dialog open={extendOpen} onOpenChange={setExtendOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Extend the deadline</DialogTitle>
+                        <DialogDescription>Set a new deadline (date and time in Eastern Time (ET)). Reminders will adjust automatically.</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="extend-deadline">New deadline</Label>
+                          <Input id="extend-deadline" type="datetime-local" value={extendDeadline} onChange={(e) => setExtendDeadline(e.target.value)} data-testid="input-extend-deadline" />
+                        </div>
+                        {extendDeadline && fromZonedTime(extendDeadline, TIMEZONE).getTime() <= Date.now() && (
+                          <p className="text-sm text-destructive">Deadline must be in the future.</p>
+                        )}
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setExtendOpen(false)}>Cancel</Button>
+                          <Button
+                            onClick={() => extendDeadlineMutation.mutate(extendDeadline)}
+                            disabled={!extendDeadline || fromZonedTime(extendDeadline, TIMEZONE).getTime() <= Date.now() || extendDeadlineMutation.isPending}
+                            data-testid="button-submit-extend"
+                          >
+                            {extendDeadlineMutation.isPending ? "Saving..." : "Extend"}
+                          </Button>
+                        </DialogFooter>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Put back on market dialog */}
+                  <Dialog open={remarketOpen} onOpenChange={setRemarketOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Put job back on the market</DialogTitle>
+                        <DialogDescription>Update the details and set a new deadline (Eastern Time). The current freelancer will be released, and the job relists for new applications.</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="rm-title">Title</Label>
+                          <Input id="rm-title" value={rmTitle} onChange={(e) => setRmTitle(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="rm-desc">Description</Label>
+                          <Textarea id="rm-desc" value={rmDescription} onChange={(e) => setRmDescription(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="rm-budget">Budget (USD, minimum $5)</Label>
+                          <Input id="rm-budget" type="number" min="5" value={rmBudget} onChange={(e) => setRmBudget(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="rm-req">Requirements</Label>
+                          <Textarea id="rm-req" value={rmRequirements} onChange={(e) => setRmRequirements(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="rm-deadline">New deadline (ET)</Label>
+                          <Input id="rm-deadline" type="datetime-local" value={rmDeadline} onChange={(e) => setRmDeadline(e.target.value)} />
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setRemarketOpen(false)}>Cancel</Button>
+                          <Button
+                            onClick={() => remarketMutation.mutate()}
+                            disabled={!rmDeadline || !rmTitle || !rmDescription || parseFloat(rmBudget) < 5 || remarketMutation.isPending}
+                            data-testid="button-submit-remarket"
+                          >
+                            {remarketMutation.isPending ? "Sending..." : "Send"}
+                          </Button>
+                        </DialogFooter>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* End job confirmation dialog */}
+                  <Dialog open={endOpen} onOpenChange={setEndOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>End this job?</DialogTitle>
+                        <DialogDescription>
+                          You will be refunded the job budget. The freelancer will be asked whether the work was completed before the deadline — if they say yes, a dispute is opened for a moderator to decide.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setEndOpen(false)}>Cancel</Button>
+                        <Button variant="destructive" onClick={() => endJobMutation.mutate()} disabled={endJobMutation.isPending} data-testid="button-confirm-end">
+                          {endJobMutation.isPending ? "Ending..." : "End Job"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Delete job confirmation dialog (for a job no freelancer ever accepted) */}
+                  <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Delete this job?</DialogTitle>
+                        <DialogDescription>
+                          No freelancer accepted this job. Deleting it removes the listing and refunds the locked budget to your wallet. This cannot be undone.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+                        <Button variant="destructive" onClick={() => deleteJobMutation.mutate()} disabled={deleteJobMutation.isPending} data-testid="button-confirm-delete">
+                          {deleteJobMutation.isPending ? "Deleting..." : "Delete Job"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                  </div>
+                );
+              })()}
+
+              {/* Rating UI for customers on completed jobs — rate each team member */}
               {user?.role === "customer" && job.status === "completed" && job.customerId === user.id && (
+                <div className="border-t pt-3 mt-3 space-y-3">
+                  <p className="text-sm font-medium">Rate Freelancers</p>
+                  {(job.collaboratorData || []).map((member) => {
+                    const memberRating = existingRatings.find((r) => r.freelancerId === member.id);
+                    return (
+                      <div key={member.id} className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Avatar className="h-7 w-7">
+                            <AvatarImage src={member.avatar || undefined} />
+                            <AvatarFallback>
+                              {member.username.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm font-medium truncate">{member.username}</span>
+                        </div>
+                        {memberRating ? (
+                          <div className="flex items-center gap-1 shrink-0">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <Star
+                                key={star}
+                                className={`w-4 h-4 ${
+                                  star <= memberRating.score
+                                    ? "fill-yellow-400 text-yellow-400"
+                                    : "text-gray-300"
+                                }`}
+                              />
+                            ))}
+                            {memberRating.review && (
+                              <span className="text-xs text-muted-foreground italic max-w-40 truncate">
+                                "{memberRating.review}"
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setRatingTargetId(member.id);
+                              setIsRatingDialogOpen(true);
+                            }}
+                            data-testid={`button-rate-freelancer-${member.id}`}
+                          >
+                            <Star className="w-4 h-4 mr-1" />
+                            Rate
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <Dialog open={isRatingDialogOpen} onOpenChange={setIsRatingDialogOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Rate Freelancer</DialogTitle>
+                        <DialogDescription>
+                          Share your experience with this freelancer to help others make informed decisions.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Rating *</Label>
+                          <div className="flex gap-2">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <button
+                                key={star}
+                                type="button"
+                                onClick={() => setRatingScore(star)}
+                                className="transition-transform hover:scale-110"
+                                data-testid={`button-star-${star}`}
+                              >
+                                <Star
+                                  className={`w-8 h-8 ${
+                                    star <= ratingScore
+                                      ? "fill-yellow-400 text-yellow-400"
+                                      : "text-gray-300 hover:text-yellow-200"
+                                  }`}
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="review">Review (Optional)</Label>
+                          <Textarea
+                            id="review"
+                            placeholder="Share your experience working with this freelancer..."
+                            className="min-h-24"
+                            value={ratingReview}
+                            onChange={(e) => setRatingReview(e.target.value)}
+                            data-testid="textarea-rating-review"
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setIsRatingDialogOpen(false);
+                            setRatingTargetId(null);
+                            setRatingScore(0);
+                            setRatingReview("");
+                          }}
+                          data-testid="button-cancel-rating"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => submitRatingMutation.mutate()}
+                          disabled={ratingScore === 0 || submitRatingMutation.isPending}
+                          data-testid="button-submit-rating"
+                        >
+                          {submitRatingMutation.isPending ? "Submitting..." : "Submit Rating"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              )}
+
+              {/* Rating UI for freelancers on completed jobs (rate the customer) */}
+              {user?.role === "freelancer" && job.status === "completed" && (
+                job.freelancerId === user.id || (job.collaborators || []).includes(user.id)
+              ) && (
                 <div className="border-t pt-3 mt-3">
-                  {existingRating ? (
+                  {existingCustomerRating ? (
                     <div className="space-y-2">
-                      <p className="text-sm font-medium">Your Rating</p>
+                      <p className="text-sm font-medium">Your Rating of the Customer</p>
                       <div className="flex gap-1">
                         {[1, 2, 3, 4, 5].map((star) => (
                           <Star
                             key={star}
                             className={`w-5 h-5 ${
-                              star <= existingRating.score
+                              star <= existingCustomerRating.score
                                 ? "fill-yellow-400 text-yellow-400"
                                 : "text-gray-300"
                             }`}
                           />
                         ))}
                       </div>
-                      {existingRating.review && (
+                      {existingCustomerRating.review && (
                         <p className="text-sm text-muted-foreground italic">
-                          "{existingRating.review}"
+                          "{existingCustomerRating.review}"
                         </p>
                       )}
                     </div>
                   ) : (
-                    <Dialog open={isRatingDialogOpen} onOpenChange={setIsRatingDialogOpen}>
+                    <Dialog open={isCustomerRatingDialogOpen} onOpenChange={setIsCustomerRatingDialogOpen}>
                       <DialogTrigger asChild>
                         <Button
                           className="w-full"
-                          variant="default"
-                          data-testid="button-rate-freelancer"
+                          variant="outline"
+                          data-testid="button-rate-customer"
                         >
                           <Star className="w-4 h-4 mr-2" />
-                          Rate Freelancer
+                          Rate Customer
                         </Button>
                       </DialogTrigger>
                       <DialogContent>
                         <DialogHeader>
-                          <DialogTitle>Rate Freelancer</DialogTitle>
+                          <DialogTitle>Rate Customer</DialogTitle>
                           <DialogDescription>
-                            Share your experience with this freelancer to help others make informed decisions.
+                            Share your experience working with this customer to help others make informed decisions.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4">
@@ -2394,13 +3453,13 @@ export default function JobDetailPage() {
                                 <button
                                   key={star}
                                   type="button"
-                                  onClick={() => setRatingScore(star)}
+                                  onClick={() => setCustomerRatingScore(star)}
                                   className="transition-transform hover:scale-110"
-                                  data-testid={`button-star-${star}`}
+                                  data-testid={`button-customer-star-${star}`}
                                 >
                                   <Star
                                     className={`w-8 h-8 ${
-                                      star <= ratingScore
+                                      star <= customerRatingScore
                                         ? "fill-yellow-400 text-yellow-400"
                                         : "text-gray-300 hover:text-yellow-200"
                                     }`}
@@ -2410,14 +3469,14 @@ export default function JobDetailPage() {
                             </div>
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="review">Review (Optional)</Label>
+                            <Label htmlFor="customer-review">Review (Optional)</Label>
                             <Textarea
-                              id="review"
-                              placeholder="Share your experience working with this freelancer..."
+                              id="customer-review"
+                              placeholder="Share your experience working with this customer..."
                               className="min-h-24"
-                              value={ratingReview}
-                              onChange={(e) => setRatingReview(e.target.value)}
-                              data-testid="textarea-rating-review"
+                              value={customerRatingReview}
+                              onChange={(e) => setCustomerRatingReview(e.target.value)}
+                              data-testid="textarea-customer-rating-review"
                             />
                           </div>
                         </div>
@@ -2426,20 +3485,20 @@ export default function JobDetailPage() {
                             type="button"
                             variant="outline"
                             onClick={() => {
-                              setIsRatingDialogOpen(false);
-                              setRatingScore(0);
-                              setRatingReview("");
+                              setIsCustomerRatingDialogOpen(false);
+                              setCustomerRatingScore(0);
+                              setCustomerRatingReview("");
                             }}
-                            data-testid="button-cancel-rating"
+                            data-testid="button-cancel-customer-rating"
                           >
                             Cancel
                           </Button>
                           <Button
-                            onClick={() => submitRatingMutation.mutate()}
-                            disabled={ratingScore === 0 || submitRatingMutation.isPending}
-                            data-testid="button-submit-rating"
+                            onClick={() => submitCustomerRatingMutation.mutate()}
+                            disabled={customerRatingScore === 0 || submitCustomerRatingMutation.isPending}
+                            data-testid="button-submit-customer-rating"
                           >
-                            {submitRatingMutation.isPending ? "Submitting..." : "Submit Rating"}
+                            {submitCustomerRatingMutation.isPending ? "Submitting..." : "Submit Rating"}
                           </Button>
                         </DialogFooter>
                       </DialogContent>

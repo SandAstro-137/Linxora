@@ -6,6 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -23,8 +30,24 @@ import {
   Shield,
   Circle,
   Volume2,
-  VolumeX
+  VolumeX,
+  X
 } from "lucide-react";
+
+interface VoiceCallParticipant {
+  id: string;
+  username: string;
+  avatar: string | null;
+  role: string | null;
+}
+
+interface VoiceCall {
+  id: string;
+  initiatorId: string;
+  initiatorUsername: string;
+  createdAt?: number;
+  participants: VoiceCallParticipant[];
+}
 
 interface OnlineUser {
   id: string;
@@ -89,7 +112,14 @@ export default function TeamRoomPage() {
   const [inCall, setInCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
-  const [callParticipants, setCallParticipants] = useState<string[]>([]);
+  const [calls, setCalls] = useState<VoiceCall[]>([]);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [showCallOptionsDialog, setShowCallOptionsDialog] = useState(false);
+  const inCallRef = useRef(false);
+  const myCallIdRef = useRef<string | null>(null);
+  // Set while we're waiting for our own voice_call_start/join to appear in the
+  // broadcast list, so a transient list without us doesn't kill the local call.
+  const pendingJoinRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -159,7 +189,6 @@ export default function TeamRoomPage() {
           break;
         case "user_left":
           setOnlineUsers(prev => prev.filter(u => u.id !== data.user.id));
-          setCallParticipants(prev => prev.filter(id => id !== data.user.id));
           cleanupPeer(data.user.id);
           break;
         case "chat_message":
@@ -191,14 +220,34 @@ export default function TeamRoomPage() {
               description: `${data.initiator.username} started a voice call`,
             });
           }
-          setCallParticipants(prev => {
-            if (prev.includes(data.initiator.id)) return prev;
-            return [...prev, data.initiator.id];
-          });
           break;
-        case "voice_call_end":
-          setCallParticipants(prev => prev.filter(id => id !== data.user.id));
+        case "voice_calls_list":
+          setCalls(data.calls ?? []);
+          reconcileCalls(data.calls ?? []);
+          break;
+        case "voice_call_user_joined":
+          if (data.user.id !== user.id && inCallRef.current && data.callId === myCallIdRef.current) {
+            offerToUser(data.user.id, data.user.username);
+          }
+          break;
+        case "voice_call_user_left":
           cleanupPeer(data.user.id);
+          break;
+        case "voice_call_ended":
+          if (data.callId === myCallIdRef.current && inCallRef.current) {
+            stopLocalCall();
+            setInCall(false);
+            inCallRef.current = false;
+            pendingJoinRef.current = false;
+            myCallIdRef.current = null;
+            setActiveCallId(null);
+          }
+          if (data.closedBy) {
+            toast({
+              title: "Voice Call Closed",
+              description: `${data.closedBy.username} closed the voice call`,
+            });
+          }
           break;
         case "webrtc_signal":
           handleWebRTCSignal(data);
@@ -346,42 +395,68 @@ export default function TeamRoomPage() {
     }
   };
 
-  const handleWebRTCSignal = async (data: { fromUserId: string; fromUsername: string; signalType: string; signal: RTCSessionDescriptionInit | RTCIceCandidateInit }) => {
-    let peer = peersRef.current.get(data.fromUserId);
+  // Adds the local microphone tracks to a peer connection, but only once -
+  // adding the same track twice throws "sender already exists for the track"
+  // when both sides send offers to each other at the same time.
+  const addLocalTracksTo = (pc: RTCPeerConnection) => {
+    if (!localStreamRef.current) return;
+    localStreamRef.current.getTracks().forEach(track => {
+      if (!pc.getSenders().some(s => s.track === track)) {
+        pc.addTrack(track, localStreamRef.current!);
+      }
+    });
+  };
 
-    if (data.signalType === "offer") {
-      if (!peer) {
-        const pc = createPeerConnection(data.fromUserId, data.fromUsername);
-        peer = peersRef.current.get(data.fromUserId)!;
+  const handleWebRTCSignal = async (data: { fromUserId: string; fromUsername: string; signalType: string; signal: RTCSessionDescriptionInit | RTCIceCandidateInit }) => {
+    try {
+      const peer = peersRef.current.get(data.fromUserId);
+
+      if (data.signalType === "offer") {
+        if (!inCallRef.current) return;
+        if (!peer) {
+          createPeerConnection(data.fromUserId, data.fromUsername);
+        }
+        const pc = peersRef.current.get(data.fromUserId)!.connection;
+
+        // Glare: both sides may send offers at the same time (the joiner offers
+        // via reconcileCalls while the existing participant offers via
+        // voice_call_user_joined). If we already sent our own offer, roll it
+        // back so we can accept theirs instead of throwing.
+        if (pc.signalingState === "have-local-offer") {
+          await pc.setLocalDescription({ type: "rollback" });
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
+
+        addLocalTracksTo(pc);
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: "webrtc_signal",
+            targetUserId: data.fromUserId,
+            signalType: "answer",
+            signal: answer
+          }));
+        }
+      } else if (data.signalType === "answer") {
+        // Only accept an answer if we actually sent an offer and are waiting
+        // for one; after a glare rollback we already answered, so a stray
+        // answer must be ignored instead of throwing.
+        if (peer && peer.connection.signalingState === "have-remote-offer") {
+          await peer.connection.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
+        }
+      } else if (data.signalType === "ice-candidate") {
+        if (peer) {
+          await peer.connection.addIceCandidate(new RTCIceCandidate(data.signal as RTCIceCandidateInit));
+        }
       }
-      
-      await peer.connection.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
-      
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          peer!.connection.addTrack(track, localStreamRef.current!);
-        });
-      }
-      
-      const answer = await peer.connection.createAnswer();
-      await peer.connection.setLocalDescription(answer);
-      
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "webrtc_signal",
-          targetUserId: data.fromUserId,
-          signalType: "answer",
-          signal: answer
-        }));
-      }
-    } else if (data.signalType === "answer") {
-      if (peer) {
-        await peer.connection.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
-      }
-    } else if (data.signalType === "ice-candidate") {
-      if (peer) {
-        await peer.connection.addIceCandidate(new RTCIceCandidate(data.signal as RTCIceCandidateInit));
-      }
+    } catch (error) {
+      // Transient negotiation races (stale offers/answers after a rejoin) must
+      // not crash the page - log and let the next signal retry.
+      console.error("[TeamRoom] WebRTC signal error:", error);
     }
   };
 
@@ -390,34 +465,12 @@ export default function TeamRoomPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       localStreamRef.current = stream;
       setInCall(true);
-      setCallParticipants(prev => {
-        if (!user?.id) return prev;
-        if (prev.includes(user.id)) return prev;
-        return [...prev, user.id];
-      });
+      inCallRef.current = true;
+      pendingJoinRef.current = true;
+      setShowCallOptionsDialog(false);
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: "voice_call_start" }));
-      }
-
-      for (const participant of onlineUsers.filter(u => u.id !== user?.id)) {
-        const pc = createPeerConnection(participant.id, participant.username);
-        
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
-        });
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: "webrtc_signal",
-            targetUserId: participant.id,
-            signalType: "offer",
-            signal: offer
-          }));
-        }
       }
 
       toast({
@@ -434,33 +487,129 @@ export default function TeamRoomPage() {
     }
   };
 
-  const endCall = () => {
+  const stopLocalCall = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
-
     peersRef.current.forEach((peer) => {
       peer.connection.close();
     });
     peersRef.current.clear();
-
     audioElementsRef.current.forEach((audio) => {
       audio.srcObject = null;
     });
     audioElementsRef.current.clear();
+  };
 
+  const endCall = () => {
+    const callId = myCallIdRef.current;
+    stopLocalCall();
     setInCall(false);
-    setCallParticipants(prev => prev.filter(id => id !== user?.id));
+    inCallRef.current = false;
+    pendingJoinRef.current = false;
+    myCallIdRef.current = null;
+    setActiveCallId(null);
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "voice_call_end" }));
+    if (wsRef.current?.readyState === WebSocket.OPEN && callId) {
+      wsRef.current.send(JSON.stringify({ type: "voice_call_leave", callId }));
     }
 
     toast({
       title: "Voice Call Ended",
       description: "You have left the voice call",
     });
+  };
+
+  const joinCall = async (callId: string) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      setInCall(true);
+      inCallRef.current = true;
+      pendingJoinRef.current = true;
+      setShowCallOptionsDialog(false);
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "voice_call_join", callId }));
+      }
+
+      toast({
+        title: "Joined Voice Call",
+        description: "You are now in the voice call",
+      });
+    } catch (error) {
+      console.error("[TeamRoom] Failed to join call:", error);
+      toast({
+        title: "Microphone Access Required",
+        description: "Please allow microphone access to join voice calls",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const offerToUser = async (targetUserId: string, targetUsername: string) => {
+    if (!localStreamRef.current || peersRef.current.has(targetUserId)) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    try {
+      const pc = createPeerConnection(targetUserId, targetUsername);
+      addLocalTracksTo(pc);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      wsRef.current.send(JSON.stringify({
+        type: "webrtc_signal",
+        targetUserId,
+        signalType: "offer",
+        signal: offer
+      }));
+    } catch (error) {
+      console.error("[TeamRoom] Failed to offer to", targetUsername, error);
+    }
+  };
+
+  // Server-authoritative reconciliation: keeps myCallIdRef, local call state and
+  // WebRTC peers in sync with the broadcast list of all active calls.
+  const reconcileCalls = (nextCalls: VoiceCall[]) => {
+    const myId = user?.id ?? "";
+    const myCall = nextCalls.find(c => c.participants.some(p => p.id === myId)) ?? null;
+    myCallIdRef.current = myCall ? myCall.id : null;
+    if (myCall) pendingJoinRef.current = false;
+
+    if (!myCall) {
+      if (inCallRef.current && !pendingJoinRef.current) {
+        stopLocalCall();
+        setInCall(false);
+        inCallRef.current = false;
+      }
+      setActiveCallId(null);
+      return;
+    }
+
+    setActiveCallId(myCall.id);
+    if (!inCallRef.current) return;
+
+    for (const p of myCall.participants) {
+      if (p.id !== myId && !peersRef.current.has(p.id)) {
+        offerToUser(p.id, p.username);
+      }
+    }
+  };
+
+  const handleStartCallClick = () => {
+    // If there are calls we're not in, let the user choose between joining
+    // one or starting a brand-new call alongside it. Otherwise start one.
+    const joinable = calls.filter(c => !c.participants.some(p => p.id === user?.id));
+    if (joinable.length > 0) {
+      setShowCallOptionsDialog(true);
+    } else {
+      startCall();
+    }
+  };
+
+  const closeCall = (callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_call_close", callId }));
+    }
   };
 
   const toggleMute = () => {
@@ -478,9 +627,6 @@ export default function TeamRoomPage() {
       audio.muted = newDeafened;
     });
     setIsDeafened(newDeafened);
-    if (newDeafened && !isMuted) {
-      toggleMute();
-    }
   };
 
   if (!user || !["moderator", "head_of_moderation", "founder"].includes(user.role)) {
@@ -552,14 +698,26 @@ export default function TeamRoomPage() {
                     </Button>
                   </>
                 ) : (
-                  <Button
-                    variant="default"
-                    onClick={startCall}
-                    disabled={!isConnected}
-                    data-testid="button-start-call"
-                  >
-                    <Phone className="w-4 h-4 mr-2" /> Start Voice Call
-                  </Button>
+                  <>
+                    {calls.some(c => !c.participants.some(p => p.id === user?.id)) && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => setShowCallOptionsDialog(true)}
+                        disabled={!isConnected}
+                        data-testid="button-join-call"
+                      >
+                        <Phone className="w-4 h-4 mr-2" /> Join Call
+                      </Button>
+                    )}
+                    <Button
+                      variant="default"
+                      onClick={handleStartCallClick}
+                      disabled={!isConnected}
+                      data-testid="button-start-call"
+                    >
+                      <Phone className="w-4 h-4 mr-2" /> Start Voice Call
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -605,7 +763,7 @@ export default function TeamRoomPage() {
                             : "bg-muted"
                         }`}
                       >
-                        <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                        <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
                       </div>
                     </div>
                     {msg.senderId === user.id && (
@@ -689,7 +847,7 @@ export default function TeamRoomPage() {
                         {getRoleDisplay(u.role)}
                       </Badge>
                     </div>
-                    {callParticipants.includes(u.id) && (
+                    {calls.some(c => c.participants.some(p => p.id === u.id)) && (
                       <Phone className="w-4 h-4 text-green-500" />
                     )}
                   </div>
@@ -704,47 +862,125 @@ export default function TeamRoomPage() {
           </CardContent>
         </Card>
 
-        {callParticipants.length > 0 && (
+        {calls.length > 0 && (
           <Card>
             <CardHeader className="py-3 px-4">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Phone className="w-4 h-4 text-green-500" />
-                In Voice Call ({callParticipants.length})
+                Voice Calls ({calls.length})
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-2">
-              <div className="space-y-2">
-                {callParticipants.map((participantId) => {
-                  const participant = onlineUsers.find(u => u.id === participantId) ||
-                    (participantId === user.id ? { id: user.id, username: user.username, avatar: user.avatar, role: user.role } : null);
-                  if (!participant) return null;
-                  return (
-                    <div
-                      key={participantId}
-                      className="flex items-center gap-2 p-2 rounded-md bg-green-500/10"
-                      data-testid={`call-participant-${participantId}`}
-                    >
-                      <Avatar className="w-6 h-6">
-                        <AvatarImage src={participant.avatar || undefined} />
-                        <AvatarFallback>
-                          {participant.username?.charAt(0).toUpperCase() || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-sm truncate">
-                        {participant.username}
-                        {participantId === user.id && " (You)"}
-                      </span>
-                      {participantId === user.id && isMuted && (
-                        <MicOff className="w-3 h-3 text-red-500" />
+            <CardContent className="p-2 space-y-3">
+              {calls.map((call) => {
+                const amIn = call.participants.some(p => p.id === user?.id);
+                return (
+                  <div
+                    key={call.id}
+                    className="rounded-md border p-2"
+                    data-testid={`call-card-${call.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-xs font-medium truncate">
+                        {call.initiatorUsername}'s Call
+                      </p>
+                      {(user?.role === "founder" || user?.role === "head_of_moderation") && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-5 w-5"
+                          onClick={() => closeCall(call.id)}
+                          title="Close call for everyone"
+                          data-testid={`button-close-call-${call.id}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
                       )}
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="space-y-1">
+                      {call.participants.map((participant) => (
+                        <div
+                          key={participant.id}
+                          className="flex items-center gap-2 text-sm"
+                          data-testid={`call-participant-${participant.id}`}
+                        >
+                          <Avatar className="w-5 h-5">
+                            <AvatarImage src={participant.avatar || undefined} />
+                            <AvatarFallback className="text-[10px]">
+                              {participant.username?.charAt(0).toUpperCase() || "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="truncate">
+                            {participant.username}
+                            {participant.id === user?.id && " (You)"}
+                          </span>
+                          {participant.id === user?.id && isMuted && (
+                            <MicOff className="w-3 h-3 text-red-500" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {!amIn && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full mt-2"
+                        onClick={() => joinCall(call.id)}
+                        data-testid={`button-join-call-${call.id}`}
+                      >
+                        <Phone className="w-3 h-3 mr-1" /> Join Call
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
         )}
       </div>
+
+      <Dialog open={showCallOptionsDialog} onOpenChange={setShowCallOptionsDialog}>
+        <DialogContent data-testid="dialog-call-options">
+          <DialogHeader>
+            <DialogTitle>Voice Calls Active</DialogTitle>
+            <DialogDescription>
+              There {calls.length === 1 ? "is" : "are"} {calls.length} active voice call
+              {calls.length === 1 ? "" : "s"}. Join one, or start a brand new call alongside it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {calls.map((call) => (
+              <div
+                key={call.id}
+                className="flex items-center justify-between gap-2 rounded-md border p-2"
+                data-testid={`dialog-call-${call.id}`}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{call.initiatorUsername}'s Call</p>
+                  <p className="text-xs text-muted-foreground">
+                    {call.participants.length} participant{call.participants.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => joinCall(call.id)}
+                  data-testid={`button-dialog-join-${call.id}`}
+                >
+                  <Phone className="w-3 h-3 mr-1" /> Join
+                </Button>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowCallOptionsDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={startCall} data-testid="button-start-new-call">
+              <Phone className="w-4 h-4 mr-2" /> Start New Call
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

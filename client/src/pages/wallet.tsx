@@ -2,12 +2,14 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Wallet as WalletIcon, ArrowDownCircle, ArrowUpCircle, Lock, CheckCircle, DollarSign } from "lucide-react";
+import { Wallet as WalletIcon, ArrowDownCircle, ArrowUpCircle, Lock, CheckCircle, DollarSign, Send, Receipt, UserSearch, X, Check } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useMemo } from "react";
@@ -37,6 +39,21 @@ export default function WalletPage() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
+  // Transfer state
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferUserIdInput, setTransferUserIdInput] = useState("");
+  const [transferRecipient, setTransferRecipient] = useState<any>(null);
+  const [transferLookupError, setTransferLookupError] = useState("");
+
+  // Request state
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestAmount, setRequestAmount] = useState("");
+  const [requestUserIdInput, setRequestUserIdInput] = useState("");
+  const [requestRecipient, setRequestRecipient] = useState<any>(null);
+  const [requestMessage, setRequestMessage] = useState("");
+  const [requestLookupError, setRequestLookupError] = useState("");
+
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
     refetchOnWindowFocus: true,
@@ -49,9 +66,18 @@ export default function WalletPage() {
     refetchInterval: 15000,
   });
 
+  const { data: moneyRequests = [] } = useQuery<any[]>({
+    queryKey: ["/api/wallet/requests"],
+    refetchOnWindowFocus: true,
+    refetchInterval: 15000,
+  });
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx: any) => {
-      const matchesType = filterType === "all" || tx.type === filterType;
+      const matchesType =
+        filterType === "all" ||
+        tx.type === filterType ||
+        (filterType === "transfer" && (tx.type === "transfer_out" || tx.type === "transfer_in"));
       const matchesStatus = filterStatus === "all" || tx.status === filterStatus;
       return matchesType && matchesStatus;
     });
@@ -98,6 +124,109 @@ export default function WalletPage() {
         description: error?.message || "Please try again later.",
         variant: "destructive",
       });
+    },
+  });
+
+  const getErrorMessage = (error: any) => {
+    if (!error?.message) return "Please try again later.";
+    const match = String(error.message).match(/\{"error":"([^"]+)"\}/);
+    return match ? match[1] : error.message;
+  };
+
+  const lookupUser = async (
+    input: string,
+    setRecipient: (u: any) => void,
+    setError: (e: string) => void
+  ) => {
+    const numericId = parseInt(input);
+    if (!input || isNaN(numericId)) {
+      setError("Enter a valid User ID");
+      setRecipient(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/users/by-userid/${numericId}`, { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "User not found" }));
+        setError(data.error || "User not found");
+        setRecipient(null);
+      } else {
+        const user = await res.json();
+        setRecipient(user);
+        setError("");
+      }
+    } catch {
+      setError("Failed to look up user");
+      setRecipient(null);
+    }
+  };
+
+  const transferMutation = useMutation({
+    mutationFn: (data: { toUserId: string; amount: string }) =>
+      apiRequest("POST", "/api/wallet/transfer", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      toast({ title: "Transfer sent", description: "The money has been sent." });
+      setTransferOpen(false);
+      setTransferAmount("");
+      setTransferUserIdInput("");
+      setTransferRecipient(null);
+    },
+    onError: (error: any) => {
+      toast({ title: "Transfer failed", description: getErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const requestMutation = useMutation({
+    mutationFn: (data: { toUserId: string; amount: string; message?: string }) =>
+      apiRequest("POST", "/api/wallet/request", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/requests"] });
+      toast({ title: "Request sent", description: "Your money request has been sent." });
+      setRequestOpen(false);
+      setRequestAmount("");
+      setRequestUserIdInput("");
+      setRequestRecipient(null);
+      setRequestMessage("");
+    },
+    onError: (error: any) => {
+      toast({ title: "Request failed", description: getErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const acceptRequestMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/wallet/requests/${id}/accept`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      toast({ title: "Request paid", description: "The money has been sent." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Payment failed", description: getErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const declineRequestMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/wallet/requests/${id}/decline`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/requests"] });
+      toast({ title: "Request declined" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Could not decline request", description: getErrorMessage(error), variant: "destructive" });
+    },
+  });
+
+  const cancelRequestMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/wallet/requests/${id}/cancel`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/requests"] });
+      toast({ title: "Request cancelled" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Could not cancel request", description: getErrorMessage(error), variant: "destructive" });
     },
   });
 
@@ -234,6 +363,164 @@ export default function WalletPage() {
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" data-testid="button-transfer">
+                <Send className="w-4 h-4 mr-2" />
+                Transfer
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Transfer Money</DialogTitle>
+                <DialogDescription>Send money to another user's wallet</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Recipient User ID</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Enter User ID (e.g., 2)"
+                      value={transferUserIdInput}
+                      onChange={(e) => {
+                        setTransferUserIdInput(e.target.value);
+                        setTransferRecipient(null);
+                        setTransferLookupError("");
+                      }}
+                      data-testid="input-transfer-user-id"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => lookupUser(transferUserIdInput, setTransferRecipient, setTransferLookupError)}
+                      data-testid="button-transfer-lookup"
+                    >
+                      <UserSearch className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {transferLookupError && <p className="text-sm text-destructive">{transferLookupError}</p>}
+                  {transferRecipient && (
+                    <div className="p-3 rounded-md border bg-accent/50 flex items-center gap-2">
+                      <Avatar className="w-8 h-8">
+                        <AvatarImage src={transferRecipient.avatar || undefined} />
+                        <AvatarFallback>{transferRecipient.username?.[0]?.toUpperCase() || "?"}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm font-medium">{transferRecipient.username}</p>
+                        <p className="text-xs text-muted-foreground">User ID: {transferRecipient.userId}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Amount (USDT)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0.00"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    data-testid="input-transfer-amount"
+                  />
+                  <p className="text-xs text-muted-foreground">Available: ${availableBalance.toFixed(2)}</p>
+                </div>
+                <Button
+                  onClick={() => transferMutation.mutate({ toUserId: transferRecipient.id, amount: transferAmount })}
+                  disabled={!transferRecipient || !transferAmount || parseFloat(transferAmount) <= 0 || transferMutation.isPending}
+                  className="w-full"
+                  data-testid="button-confirm-transfer"
+                >
+                  {transferMutation.isPending ? "Sending..." : "Send Money"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" data-testid="button-request">
+                <Receipt className="w-4 h-4 mr-2" />
+                Request
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Request Money</DialogTitle>
+                <DialogDescription>Request money from another user</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>From User ID</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Enter User ID (e.g., 3)"
+                      value={requestUserIdInput}
+                      onChange={(e) => {
+                        setRequestUserIdInput(e.target.value);
+                        setRequestRecipient(null);
+                        setRequestLookupError("");
+                      }}
+                      data-testid="input-request-user-id"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => lookupUser(requestUserIdInput, setRequestRecipient, setRequestLookupError)}
+                      data-testid="button-request-lookup"
+                    >
+                      <UserSearch className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {requestLookupError && <p className="text-sm text-destructive">{requestLookupError}</p>}
+                  {requestRecipient && (
+                    <div className="p-3 rounded-md border bg-accent/50 flex items-center gap-2">
+                      <Avatar className="w-8 h-8">
+                        <AvatarImage src={requestRecipient.avatar || undefined} />
+                        <AvatarFallback>{requestRecipient.username?.[0]?.toUpperCase() || "?"}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm font-medium">{requestRecipient.username}</p>
+                        <p className="text-xs text-muted-foreground">User ID: {requestRecipient.userId}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Amount (USDT)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0.00"
+                    value={requestAmount}
+                    onChange={(e) => setRequestAmount(e.target.value)}
+                    data-testid="input-request-amount"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Message (optional)</Label>
+                  <Textarea
+                    placeholder="What's this for?"
+                    value={requestMessage}
+                    onChange={(e) => setRequestMessage(e.target.value)}
+                    data-testid="input-request-message"
+                  />
+                </div>
+                <Button
+                  onClick={() => requestMutation.mutate({ toUserId: requestRecipient.id, amount: requestAmount, message: requestMessage })}
+                  disabled={!requestRecipient || !requestAmount || parseFloat(requestAmount) <= 0 || requestMutation.isPending}
+                  className="w-full"
+                  data-testid="button-confirm-request"
+                >
+                  {requestMutation.isPending ? "Sending..." : "Send Request"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -293,6 +580,86 @@ export default function WalletPage() {
         </Card>
       </div>
 
+      <Card data-testid="card-money-requests">
+        <CardHeader>
+          <CardTitle>Money Requests</CardTitle>
+          <CardDescription>Incoming and outgoing cash requests</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {moneyRequests.length === 0 ? (
+            <p className="text-center text-muted-foreground py-6">No money requests yet</p>
+          ) : (
+            <div className="space-y-3">
+              {moneyRequests.map((req: any) => {
+                const incoming = req.direction === "incoming";
+                return (
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/40 flex-wrap"
+                    data-testid={`money-request-${req.id}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="w-8 h-8">
+                        <AvatarImage src={req.counterpartAvatar || undefined} />
+                        <AvatarFallback>{req.counterpartUsername?.[0]?.toUpperCase() || "?"}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">
+                          {incoming
+                            ? `${req.counterpartUsername} requested from you`
+                            : `You requested from ${req.counterpartUsername}`}
+                        </p>
+                        <p className="text-sm text-muted-foreground break-words">
+                          ${parseFloat(req.amount).toFixed(2)}
+                          {req.message && <span> &middot; {req.message}</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {req.status === "pending" && incoming && (
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => acceptRequestMutation.mutate(req.id)}
+                            disabled={acceptRequestMutation.isPending}
+                            data-testid={`button-pay-request-${req.id}`}
+                          >
+                            <Check className="w-4 h-4 mr-1" />
+                            Pay
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => declineRequestMutation.mutate(req.id)}
+                            disabled={declineRequestMutation.isPending}
+                            data-testid={`button-decline-request-${req.id}`}
+                          >
+                            <X className="w-4 h-4 mr-1" />
+                            Decline
+                          </Button>
+                        </>
+                      )}
+                      {req.status === "pending" && !incoming && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => cancelRequestMutation.mutate(req.id)}
+                          disabled={cancelRequestMutation.isPending}
+                          data-testid={`button-cancel-request-${req.id}`}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                      <Badge variant="outline">{req.status}</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -309,6 +676,7 @@ export default function WalletPage() {
                   <SelectItem value="all">All Types</SelectItem>
                   <SelectItem value="deposit">Deposits</SelectItem>
                   <SelectItem value="withdrawal">Withdrawals</SelectItem>
+                  <SelectItem value="transfer">Transfers</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={filterStatus} onValueChange={setFilterStatus}>
@@ -340,12 +708,18 @@ export default function WalletPage() {
                   <TableRow key={tx.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        {tx.type === "deposit" ? (
+                        {tx.type === "deposit" || tx.type === "transfer_in" ? (
                           <ArrowDownCircle className="w-4 h-4 text-green-500" />
                         ) : (
                           <ArrowUpCircle className="w-4 h-4 text-red-500" />
                         )}
-                        <span className="capitalize">{tx.type}</span>
+                        <span className="capitalize">
+                          {tx.type === "transfer_out"
+                            ? "Transfer Out"
+                            : tx.type === "transfer_in"
+                            ? "Transfer In"
+                            : tx.type}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell className="font-mono">

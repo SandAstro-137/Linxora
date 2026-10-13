@@ -6,7 +6,6 @@ import { storage, type CalendarEvent } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, getLevelFromEarnings, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertCustomerRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus, insertLeadershipVoteSchema, insertLeadershipVoteCastSchema, insertMeetingSchema, LeadershipVoteStatus, LeadershipVoteChoice, MeetingStatus, AbandonStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
-import { postToDiscordWebhook } from "./lib/discord-client";
 import { getCryptoPriceService } from "./lib/crypto-price-ws";
 import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
 import { z } from "zod";
@@ -281,7 +280,6 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     userRole?: string;
-    oauthState?: string;
   }
 }
 
@@ -2381,15 +2379,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceId: job.id,
       });
 
-      // Post to Discord webhook
-      try {
-        await postToDiscordWebhook(
-          `New job approved: "${job.title}" | Budget: $${job.budget} | Category: ${job.category}`
-        );
-      } catch (e) {
-        console.error("Discord webhook error:", e);
-      }
-
       res.json(updatedJob);
     } catch (error) {
       console.error("Error approving job:", error);
@@ -4236,11 +4225,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceType: "job",
         sourceId: job.id,
       });
-
-      // Post to Discord webhook
-      await postToDiscordWebhook(
-        `🎉 New job approved: **${job.title}**\nBudget: $${job.budget}\nCategory: ${job.category}\n${job.description.slice(0, 100)}...`
-      );
 
       res.json(job);
     } catch (error) {
@@ -6311,14 +6295,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceType: "job",
         sourceId: job.id,
       });
-
-      // Send Discord notification
-      const invitedUser = await storage.getUser(userId);
-      if (invitedUser) {
-        await postToDiscordWebhook(
-          `🤝 ${invitedUser.username}, you've been invited to collaborate on: **${job.title}**`
-        );
-      }
 
       res.json(invitation);
     } catch (error) {

@@ -8,7 +8,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
-import { Shield, Users, CheckCircle, XCircle, Star, Briefcase, Lock } from "lucide-react";
+import { Shield, Users, CheckCircle, XCircle, Star, Briefcase, Lock, Link2 } from "lucide-react";
 import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import { useState } from "react";
 
@@ -32,6 +32,7 @@ interface EnrichedRoleUpgradeRequest {
     completedJobs: number;
     level: number;
     rating: string;
+    portfolio: string | null;
   } | null;
 }
 
@@ -146,6 +147,22 @@ export default function RoleUpgradeReviewPage() {
                         <span>{Number(request.user.rating).toFixed(1)} rating</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {request.user?.portfolio && (
+                  <div className="space-y-2">
+                    <p className="font-medium">Linked Portfolio (Profile):</p>
+                    <a
+                      href={request.user.portfolio}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline inline-flex items-center gap-1"
+                      data-testid={`link-profile-portfolio-${request.id}`}
+                    >
+                      <Link2 className="w-4 h-4" />
+                      {request.user.portfolio}
+                    </a>
                   </div>
                 )}
 

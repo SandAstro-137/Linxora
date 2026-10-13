@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Clock, DollarSign, User, Star } from "lucide-react";
 import { Job } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
-import { formatEasternDate } from "@/lib/timezone";
+import { formatEasternDateTime } from "@/lib/timezone";
 import { useLocation } from "wouter";
 
 interface JobCardProps {
@@ -80,7 +80,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground line-clamp-2">
+        <p className="text-sm text-muted-foreground line-clamp-2 break-all">
           {job.description}
         </p>
         <div className="flex flex-wrap gap-4 text-sm">
@@ -91,7 +91,7 @@ export function JobCard({ job, onView, onClaim, showActions = true }: JobCardPro
           {job.deadline && (
             <div className="flex items-center gap-1 text-muted-foreground">
               <Clock className="w-4 h-4" />
-              <span>Due {formatEasternDate(job.deadline)} (ET)</span>
+              <span>Due {formatEasternDateTime(job.deadline)} (ET)</span>
             </div>
           )}
           {job.collaborators && job.collaborators.length > 0 && (

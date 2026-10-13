@@ -4,7 +4,24 @@
 //   2. RESEND_API_KEY    (Resend HTTP API)
 //   3. Replit connector  (fallback when deployed on Replit)
 import { Resend } from 'resend';
-import sgMail from '@sendgrid/mail';
+
+// @sendgrid/mail is an OPTIONAL dependency: the module is imported lazily
+// below only when SENDGRID_API_KEY is configured. This keeps the app from
+// crashing at startup when the package isn't installed (e.g. Render deploys
+// that only rely on Resend).
+type SgMail = { setApiKey(key: string): void; send(msg: unknown): Promise<unknown> };
+let sgMailCache: SgMail | null = null;
+async function getSgMail(): Promise<SgMail | null> {
+  if (sgMailCache) return sgMailCache;
+  try {
+    const mod = await import('@sendgrid/mail');
+    sgMailCache = (mod.default ?? mod) as SgMail;
+  } catch (err) {
+    console.error('@sendgrid/mail package not installed — SendGrid provider unavailable:', (err as Error).message);
+    sgMailCache = null;
+  }
+  return sgMailCache;
+}
 
 function getSendGridCredentials() {
   if (process.env.SENDGRID_API_KEY) {
@@ -68,10 +85,11 @@ export async function getResendClient() {
 }
 
 export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
-  const appUrl = process.env.APP_BASE_URL
-    || (process.env.REPLIT_DEPLOYMENT_URL ? 'https://linxova.co' : null)
-    || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : null)
-    || 'http://localhost:5000';
+  // Production default is the live site so verification links always work.
+  // APP_BASE_URL is only needed for local development overrides.
+  const appUrl = process.env.REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+    : (process.env.APP_BASE_URL || 'https://linxova.com');
 
   const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
   const subject = 'Verify your email address - Linxova';
@@ -108,14 +126,19 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
   // registrar — em4731.linxova.com, domainkeys, dmarc, link branding).
   const sg = getSendGridCredentials();
   if (sg) {
+    const sgMail = await getSgMail();
+    if (!sgMail) {
+      throw new Error('SendGrid selected but @sendgrid/mail is not installed');
+    }
     sgMail.setApiKey(sg.apiKey);
     try {
-      const [resp] = await sgMail.send({
+      const [resp] = (await sgMail.send({
         from: sg.fromEmail,
         to: toEmail,
+        replyTo: 'support@linxova.com',
         subject,
         html,
-      });
+      })) as unknown as [unknown];
       return resp;
     } catch (err: any) {
       const detail = err?.response?.body || err?.message || err;
@@ -129,6 +152,7 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
   const { data, error } = await client.emails.send({
     from: fromEmail,
     to: toEmail,
+    replyTo: 'support@linxova.com',
     subject,
     html,
   });

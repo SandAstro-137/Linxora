@@ -18,10 +18,28 @@ import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Save, Send, AlertCircle, Wallet, Star } from "lucide-react";
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import { TIMEZONE } from "@/lib/timezone";
+
+function isFutureDeadline(value: string): boolean {
+  if (!value) return true;
+  const d = fromZonedTime(value, TIMEZONE);
+  return !Number.isNaN(d.getTime()) && d.getTime() > Date.now();
+}
 
 const formSchema = insertJobSchema.extend({
-  budget: z.string().min(1, "Budget is required"),
-  deadline: z.string().optional(),
+  budget: z
+    .string()
+    .min(1, "Budget is required")
+    .refine((v) => parseFloat(v) >= 5, {
+      message: "Budget must be at least $5",
+    }),
+  deadline: z
+    .string()
+    .min(1, "Deadline is required")
+    .refine(isFutureDeadline, {
+      message: "Deadline must be in the future",
+    }),
 });
 
 const categories = [
@@ -96,7 +114,7 @@ export default function CreateJobPage() {
         category: existingJob.category,
         budget: existingJob.budget,
         requirements: existingJob.requirements || "",
-        deadline: existingJob.deadline ? new Date(existingJob.deadline).toISOString().split('T')[0] : "",
+        deadline: existingJob.deadline ? formatInTimeZone(new Date(existingJob.deadline), TIMEZONE, "yyyy-MM-dd'T'HH:mm") : "",
         customerId: existingJob.customerId,
         status: existingJob.status,
         isPremium: existingJob.isPremium || false,
@@ -111,7 +129,7 @@ export default function CreateJobPage() {
       const jobData = {
         ...formData,
         budget: formData.budget,
-        deadline: formData.deadline ? new Date(formData.deadline).toISOString() : undefined,
+        deadline: formData.deadline ? fromZonedTime(formData.deadline, TIMEZONE).toISOString() : undefined,
         status: JobStatus.DRAFT,
       };
       
@@ -222,7 +240,7 @@ export default function CreateJobPage() {
             <CardTitle className="text-destructive">Moderator Feedback</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm whitespace-pre-wrap">{existingJob.moderatorFeedback}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">{existingJob.moderatorFeedback}</p>
           </CardContent>
         </Card>
       )}
@@ -334,10 +352,11 @@ export default function CreateJobPage() {
                 name="deadline"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Deadline (Optional)</FormLabel>
+                    <FormLabel>Deadline</FormLabel>
                     <FormControl>
-                      <Input type="date" {...field} data-testid="input-job-deadline" />
+                      <Input type="datetime-local" {...field} data-testid="input-job-deadline" />
                     </FormControl>
+                    <FormDescription>Date and time in Eastern Time (ET).</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -920,12 +920,12 @@ function MeetingCard({
               <div className="space-y-2">
                 {rsvps.map((rsvp) => (
                   <div key={rsvp.id} className="flex items-center justify-between p-2 bg-muted/50 rounded-md">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <Avatar className="w-6 h-6">
                         <AvatarImage src={rsvp.moderator?.avatar || undefined} />
                         <AvatarFallback>{rsvp.moderator?.username?.charAt(0) || "?"}</AvatarFallback>
                       </Avatar>
-                      <span className="text-sm">{rsvp.moderator?.username || "Unknown"}</span>
+                      <span className="text-sm truncate">{rsvp.moderator?.username || "Unknown"}</span>
                     </div>
                     <Badge
                       variant="outline"

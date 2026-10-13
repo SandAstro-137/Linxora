@@ -19,11 +19,12 @@ export default function LinoPage() {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hi there! I'm Lino, your Linxora support assistant. I can help you with questions about using the platform — jobs, wallet, roles, moderation, and more. What can I help you with?",
+      content: "Hi there! I'm Lino, your Linxova support assistant. I can help you with questions about using the platform — jobs, wallet, roles, moderation, and more. What can I help you with?",
     },
   ]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [debugError, setDebugError] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -35,6 +36,7 @@ export default function LinoPage() {
 
   const handleSend = async () => {
     const trimmed = input.trim();
+    console.log("[Lino] handleSend called", { input: trimmed, isStreaming });
     if (!trimmed || isStreaming) return;
 
     const userMsg: ChatMessage = {
@@ -59,6 +61,13 @@ export default function LinoPage() {
         content: m.content,
       }));
 
+      const payload = {
+        messageCount: historyForApi.length,
+        recentMessages: historyForApi.slice(-5),
+        fullPayload: historyForApi,
+      };
+      console.log("[Lino] sending chat payload", payload);
+
       const response = await fetch("/api/lino/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,8 +76,10 @@ export default function LinoPage() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Failed to get response");
+        const text = await response.text();
+        console.error("[Lino] server error response", { status: response.status, text });
+        const err = JSON.parse(text || "{}")?.error || response.statusText || "Failed to get response";
+        throw new Error(err);
       }
 
       const reader = response.body?.getReader();
@@ -103,16 +114,18 @@ export default function LinoPage() {
               throw new Error(data.error);
             }
           } catch (e) {
-            if (!(e instanceof SyntaxError)) throw e;
+            if (e instanceof Error && !(e instanceof SyntaxError)) throw e;
           }
         }
       }
     } catch (error: any) {
+      const message = error?.message || "Sorry, I had trouble processing that. Please try again.";
+      setDebugError(message);
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
         if (last.role === "assistant" && !last.content) {
-          last.content = "Sorry, I had trouble processing that. Please try again.";
+          last.content = message;
         }
         return [...updated];
       });
@@ -133,7 +146,7 @@ export default function LinoPage() {
       {
         id: "welcome",
         role: "assistant",
-        content: "Hi there! I'm Lino, your Linxora support assistant. I can help you with questions about using the platform — jobs, wallet, roles, moderation, and more. What can I help you with?",
+        content: "Hi there! I'm Lino, your Linxova support assistant. I can help you with questions about using the platform — jobs, wallet, roles, moderation, and more. What can I help you with?",
       },
     ]);
   };
@@ -147,7 +160,7 @@ export default function LinoPage() {
           </div>
           <div>
             <h2 className="text-lg font-semibold" data-testid="text-lino-title">Lino</h2>
-            <p className="text-sm text-muted-foreground">Linxora Support Assistant</p>
+            <p className="text-sm text-muted-foreground">Linxova Support Assistant</p>
           </div>
         </div>
         <Button
@@ -205,7 +218,7 @@ export default function LinoPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Lino about Linxora..."
+            placeholder="Ask Lino about Linxova..."
             className="resize-none min-h-[44px] max-h-[120px]"
             rows={1}
             disabled={isStreaming}
@@ -223,6 +236,12 @@ export default function LinoPage() {
         <p className="text-xs text-muted-foreground mt-2">
           Lino can help with platform questions. Press Enter to send, Shift+Enter for new line.
         </p>
+        {debugError && (
+          <div className="mt-4 p-3 rounded border border-red-500 bg-red-950 text-red-100 text-xs">
+            <div className="font-semibold">Lino error:</div>
+            <div>{debugError}</div>
+          </div>
+        )}
       </div>
     </div>
   );

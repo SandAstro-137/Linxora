@@ -51,6 +51,15 @@ export default function CalendarPage() {
   const [newEventStart, setNewEventStart] = useState("");
   const [newEventEnd, setNewEventEnd] = useState("");
   const [viewingEvent, setViewingEvent] = useState<CalendarEvent | null>(null);
+  const [dayViewDate, setDayViewDate] = useState<Date | null>(null);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [movingEvent, setMovingEvent] = useState<CalendarEvent | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editStart, setEditStart] = useState("");
+  const [editEnd, setEditEnd] = useState("");
+  const [moveStart, setMoveStart] = useState("");
+  const [moveEnd, setMoveEnd] = useState("");
 
   const createEventMutation = useMutation({
     mutationFn: (data: { title: string; description: string; startTime: string; endTime: string }) =>
@@ -81,13 +90,44 @@ export default function CalendarPage() {
     },
   });
 
+  const updateEventMutation = useMutation({
+    mutationFn: (data: { id: string; title: string; description: string; startTime: string; endTime: string }) =>
+      apiRequest("PATCH", `/api/calendar/events/${data.id}`, { title: data.title, description: data.description, startTime: data.startTime, endTime: data.endTime }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      setEditingEvent(null);
+      setMovingEvent(null);
+      toast({ title: "Event updated" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update event", description: error?.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
   const handleDayClick = (date: Date) => {
-    setSelectedDay(date);
+    setDayViewDate(date);
+  };
+
+  const openEditEvent = (ev: CalendarEvent) => {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-    setNewEventStart(`${dateStr}T09:00`);
-    setNewEventEnd(`${dateStr}T10:00`);
-    setShowAddEvent(true);
+    const toLocalInput = (d: Date) => {
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    setEditingEvent(ev);
+    setEditTitle(ev.title);
+    setEditDesc(ev.description || "");
+    setEditStart(toLocalInput(new Date(ev.startTime)));
+    setEditEnd(toLocalInput(new Date(ev.endTime)));
+  };
+
+  const openMoveEvent = (ev: CalendarEvent) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const toLocalInput = (d: Date) => {
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    setMovingEvent(ev);
+    setMoveStart(toLocalInput(new Date(ev.startTime)));
+    setMoveEnd(toLocalInput(new Date(ev.endTime)));
   };
 
   const handleSubmitEvent = () => {
@@ -189,6 +229,18 @@ export default function CalendarPage() {
 
   const canDelete = (ev: CalendarEvent) =>
     ev.createdBy === user?.id || ["head_of_moderation", "founder"].includes(user?.role || "");
+
+  const dayEventsFor = (date: Date) => {
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
+    return calendarEvents
+      .filter(ev => {
+        const start = new Date(ev.startTime);
+        const end = new Date(ev.endTime);
+        return start <= dayEnd && end >= dayStart;
+      })
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  };
 
   return (
     <div className="space-y-6">
@@ -370,7 +422,7 @@ export default function CalendarPage() {
               {viewingEvent.description && (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</p>
-                  <p className="text-sm">{viewingEvent.description}</p>
+                  <p className="text-sm break-words">{viewingEvent.description}</p>
                 </div>
               )}
               <div className="space-y-1">
@@ -405,6 +457,176 @@ export default function CalendarPage() {
             </DialogFooter>
           </DialogContent>
         )}
+      </Dialog>
+
+      {/* Day View Dialog */}
+      <Dialog open={!!dayViewDate} onOpenChange={open => { if (!open) setDayViewDate(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {dayViewDate ? dayViewDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : ""}
+            </DialogTitle>
+            <DialogDescription>
+              All events for this day
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1" data-testid="day-view-scroll">
+            {dayViewDate && dayEventsFor(dayViewDate)
+              .map(ev => {
+                const start = new Date(ev.startTime);
+                const end = new Date(ev.endTime);
+                return (
+                  <div key={ev.id} className="p-3 rounded-md bg-muted/40 flex items-start justify-between gap-3" data-testid={`day-event-${ev.id}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`shrink-0 w-2.5 h-2.5 rounded-full ${ev.type === "pto" ? "bg-amber-500" : ev.type === "meeting" ? "bg-green-500" : "bg-blue-500"}`} />
+                        <span className="font-medium truncate">{ev.title}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {ev.type !== "pto" ? (
+                          <>
+                            {start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} &ndash; {end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                          </>
+                        ) : "All day"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button size="sm" variant="outline" onClick={() => openEditEvent(ev)} data-testid={`button-edit-day-event-${ev.id}`}>
+                        Edit
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => openMoveEvent(ev)} data-testid={`button-move-day-event-${ev.id}`}>
+                        Move
+                      </Button>
+                      {canDelete(ev) && (
+                        <Button size="sm" variant="ghost" onClick={() => deleteEventMutation.mutate(ev.id)} disabled={deleteEventMutation.isPending} data-testid={`button-delete-day-event-${ev.id}`}>
+                          <X className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            {dayViewDate && dayEventsFor(dayViewDate).length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">No events on this day.</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setSelectedDay(dayViewDate); const pad = (n: number) => String(n).padStart(2, "0"); if (dayViewDate) { const ds = `${dayViewDate.getFullYear()}-${pad(dayViewDate.getMonth() + 1)}-${pad(dayViewDate.getDate())}`; setNewEventStart(`${ds}T09:00`); setNewEventEnd(`${ds}T10:00`); } setShowAddEvent(true); setDayViewDate(null); }} data-testid="button-add-event-from-day">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Event
+            </Button>
+            <Button variant="outline" onClick={() => setDayViewDate(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Edit Event Dialog */}
+      <Dialog open={!!editingEvent} onOpenChange={open => { if (!open) setEditingEvent(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Event</DialogTitle>
+            <DialogDescription>
+              Update the event details below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-title">Title <span className="text-destructive">*</span></Label>
+              <Input id="edit-title" value={editTitle} onChange={e => setEditTitle(e.target.value)} data-testid="input-edit-title" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-desc">Description</Label>
+              <Textarea id="edit-desc" value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={3} data-testid="input-edit-description" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-start">Start Time <span className="text-destructive">*</span></Label>
+                <Input id="edit-start" type="datetime-local" value={editStart} onChange={e => setEditStart(e.target.value)} data-testid="input-edit-start" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-end">End Time <span className="text-destructive">*</span></Label>
+                <Input id="edit-end" type="datetime-local" value={editEnd} onChange={e => setEditEnd(e.target.value)} data-testid="input-edit-end" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingEvent(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!editingEvent) return;
+                if (!editTitle.trim() || !editStart || !editEnd) {
+                  toast({ title: "Missing fields", description: "Please fill in the title, start time, and end time.", variant: "destructive" });
+                  return;
+                }
+                updateEventMutation.mutate({
+                  id: editingEvent.id,
+                  title: editTitle,
+                  description: editDesc,
+                  startTime: new Date(editStart).toISOString(),
+                  endTime: new Date(editEnd).toISOString(),
+                });
+              }}
+              disabled={updateEventMutation.isPending}
+              data-testid="button-save-edit"
+            >
+              {updateEventMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Move Event Dialog */}
+      <Dialog open={!!movingEvent} onOpenChange={open => { if (!open) setMovingEvent(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Move Event</DialogTitle>
+            <DialogDescription>
+              Type in the new date and time the same way you did when creating the event.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {movingEvent && (
+              <p className="text-sm font-medium">{movingEvent.title}</p>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="move-start">New Start <span className="text-destructive">*</span></Label>
+                <Input id="move-start" type="datetime-local" value={moveStart} onChange={e => setMoveStart(e.target.value)} data-testid="input-move-start" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="move-end">New End <span className="text-destructive">*</span></Label>
+                <Input id="move-end" type="datetime-local" value={moveEnd} onChange={e => setMoveEnd(e.target.value)} data-testid="input-move-end" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMovingEvent(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!movingEvent) return;
+                if (!moveStart || !moveEnd) {
+                  toast({ title: "Missing fields", description: "Please fill in the new start and end times.", variant: "destructive" });
+                  return;
+                }
+                updateEventMutation.mutate({
+                  id: movingEvent.id,
+                  title: movingEvent.title,
+                  description: movingEvent.description || "",
+                  startTime: new Date(moveStart).toISOString(),
+                  endTime: new Date(moveEnd).toISOString(),
+                });
+              }}
+              disabled={updateEventMutation.isPending}
+              data-testid="button-confirm-move"
+            >
+              {updateEventMutation.isPending ? "Moving..." : "Move Event"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
 
       {/* Add Event Dialog */}

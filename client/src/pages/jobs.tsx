@@ -48,7 +48,10 @@ export default function JobsPage() {
     queryFn: async () => {
       const params = buildQueryParams();
       const url = `/api/jobs${params ? `?${params}` : ""}`;
-      const response = await fetch(url, { credentials: "include" });
+      // Use apiRequest so the tab's demo identity header is attached — otherwise this
+      // bare fetch uses the shared session cookie, which can be a different account in
+      // another tab and cause apply/role checks to misbehave.
+      const response = await apiRequest("GET", url);
       if (!response.ok) throw new Error("Failed to fetch jobs");
       return response.json();
     },
@@ -59,6 +62,7 @@ export default function JobsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-job-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
       toast({
         title: "Application submitted!",
         description: "The customer will review your application.",
