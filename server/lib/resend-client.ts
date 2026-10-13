@@ -86,12 +86,16 @@ export async function getResendClient() {
 
 export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
   // Production default is the live site so verification links always work.
-  // APP_BASE_URL is only honored if it is not a localhost value.
+  // In development, APP_BASE_URL may legitimately point at localhost so that
+  // emailed links hit the local server that holds the verification tokens.
+  const isProd = process.env.NODE_ENV === 'production';
   const override = process.env.APP_BASE_URL;
   const looksLocal = override && /^https?:\/\/(localhost|127\.0\.0\.1)/i.test(override);
   const appUrl = process.env.REPLIT_DEV_DOMAIN
     ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : (override && !looksLocal ? override : 'https://linxova.com');
+    : isProd
+      ? (override && !looksLocal ? override : 'https://linxova.com')
+      : (override || `http://localhost:${process.env.PORT || '5000'}`);
 
   const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
   const subject = 'Verify your email address - Linxova';
