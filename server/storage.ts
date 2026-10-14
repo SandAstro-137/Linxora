@@ -605,7 +605,7 @@ export class MemStorage implements IStorage {
       avatar: insertUser.avatar ?? null,
       specialization: insertUser.specialization ?? null,
       portfolio: insertUser.portfolio ?? null,
-      role: insertUser.role ?? "freelancer",
+      role: insertUser.role ?? "customer",
       level: insertUser.level ?? 1,
       completedJobs: insertUser.completedJobs ?? 0,
       totalJobs: insertUser.totalJobs ?? 0,

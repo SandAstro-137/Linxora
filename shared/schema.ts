@@ -197,7 +197,7 @@ export const users = pgTable("users", {
   pendingEmail: text("pending_email"),
   avatar: text("avatar"),
   bio: text("bio"),
-  role: text("role").notNull().default(UserRole.FREELANCER),
+  role: text("role").notNull().default(UserRole.CUSTOMER),
   level: integer("level").default(1),
   specialization: text("specialization"),
   portfolio: text("portfolio"),

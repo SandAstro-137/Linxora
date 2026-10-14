@@ -393,7 +393,7 @@ export class MongoStorage implements IStorage {
       username: insertUser.username,
       email: insertUser.email ?? null,
       avatar: insertUser.avatar ?? null,
-      role: insertUser.role ?? "freelancer",
+      role: insertUser.role ?? "customer",
       level: insertUser.level ?? 1,
       specialization: insertUser.specialization ?? null,
       portfolio: insertUser.portfolio ?? null,
