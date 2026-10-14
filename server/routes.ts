@@ -464,7 +464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: payload.email ? String(payload.email).toLowerCase() : null,
           emailVerified: payload.email_verified === true,
           avatar: payload.picture || null,
-          role: 'freelancer', // Default role
+          role: 'customer', // Default role for new accounts
         });
         // Create wallet for new user (same as Discord flow)
         await storage.createWallet({
@@ -592,7 +592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           avatar: discordUser.avatar 
             ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png` 
             : null,
-          role: "freelancer", // Default role
+          role: "customer", // Default role for new accounts
         });
 
         // Create wallet for new user
