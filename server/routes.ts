@@ -374,6 +374,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Auth routes - Discord OAuth (Direct implementation)
+  // Google OAuth (primary customer sign-in). The Google account ID is stored
+  // in the existing external-auth-ID column (discordId), which acts as a
+  // "platform provider account id"; users from different providers live in the
+  // same table. Google-verified emails are trusted and marked verified.
+  app.get("/api/auth/google", async (req, res) => {
+    try {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+      if (!clientId || !redirectUri) {
+        console.error("Google OAuth missing config:", { clientId: !!clientId, redirectUri: !!redirectUri });
+        return res.status(500).json({ error: "Google OAuth not configured" });
+      }
+      // CSRF state (crypto-random, session-anchored — same pattern as Discord).
+      const state = randomBytes(24).toString('hex');
+      req.session.oauthState = 'g:' + state;
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        state: state,
+        prompt: 'select_account',
+      });
+      res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+    } catch (error) {
+      console.error("Google OAuth error:", error);
+      res.status(500).json({ error: "Failed to initiate Google login" });
+    }
+  });
+
+  app.get("/api/auth/google/callback", async (req, res) => {
+    try {
+      const { code, state, error: oauthError } = req.query;
+      if (oauthError) {
+        console.error("Google OAuth error:", oauthError);
+        return res.redirect("/?error=oauth_denied");
+      }
+      if (!code) return res.redirect("/?error=no_code");
+      if (!state || state !== req.session.oauthState) {
+        console.error("Google state mismatch:", { received: state, expected: req.session.oauthState });
+        return res.redirect("/?error=invalid_state");
+      }
+      delete req.session.oauthState;
+
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+      if (!clientId || !clientSecret || !redirectUri) {
+        console.error("Google OAuth missing credentials");
+        return res.redirect("/?error=config_missing");
+      }
+
+      // Exchange code for tokens
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: redirectUri,
+        }),
+      });
+      const tokenData = await tokenResponse.json();
+      if (!tokenData.access_token) {
+        console.error("Failed to get Google access token:", tokenData);
+        return res.redirect("/?error=token_exchange_failed");
+      }
+
+      // Decode the ID token payload for identity + verified email
+      const idToken = String(tokenData.id_token || '');
+      const payloadB64 = idToken.split('.')[1];
+      if (!payloadB64) return res.redirect("/?error=user_fetch_failed");
+      const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+      if (!payload.sub) {
+        console.error("Failed to parse Google identity:", payload);
+        return res.redirect("/?error=user_fetch_failed");
+      }
+
+      // Find or create user (Google account id is stored in the external-ID column)
+      let user = await storage.getUserByDiscordId(payload.sub);
+      if (!user) {
+        const name = payload.given_name || payload.name || String(payload.email || 'user').split('@')[0];
+        user = await storage.createUser({
+          discordId: payload.sub,
+          username: name,
+          email: payload.email ? String(payload.email).toLowerCase() : null,
+          emailVerified: payload.email_verified === true,
+          avatar: payload.picture || null,
+          role: 'freelancer', // Default role
+        });
+        // Create wallet for new user (same as Discord flow)
+        await storage.createWallet({
+          userId: user.id,
+          walletAddress: `0x${randomBytes(8).toString('hex')}`,
+        });
+      }
+
+      req.session.userId = user.id;
+      req.session.userRole = user.role;
+      res.redirect("/dashboard");
+    } catch (error) {
+      console.error("Google OAuth callback error:", error);
+      res.redirect("/?error=callback_failed");
+    }
+  });
+
   app.get("/api/auth/discord", async (req, res) => {
     try {
       const clientId = process.env.DISCORD_CLIENT_ID;
