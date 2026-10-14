@@ -19,12 +19,19 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,
+    secure: process.env.NODE_ENV === 'production', // HTTPS-only in production
     httpOnly: true,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     sameSite: 'lax',
   },
 }));
+
+// Fail fast in production if no strong session secret is set — the fallback
+// string would let anyone forge sessions.
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('[security] SESSION_SECRET not set in production — aborting start');
+  process.exit(1);
+}
 
 app.use(express.json({
   limit: "25mb",
@@ -92,8 +99,13 @@ import { startScheduledTaskRunner } from "./lib/scheduled-tasks";
     console.log('MONGODB_URI not configured, using in-memory storage');
   }
   
-  // Seed initial data
-  await seedData();
+  // Seed initial data (demo content). In production the platform starts clean —
+  // demo accounts and sample jobs must never be created on a real deployment.
+  if (process.env.NODE_ENV === 'production') {
+    console.log('Production: skipping demo data seeding');
+  } else {
+    await seedData();
+  }
 
   const server = await registerRoutes(app);
 

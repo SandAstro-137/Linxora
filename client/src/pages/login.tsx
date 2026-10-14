@@ -3,19 +3,46 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
 import { Briefcase, Wallet, Shield, Users } from "lucide-react";
+import { useEffect, useState } from "react";
 import logoLight from "@assets/logo-light.png";
 import logoDark from "@assets/logo-dark.png";
 
 export default function LoginPage() {
   const { login } = useAuth();
+  // Real (Discord) sign-in is always shown. Demo accounts are only visible when
+  // the server actually offers them (disabled on production deployments). The
+  // endpoint is polled once in 30s intervals because the dev server configuration
+  // can change at runtime.
+  const [demoAccounts, setDemoAccounts] = useState<{ id: string; label: string; description: string }[] | null>(null);
 
-  const demoAccounts = [
-    { id: "demo-freelancer-1", label: "Demo Freelancer", description: "Alex Chen - Web Developer" },
-    { id: "demo-customer-1", label: "Demo Customer", description: "Tech Startup Inc" },
-    { id: "demo-moderator-1", label: "Demo Moderator", description: "Admin User" },
-    { id: "demo-head-mod-1", label: "Demo Head of Moderation", description: "Head Moderator" },
-    { id: "demo-founder-1", label: "Demo Founder", description: "Founder - Full Access" },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/auth/demo-accounts");
+        if (!res.ok) throw new Error("demo disabled");
+        const data = await res.json();
+        const labels: Record<string, { label: string; description: string }> = {
+          "demo-freelancer-1": { label: "Demo Freelancer", description: "Alex Chen - Web Developer" },
+          "demo-customer-1": { label: "Demo Customer", description: "Tech Startup Inc" },
+          "demo-moderator-1": { label: "Demo Moderator", description: "Admin User" },
+          "demo-head-mod-1": { label: "Demo Head of Moderation", description: "Head Moderator" },
+          "demo-founder-1": { label: "Demo Founder", description: "Founder - Full Access" },
+          "demo-freelancer-2": { label: "Demo Freelancer II", description: "Sarah Johnson - Designer" },
+        };
+        const mapped = (Array.isArray(data) ? data : [])
+          .filter((a: any) => labels[a.id])
+          .map((a: any) => ({ id: a.id, ...labels[a.id] }));
+        if (!cancelled) setDemoAccounts(mapped);
+      } catch {
+        if (!cancelled) setDemoAccounts([]);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const showDemo = Array.isArray(demoAccounts) && demoAccounts.length > 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 flex items-center justify-center p-4">
@@ -50,30 +77,41 @@ export default function LoginPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <p className="text-sm text-muted-foreground text-center uppercase tracking-wide">
-                Choose an account to continue
-              </p>
+              <a href="/api/auth/discord" className="block">
+                <Button className="w-full h-12 text-base gap-2" data-testid="button-discord-login">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor" aria-hidden="true">
+                    <path d="M20.317 4.37a19.79 19.79 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.056 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128c.126-.094.249-.192.369-.291a.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.099.243.198.369.291a.077.077 0 01-.006.127 12.3 12.3 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.84 19.84 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 00-.031-.029zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z"/>
+                  </svg>
+                  Sign in with Discord
+                </Button>
+              </a>
 
-              <div className="space-y-2">
-                {demoAccounts.map((account) => (
-                  <Button
-                    key={account.id}
-                    onClick={() => login(account.id)}
-                    variant="outline"
-                    className="w-full justify-start gap-3 h-auto py-3"
-                    data-testid={`button-demo-${account.id}`}
-                  >
-                    <div className="flex flex-col items-start">
-                      <div className="font-medium">{account.label}</div>
-                      <div className="text-xs text-muted-foreground">{account.description}</div>
-                    </div>
-                  </Button>
-                ))}
-              </div>
-
-              <p className="text-xs text-center text-muted-foreground">
-                Demo accounts are for testing purposes only
-              </p>
+              {showDemo && (
+                <>
+                  <p className="text-sm text-muted-foreground text-center uppercase tracking-wide">
+                    Or choose a demo account
+                  </p>
+                  <div className="space-y-2">
+                    {demoAccounts!.map((account) => (
+                      <Button
+                        key={account.id}
+                        onClick={() => login(account.id)}
+                        variant="outline"
+                        className="w-full justify-start gap-3 h-auto py-3"
+                        data-testid={`button-demo-${account.id}`}
+                      >
+                        <div className="flex flex-col items-start">
+                          <div className="font-medium">{account.label}</div>
+                          <div className="text-xs text-muted-foreground">{account.description}</div>
+                        </div>
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-center text-muted-foreground">
+                    Demo accounts are for testing purposes only
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
 

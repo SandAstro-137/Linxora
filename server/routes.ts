@@ -306,8 +306,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
-  // Development: Simple login for testing (remove in production)
+  // Development: Simple login for testing. DISABLED in production — anyone could
+  // otherwise become any account (including founder) with a single request.
   app.post("/api/auth/dev-login", async (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(404).json({ error: "Not found" });
+    }
     try {
       const { discordId } = req.body;
       let user = await storage.getUserByDiscordId(discordId);
@@ -522,7 +526,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ ok: true });
   });
 
+  // Demo account list for the development login page. Disabled in production:
+  // returns 401 so the frontend falls back to real (Discord) sign-in only.
   app.get("/api/auth/demo-accounts", async (_req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(401).json({ error: "Demo accounts are disabled in production" });
+    }
     try {
       const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-head-mod-1", "demo-founder-1"];
       const accounts = [];
@@ -6697,7 +6706,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Dev aid: when no email provider is configured, make the verification
       // link retrievable from the server log so the flow stays testable.
-      if (!process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
+      if (!process.env.ZOHO_SMTP_USER && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
         console.log(`[email-verification] No email provider configured. Verification link for ${trimmedEmail}: http://localhost:5000/api/profile/email-verify?token=${token}`);
       }
       
@@ -6712,7 +6721,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // left wondering why nothing arrives in their inbox.
         if (msg.includes('not set and no Replit connector') || msg.includes('Resend not connected')) {
           return res.status(503).json({
-            error: "Email sending is not configured on this server (missing SENDGRID_API_KEY or RESEND_API_KEY). The verification email was not sent — ask the administrator to add an API key. In development you can verify with:\n/api/profile/email-verify?token=<token from server log>",
+            error: "Email sending is not configured on this server (missing ZOHO_SMTP_USER/ZOHO_SMTP_PASSWORD, SENDGRID_API_KEY, or RESEND_API_KEY). The verification email was not sent — ask the administrator to configure an email provider. In development you can verify with:\n/api/profile/email-verify?token=<token from server log>",
             pendingEmail: trimmedEmail,
           });
         }

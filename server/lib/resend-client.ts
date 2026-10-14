@@ -1,9 +1,12 @@
-// Email sending client. Supports three providers, checked in order:
-//   1. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
+// Email sending client. Providers, checked in order:
+//   1. ZOHO_SMTP_USER + ZOHO_SMTP_PASSWORD (Zoho Mail SMTP — smtppro.zoho.com,
+//      sends from your own Zoho mailbox on linxova.com, no verification needed)
+//   2. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
 //      e.g. em4731.linxova.com, must be verified via SendGrid Sender Auth)
-//   2. RESEND_API_KEY    (Resend HTTP API)
-//   3. Replit connector  (fallback when deployed on Replit)
+//   3. RESEND_API_KEY    (Resend HTTP API)
+//   4. Replit connector  (fallback when deployed on Replit)
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 
 // @sendgrid/mail is an OPTIONAL dependency: the module is imported lazily
 // below only when SENDGRID_API_KEY is configured. This keeps the app from
@@ -84,6 +87,35 @@ export async function getResendClient() {
   };
 }
 
+const htmlEmailTemplate = (username: string, verificationUrl: string) => `<!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 40px 20px;">
+        <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <h1 style="color: #18181b; font-size: 24px; margin: 0 0 16px;">Verify your email address</h1>
+          <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
+            Hi ${username},
+          </p>
+          <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
+            You requested to change your email address on Linxova. Click the button below to verify this email address:
+          </p>
+          <a href="${verificationUrl}" style="display: inline-block; background-color: #2563eb; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500; font-size: 16px;">
+            Verify Email Address
+          </a>
+          <p style="color: #71717a; font-size: 14px; line-height: 1.5; margin: 24px 0 0;">
+            This link will expire in 24 hours. If you didn't request this change, you can safely ignore this email.
+          </p>
+          <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 32px 0;">
+          <p style="color: #a1a1aa; font-size: 12px; margin: 0;">
+            Linxova - Professional Freelancer Marketplace
+          </p>
+        </div>
+      </body>
+    </html>`;
+
 export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
   // Production default is the live site so verification links always work.
   // In development, APP_BASE_URL may legitimately point at localhost so that
@@ -99,36 +131,39 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
 
   const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
   const subject = 'Verify your email address - Linxova';
-  const html = `<!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 40px 20px;">
-          <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <h1 style="color: #18181b; font-size: 24px; margin: 0 0 16px;">Verify your email address</h1>
-            <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
-              Hi ${username},
-            </p>
-            <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
-              You requested to change your email address on Linxova. Click the button below to verify this email address:
-            </p>
-            <a href="${verificationUrl}" style="display: inline-block; background-color: #2563eb; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500; font-size: 16px;">
-              Verify Email Address
-            </a>
-            <p style="color: #71717a; font-size: 14px; line-height: 1.5; margin: 24px 0 0;">
-              This link will expire in 24 hours. If you didn't request this change, you can safely ignore this email.
-            </p>
-            <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 32px 0;">
-            <p style="color: #a1a1aa; font-size: 12px; margin: 0;">
-              Linxova - Professional Freelancer Marketplace
-            </p>
-          </div>
-        </body>
-      </html>`;
+  const html = htmlEmailTemplate(username, verificationUrl);
 
-  // Provider 1: SendGrid (authenticated domain via CNAMEs you add at your
+  // Provider 1: Zoho Mail SMTP (your own mailbox on linxova.com — real inbox,
+  // best deliverability; credentials via ZOHO_SMTP_USER / ZOHO_SMTP_PASSWORD).
+  if (process.env.ZOHO_SMTP_USER && process.env.ZOHO_SMTP_PASSWORD) {
+    const host = process.env.ZOHO_SMTP_HOST || 'smtppro.zoho.com';
+    const port = Number(process.env.ZOHO_SMTP_PORT || '465');
+    const fromEmail = process.env.ZOHO_FROM_EMAIL || process.env.ZOHO_SMTP_USER;
+    try {
+      const transport = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: {
+          user: process.env.ZOHO_SMTP_USER,
+          pass: process.env.ZOHO_SMTP_PASSWORD,
+        },
+      });
+      const info = await transport.sendMail({
+        from: fromEmail,
+        to: toEmail,
+        replyTo: 'support@linxova.com',
+        subject,
+        html,
+      });
+      return info;
+    } catch (err: any) {
+      console.error('Zoho SMTP send failed:', err?.message || err);
+      throw new Error('Failed to send verification email (Zoho SMTP)');
+    }
+  }
+
+  // Provider 2: SendGrid (authenticated domain via CNAMEs you add at your
   // registrar — em4731.linxova.com, domainkeys, dmarc, link branding).
   const sg = getSendGridCredentials();
   if (sg) {
@@ -153,7 +188,7 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
     }
   }
 
-  // Provider 2: Resend
+  // Provider 3: Resend
   const { client, fromEmail } = await getResendClient();
   const { data, error } = await client.emails.send({
     from: fromEmail,
