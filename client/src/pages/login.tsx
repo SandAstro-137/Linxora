@@ -45,7 +45,11 @@ export default function LoginPage() {
   const showDemo = Array.isArray(demoAccounts) && demoAccounts.length > 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 text-neutral-900 dark:!bg-none flex items-center justify-center p-4">
+    <div
+      className="min-h-screen text-neutral-900 flex items-center justify-center p-4"
+      // Inline style so the light gradient can't be overridden by site dark mode.
+      style={{ background: "linear-gradient(to bottom right, #eff6ff, #ffffff, #f5f3ff)" }}
+    >
       <div className="w-full max-w-6xl">
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
