@@ -412,7 +412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect("/?error=oauth_denied");
       }
       if (!code) return res.redirect("/?error=no_code");
-      if (!state || state !== req.session.oauthState) {
+      if (!state || typeof state !== 'string' || req.session.oauthState !== 'g:' + state) {
         console.error("Google state mismatch:", { received: state, expected: req.session.oauthState });
         return res.redirect("/?error=invalid_state");
       }
