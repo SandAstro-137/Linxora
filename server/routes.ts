@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { randomBytes, randomUUID } from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage, type CalendarEvent } from "./storage";
+import { AccountDeletionBlockedError, storage, type CalendarEvent } from "./storage";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, getLevelFromEarnings, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertCustomerRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus, insertLeadershipVoteSchema, insertLeadershipVoteCastSchema, insertMeetingSchema, LeadershipVoteStatus, LeadershipVoteChoice, MeetingStatus, AbandonStatus } from "@shared/schema";
 import { getCryptoPrices } from "./lib/coingecko";
@@ -280,6 +280,9 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     userRole?: string;
+    accountDeletionUserId?: string;
+    accountDeletionConfirmUntil?: number;
+    accountDeletionIssues?: string[];
   }
 }
 
@@ -7486,6 +7489,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(prefs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/settings/delete-account/confirmation", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      req.session.accountDeletionUserId = userId;
+      req.session.accountDeletionConfirmUntil = Date.now() + 8000;
+      req.session.accountDeletionIssues = undefined;
+      res.json({ expiresInMs: 8000 });
+    } catch (error) {
+      res.status(500).json({ error: "Unable to start account deletion confirmation." });
+    }
+  });
+
+  app.delete("/api/settings/delete-account/confirmation", requireAuth, (req, res) => {
+    req.session.accountDeletionUserId = undefined;
+    req.session.accountDeletionConfirmUntil = undefined;
+    req.session.accountDeletionIssues = undefined;
+    res.json({ success: true });
+  });
+
+  app.get("/api/settings/delete-account/eligibility", requireAuth, async (req, res) => {
+    const userId = req.session.userId!;
+    if (req.session.accountDeletionUserId !== userId || !req.session.accountDeletionConfirmUntil) {
+      return res.status(403).json({ error: "Start the account deletion confirmation first." });
+    }
+    const remainingMs = req.session.accountDeletionConfirmUntil - Date.now();
+    if (remainingMs > 0) {
+      return res.status(425).json({ error: "The deletion wait period is still in progress.", remainingMs });
+    }
+    try {
+      const issues = await storage.getAccountDeletionBlockReasons(userId);
+      req.session.accountDeletionIssues = issues;
+      return res.json({ eligible: issues.length === 0, issues });
+    } catch (error) {
+      console.error("Account deletion eligibility check failed:", error);
+      return res.status(500).json({ error: "Unable to verify account deletion requirements. Try again." });
+    }
+  });
+
+  app.delete("/api/settings/delete-account", requireAuth, async (req, res) => {
+    const userId = req.session.userId!;
+    try {
+      if (req.session.accountDeletionUserId !== userId || !req.session.accountDeletionConfirmUntil) {
+        return res.status(403).json({ error: "Restart the account deletion confirmation before continuing." });
+      }
+      if (Date.now() < req.session.accountDeletionConfirmUntil) {
+        const remainingMs = req.session.accountDeletionConfirmUntil - Date.now();
+        return res.status(425).json({ error: "Please wait for the confirmation timer to finish.", remainingMs });
+      }
+      const issues = await storage.getAccountDeletionBlockReasons(userId);
+      req.session.accountDeletionIssues = issues;
+      if (issues.length > 0) {
+        req.session.accountDeletionUserId = undefined;
+        req.session.accountDeletionConfirmUntil = undefined;
+        return res.status(409).json({ error: issues[0], issues });
+      }
+      await storage.deleteAccount(userId);
+      req.session.destroy(error => {
+        if (error) return res.status(500).json({ error: "Account deleted, but sign-out failed. Please sign in again." });
+        res.clearCookie("connect.sid");
+        res.json({ success: true });
+      });
+    } catch (error) {
+      req.session.accountDeletionUserId = undefined;
+      req.session.accountDeletionConfirmUntil = undefined;
+      if (error instanceof AccountDeletionBlockedError) {
+        return res.status(409).json({ error: error.message });
+      }
+      console.error("Account deletion failed:", error);
+      res.status(500).json({ error: "Account deletion failed. Your account has not been confirmed as deleted." });
     }
   });
 

@@ -78,6 +78,11 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
+  // Unknown API paths must return JSON, not the SPA HTML shell.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "API endpoint not found." });
+  });
+
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));

@@ -1,4 +1,5 @@
 import { MongoClient, Db, Collection, ObjectId } from 'mongodb';
+import { randomUUID } from "crypto";
 import {
   type User,
   type InsertUser,
@@ -31,7 +32,8 @@ import {
   type DirectMessage,
   type InsertDirectMessage,
 } from "@shared/schema";
-import type { IStorage } from "../storage";
+import { AccountDeletionBlockedError, type IStorage } from "../storage";
+import { getWalletBalanceBlockReason } from "./wallet-amounts";
 
 export class MongoStorage implements IStorage {
   private client: MongoClient;
@@ -409,6 +411,207 @@ export class MongoStorage implements IStorage {
     };
     const result = await this.users.insertOne(doc);
     return this.toUser({ ...doc, _id: result.insertedId });
+  }
+
+  async getAccountDeletionBlockReasons(userId: string): Promise<string[]> {
+    const issues: string[] = [];
+    const possibleUserIds: unknown[] = [userId];
+    if (ObjectId.isValid(userId)) possibleUserIds.push(new ObjectId(userId));
+    const relatedJobs = await this.jobs.find({
+      $or: [
+        { customerId: { $in: possibleUserIds } },
+        { freelancerId: { $in: possibleUserIds } },
+        { projectLeaderId: { $in: possibleUserIds } },
+        { collaborators: { $in: possibleUserIds } },
+      ],
+    }).toArray();
+    const openJobs = relatedJobs.filter(job => !["completed", "cancelled", "rejected", "expired"].includes(String(job.status ?? "").toLowerCase()));
+    const postedOpenJob = openJobs.some(job => String(job.customerId) === userId);
+    const assignedOpenJob = openJobs.some(job => String(job.freelancerId ?? "") === userId || String(job.projectLeaderId ?? "") === userId || job.collaborators?.some((id: unknown) => String(id) === userId));
+
+    // Include denormalized assignment rows where the job's participant fields
+    // are stale or missing.
+    const assignments = await this.db.collection("jobFreelancers").find({ freelancerId: { $in: possibleUserIds } }).toArray();
+    const assignmentJobIds = assignments
+      .filter(assignment => !["completed", "paid", "removed", "cancelled", "rejected"].includes(String(assignment.status ?? "").toLowerCase()))
+      .map(assignment => String(assignment.jobId));
+    const assignedJobs = assignmentJobIds.length > 0
+      ? await this.jobs.find({ _id: { $in: assignmentJobIds.filter(ObjectId.isValid).map(id => new ObjectId(id)) } }).toArray()
+      : [];
+    const hasOpenAssignment = assignedJobs.some(job => !["completed", "cancelled", "rejected", "expired"].includes(String(job.status ?? "").toLowerCase()));
+    if (postedOpenJob) issues.push("Job posted or pending — cancel or complete every job you've posted to continue.");
+    if (assignedOpenJob || hasOpenAssignment) issues.push("In a job — exit or complete every job you're assigned to continue.");
+
+    if (await this.db.collection("jobRequests").findOne({ freelancerId: { $in: possibleUserIds }, status: "pending" })) {
+      issues.push("Pending job application — withdraw or resolve it to continue.");
+    }
+
+    const walletDocs = await this.wallets.find({ userId: { $in: possibleUserIds } }).toArray();
+    const isNonzeroOrInvalid = (balance: unknown) => {
+      const amount = Number(balance ?? 0);
+      return !Number.isFinite(amount) || amount !== 0;
+    };
+    const walletBalanceIssue = getWalletBalanceBlockReason(walletDocs.map(wallet => ({
+      currency: "USDT",
+      balance: wallet.usdtBalance,
+    })));
+    if (walletBalanceIssue) issues.push(walletBalanceIssue);
+    if (walletDocs.some(wallet => isNonzeroOrInvalid(wallet.pendingUsdtBalance))) {
+      issues.push("Pending funds — wait for them to settle to continue.");
+    }
+
+    const walletIds: Array<ObjectId | string> = walletDocs.flatMap(wallet => [wallet._id as ObjectId, String(wallet._id)]);
+    if (walletIds.length && await this.transactions.findOne({
+      walletId: { $in: walletIds },
+      status: { $in: ["pending", "processing", "in_progress", "queued"] },
+    })) {
+      issues.push("Pending wallet transaction — wait for it to complete to continue.");
+    }
+
+    const relatedJobIds: unknown[] = [
+      ...relatedJobs.map(job => job._id),
+      ...assignments.map(assignment => assignment.jobId),
+    ];
+    const possibleJobIds: unknown[] = [...relatedJobIds];
+    for (const jobId of relatedJobIds) {
+      const jobIdString = String(jobId);
+      possibleJobIds.push(jobIdString);
+      if (ObjectId.isValid(jobIdString)) possibleJobIds.push(new ObjectId(jobIdString));
+    }
+    if (await this.db.collection("escrow").findOne({
+      status: { $in: ["held", "partial_refund"] },
+      $or: [
+        { customerId: { $in: possibleUserIds } },
+        { jobId: { $in: possibleJobIds } },
+      ],
+    })) {
+      issues.push("Funds are held in escrow — resolve the escrow to continue.");
+    }
+    if (await this.db.collection("moneyRequests").findOne({
+      $or: [{ requesterId: { $in: possibleUserIds } }, { recipientId: { $in: possibleUserIds } }],
+      status: "pending",
+    })) {
+      issues.push("Pending money request — accept, decline, or cancel it to continue.");
+    }
+    return issues;
+  }
+
+  async getAccountDeletionBlockReason(userId: string): Promise<string | null> {
+    return (await this.getAccountDeletionBlockReasons(userId))[0] ?? null;
+  }
+
+  async deleteAccount(userId: string): Promise<void> {
+    const blockReason = await this.getAccountDeletionBlockReason(userId);
+    if (blockReason) throw new AccountDeletionBlockedError(blockReason);
+
+    const deletedReference = `deleted-account-${randomUUID()}`;
+    if (!ObjectId.isValid(userId)) throw new Error("Invalid account ID; deletion did not complete.");
+    const userIds: unknown[] = [userId, new ObjectId(userId)];
+    const walletDocs = await this.wallets.find({ userId: { $in: userIds } }).project({ _id: 1 }).toArray();
+    const walletIds: unknown[] = walletDocs.flatMap(wallet => [wallet._id, wallet._id.toString()]);
+    const remove = async (name: string, filter: Record<string, any>) => this.db.collection(name).deleteMany(filter);
+    const anonymize = async (name: string, filter: Record<string, any>, fields: Record<string, any>) => {
+      const set = Object.fromEntries(Object.entries(fields).map(([field, replacement]) => [field, replacement === "@deleted" ? deletedReference : replacement]));
+      await this.db.collection(name).updateMany(filter, { $set: set });
+    };
+    const removeArrayEntry = async (collectionName: string, fieldName: string) => {
+      const collection = this.db.collection(collectionName);
+      const documents = await collection.find({ [fieldName]: userId }).toArray();
+      for (const document of documents) {
+        const entries: any = document[fieldName];
+        if (Array.isArray(entries)) {
+          await collection.updateOne({ _id: document._id }, { $set: { [fieldName]: entries.filter((entry: string) => entry !== userId) } });
+        }
+      }
+    };
+
+    // Private/account-owned records and one-to-one conversations are erased.
+    await this.wallets.deleteMany({ userId: { $in: userIds } });
+    await this.transactions.updateMany({ walletId: { $in: walletIds } }, { $set: { walletId: deletedReference } });
+    await this.ptoRequests.deleteMany({ freelancerId: userId });
+    await this.invitations.deleteMany({ $or: [{ fromUserId: userId }, { toUserId: userId }] });
+    await this.cancellationRequests.deleteMany({ requesterId: userId });
+    await anonymize("cancellationRequests", { reviewerId: userId }, { reviewerId: "@deleted", reviewNotes: "[deleted]" });
+    await this.directMessages.deleteMany({ $or: [{ senderId: userId }, { receiverId: userId }] });
+    await this.notifications.deleteMany({ userId });
+    await remove("abandonRequests", { freelancerId: userId });
+    await remove("roleUpgradeRequests", { userId });
+    await remove("userPreferences", { userId });
+    await remove("hiddenConversations", { $or: [{ userId }, { partnerId: userId }] });
+    await remove("emailVerificationTokens", { userId });
+    await remove("jobRequests", { freelancerId: { $in: userIds } });
+    await this.db.collection("jobFreelancers").deleteMany({ freelancerId: { $in: userIds } });
+    await remove("oauthAccounts", { userId });
+    await remove("sessions", { "session.userId": { $in: userIds } });
+    await remove("friends", { $or: [{ userId }, { friendId: userId }] });
+    await remove("friendRequests", { $or: [{ fromUserId: userId }, { toUserId: userId }] });
+    await remove("userFollows", { $or: [{ followerId: userId }, { followingId: userId }] });
+    await remove("userBlocks", { $or: [{ blockerId: userId }, { blockedId: userId }] });
+    await remove("groupChatMembers", { userId });
+    await remove("moneyRequests", { $or: [{ requesterId: userId }, { recipientId: userId }] });
+    await remove("calendarEvents", { createdBy: userId });
+    await remove("meetingRsvps", { moderatorId: userId });
+    await remove("meetingExemptions", { moderatorId: userId });
+    await remove("weeklyIncomes", { moderatorId: userId });
+
+    // Retain shared marketplace/financial/moderation records only in an
+    // anonymized form, redacting messages and user-authored free text.
+    await anonymize("jobs", { customerId: userId }, { customerId: "@deleted", title: "[deleted]", description: "[deleted]", requirements: null });
+    await anonymize("jobs", { freelancerId: userId }, { freelancerId: "@deleted" });
+    await anonymize("jobs", { projectLeaderId: userId }, { projectLeaderId: "@deleted" });
+    await removeArrayEntry("jobs", "collaborators");
+    await anonymize("escrow", { customerId: userId }, { customerId: "@deleted" });
+    await anonymize("ratings", { customerId: userId }, { customerId: "@deleted", review: "[deleted]" });
+    await anonymize("ratings", { freelancerId: userId }, { freelancerId: "@deleted", review: "[deleted]" });
+    await anonymize("customerRatings", { customerId: userId }, { customerId: "@deleted", review: "[deleted]" });
+    await anonymize("customerRatings", { freelancerId: userId }, { freelancerId: "@deleted", review: "[deleted]" });
+    await anonymize("chatMessages", { senderId: userId }, { senderId: "@deleted", message: "[deleted]" });
+    await anonymize("chatMessages", { receiverId: userId }, { receiverId: "@deleted" });
+    await anonymize("teamNotes", { authorId: userId }, { authorId: "@deleted", content: "[deleted]" });
+    await anonymize("teamMessages", { senderId: userId }, { senderId: "@deleted", content: "[deleted]" });
+    await this.teamTasks.updateMany({ assigneeId: userId }, { $set: { assigneeId: null } });
+    await anonymize("reports", { reporterId: userId }, { reporterId: "@deleted", description: "[deleted]", reason: "[deleted]" });
+    await anonymize("reports", { targetId: userId }, { targetId: "@deleted" });
+    await anonymize("reports", { reviewerId: userId }, { reviewerId: "@deleted", reviewNotes: "[deleted]", actionTaken: "[deleted]" });
+    await anonymize("moderationLogs", { moderatorId: userId }, { moderatorId: "@deleted", notes: "[deleted]" });
+    await anonymize("moderationLogs", { targetUserId: userId }, { targetUserId: "@deleted" });
+    await anonymize("vaultTransactions", { fromUserId: userId }, { fromUserId: "@deleted" });
+    await anonymize("vaultTransactions", { toUserId: userId }, { toUserId: "@deleted" });
+    await anonymize("vaultTransactions", { distributedByUserId: userId }, { distributedByUserId: "@deleted" });
+    await anonymize("userBans", { userId }, { userId: "@deleted", reason: "[deleted]" });
+    await anonymize("userBans", { bannedById: userId }, { bannedById: "@deleted", reason: "[deleted]" });
+    await anonymize("roleUpgradeRequests", { reviewerId: userId }, { reviewerId: "@deleted", reviewNotes: "[deleted]" });
+    await anonymize("meetingExemptions", { reviewedById: userId }, { reviewedById: "@deleted", reviewNote: "[deleted]" });
+    await anonymize("moderatorTasks", { assignedById: userId }, { assignedById: "@deleted", title: "[deleted]", description: "[deleted]" });
+    await anonymize("moderatorTasks", { assigneeId: userId }, { assigneeId: "@deleted" });
+    await removeArrayEntry("moderatorTasks", "teamMembers");
+    await anonymize("moderatorMeetings", { scheduledById: userId }, { scheduledById: "@deleted", title: "[deleted]", description: "[deleted]" });
+    await removeArrayEntry("moderatorMeetings", "invitedModeratorIds");
+    await anonymize("groupChats", { creatorId: userId }, { creatorId: "@deleted" });
+    await anonymize("jobFreelancers", { freelancerId: userId }, { freelancerId: "@deleted" });
+    await anonymize("jobSubmissions", { freelancerId: userId }, { freelancerId: "@deleted", notes: "[deleted]", proofFiles: [], proofLinks: [] });
+    await anonymize("disputes", { openedByUserId: userId }, { openedByUserId: "@deleted", reason: "[deleted]" });
+    await anonymize("disputes", { moderatorId: userId }, { moderatorId: "@deleted", resolutionNotes: "[deleted]" });
+    await anonymize("customerReviews", { customerId: userId }, { customerId: "@deleted", rejectionReason: "[deleted]" });
+    await anonymize("cancellationNegotiations", { initiatedById: userId }, { initiatedById: "@deleted" });
+    await anonymize("jobRecommendations", { recommenderId: userId }, { recommenderId: "@deleted", recommenderMessage: "[deleted]" });
+    await anonymize("jobRecommendations", { recommendedFreelancerId: userId }, { recommendedFreelancerId: "@deleted", freelancerMessage: "[deleted]" });
+    await anonymize("jobRecommendations", { customerId: userId }, { customerId: "@deleted", customerNote: "[deleted]" });
+    await anonymize("leadershipVotes", { initiatedById: userId }, { initiatedById: "@deleted" });
+    await anonymize("leadershipVotes", { candidateId: userId }, { candidateId: "@deleted" });
+    await anonymize("leadershipVoteCasts", { voterId: userId }, { voterId: "@deleted" });
+    await anonymize("meetings", { moderatorId: userId }, { moderatorId: "@deleted" });
+    await removeArrayEntry("meetings", "mutedUserIds");
+    await this.db.collection("weeklyIncomes").updateMany({ setById: userId }, { $set: { setById: deletedReference } });
+    await this.db.collection("groupChatMessages").updateMany({ senderId: userId }, { $set: { senderId: deletedReference, message: "[deleted]" } });
+    await this.db.collection("teamRoomMessages").updateMany({ senderId: userId }, { $set: { senderId: deletedReference, content: "[deleted]" } });
+    await this.db.collection("scheduledTasks").updateMany({ "metadata.userId": userId }, { $unset: { "metadata.userId": "" } });
+    await removeArrayEntry("users", "blacklistedFreelancers");
+    await remove("users", { blacklistedFreelancers: { $in: userIds } });
+    const userDeleteResult = await this.users.deleteOne({ _id: new ObjectId(userId) });
+    if (userDeleteResult.deletedCount !== 1) {
+      throw new Error("Account record was not deleted; deletion did not complete.");
+    }
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {

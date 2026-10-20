@@ -105,6 +105,7 @@ import {
   ScheduledTaskStatus,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { getWalletBalanceBlockReason } from "./lib/wallet-amounts";
 
 export interface CalendarEvent {
   id: string;
@@ -118,6 +119,27 @@ export interface CalendarEvent {
   createdAt: Date;
 }
 
+export class AccountDeletionBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AccountDeletionBlockedError";
+  }
+}
+
+export const ACCOUNT_DELETION_TERMINAL_JOB_STATUSES = ["completed", "cancelled", "rejected", "expired"] as const;
+const ACCOUNT_DELETION_TERMINAL_JOB_STATUS_SET = new Set<string>(ACCOUNT_DELETION_TERMINAL_JOB_STATUSES);
+const ACCOUNT_DELETION_TERMINAL_ASSIGNMENT_STATUSES = new Set(["completed", "paid", "removed", "cancelled", "rejected"]);
+const ACCOUNT_DELETION_PENDING_FINANCIAL_STATUSES = new Set(["pending", "processing", "in_progress", "queued"]);
+
+function isAccountDeletionBlockedJobStatus(status: string | null | undefined): boolean {
+  return !status || !ACCOUNT_DELETION_TERMINAL_JOB_STATUS_SET.has(status.toLowerCase());
+}
+
+function isNonZeroOrInvalidBalance(balance: string | null | undefined): boolean {
+  const numericBalance = Number(balance ?? 0);
+  return !Number.isFinite(numericBalance) || numericBalance !== 0;
+}
+
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -126,6 +148,9 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser, allowFounder?: boolean): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
+  getAccountDeletionBlockReasons(userId: string): Promise<string[]>;
+  getAccountDeletionBlockReason(userId: string): Promise<string | null>;
+  deleteAccount(userId: string): Promise<void>;
 
   // Job operations
   getJob(id: string): Promise<Job | undefined>;
@@ -643,6 +668,198 @@ export class MemStorage implements IStorage {
     this.users.set(id, updated);
     return updated;
   }
+
+  async getAccountDeletionBlockReasons(userId: string): Promise<string[]> {
+    const issues: string[] = [];
+    const userJobs = Array.from(this.jobs.values()).filter(job =>
+      (String(job.customerId) === userId || String(job.freelancerId ?? "") === userId || String(job.projectLeaderId ?? "") === userId || (job.collaborators || []).some(id => String(id) === userId))
+    );
+    const openJobs = userJobs.filter(job => isAccountDeletionBlockedJobStatus(job.status));
+    const postedOpenJob = openJobs.some(job => String(job.customerId) === userId);
+    const assignedOpenJob = openJobs.some(job => String(job.freelancerId ?? "") === userId || String(job.projectLeaderId ?? "") === userId || (job.collaborators || []).some(id => String(id) === userId));
+    const assignedOpenJobByRecord = Array.from(this.jobFreelancersMap.values()).some(assignment => {
+      if (String(assignment.freelancerId) !== userId || ACCOUNT_DELETION_TERMINAL_ASSIGNMENT_STATUSES.has(assignment.status.toLowerCase())) return false;
+      const job = this.jobs.get(String(assignment.jobId));
+      return !!job && isAccountDeletionBlockedJobStatus(job.status);
+    });
+    if (postedOpenJob) issues.push("Job posted or pending — cancel or complete every job you've posted to continue.");
+    if (assignedOpenJob || assignedOpenJobByRecord) issues.push("In a job — exit or complete every job you're assigned to continue.");
+
+    if (Array.from(this.jobRequests.values()).some(request =>
+      String(request.freelancerId) === userId && request.status.toLowerCase() === "pending"
+    )) {
+      issues.push("Pending job application — withdraw or resolve it to continue.");
+    }
+
+    const wallets = Array.from(this.wallets.values()).filter(wallet => String(wallet.userId) === userId);
+    const walletBalanceIssue = getWalletBalanceBlockReason(wallets.map(wallet => ({
+      currency: "USDT",
+      balance: wallet.usdtBalance,
+    })));
+    if (walletBalanceIssue) issues.push(walletBalanceIssue);
+    if (wallets.some(wallet => isNonZeroOrInvalidBalance(wallet.pendingUsdtBalance))) {
+      issues.push("Pending funds — wait for them to settle to continue.");
+    }
+
+    const walletIds = new Set(wallets.map(wallet => wallet.id));
+    const relatedJobIds = new Set(userJobs.map(job => String(job.id)));
+    for (const assignment of Array.from(this.jobFreelancersMap.values())) {
+      if (String(assignment.freelancerId) === userId) relatedJobIds.add(String(assignment.jobId));
+    }
+    if (Array.from(this.escrowRecords.values()).some(escrow =>
+      [EscrowStatus.HELD, EscrowStatus.PARTIAL_REFUND].includes(escrow.status as any) &&
+      (String(escrow.customerId) === userId || relatedJobIds.has(String(escrow.jobId)))
+    )) {
+      issues.push("Funds are held in escrow — resolve the escrow to continue.");
+    }
+
+    if (Array.from(this.transactions.values()).some(transaction =>
+      walletIds.has(transaction.walletId) && ACCOUNT_DELETION_PENDING_FINANCIAL_STATUSES.has(String(transaction.status ?? "").toLowerCase())
+    )) {
+      issues.push("Pending wallet transaction — wait for it to complete to continue.");
+    }
+    if (Array.from(this.moneyRequestsMap.values()).some(request =>
+      (String(request.requesterId) === userId || String(request.recipientId) === userId) && request.status.toLowerCase() === "pending"
+    )) {
+      issues.push("Pending money request — accept, decline, or cancel it to continue.");
+    }
+    return issues;
+  }
+
+  async getAccountDeletionBlockReason(userId: string): Promise<string | null> {
+    return (await this.getAccountDeletionBlockReasons(userId))[0] ?? null;
+  }
+
+  async deleteAccount(userId: string): Promise<void> {
+    const blockReason = await this.getAccountDeletionBlockReason(userId);
+    if (blockReason) throw new AccountDeletionBlockedError(blockReason);
+
+    const deletedReference = `deleted-account-${randomUUID()}`;
+    const ownedWalletIds = new Set(Array.from(this.wallets.values()).filter(wallet => wallet.userId === userId).map(wallet => wallet.id));
+    const removeWhere = (map: Map<string, any>, predicate: (value: any) => boolean) => {
+      for (const [id, value] of Array.from(map.entries())) if (predicate(value)) map.delete(id);
+    };
+    const anonymizeMap = (map: Map<string, any>, redact?: (value: any, original: any) => any) => {
+      for (const [id, value] of Array.from(map.entries())) {
+        const anonymized = (input: any): any => {
+          if (input === userId) return deletedReference;
+          if (!input || typeof input !== "object" || input instanceof Date) return input;
+          if (Array.isArray(input)) return input.map(anonymized);
+          return Object.fromEntries(Object.entries(input).map(([key, child]) => [key, anonymized(child)]));
+        };
+        map.set(id, redact ? redact(anonymized(value), value) : anonymized(value));
+      }
+    };
+
+    // Remove personal/account-only records and private conversations.
+    const privateMaps: Array<[Map<string, any>, (value: any) => boolean]> = [
+      [this.wallets, value => value.userId === userId],
+      [this.ptoRequests, value => value.freelancerId === userId],
+      [this.invitations, value => value.fromUserId === userId || value.toUserId === userId],
+      [this.cancellationRequests, value => value.requesterId === userId],
+      [this.abandonRequests, value => value.freelancerId === userId],
+      [this.notifications, value => value.userId === userId],
+      [this.roleUpgradeRequests, value => value.userId === userId],
+      [this.userPreferences, value => value.userId === userId],
+      [this.hiddenConversationsMap, value => value.userId === userId || value.partnerId === userId],
+      [this.emailVerificationTokens, value => value.userId === userId],
+      [this.jobRequests, value => value.freelancerId === userId],
+      [this.friends, value => value.userId === userId || value.friendId === userId],
+      [this.friendRequests, value => value.fromUserId === userId || value.toUserId === userId],
+      [this.meetingRsvps, value => value.moderatorId === userId],
+      [this.meetingExemptions, value => value.moderatorId === userId],
+      [this.moneyRequestsMap, value => value.requesterId === userId || value.recipientId === userId],
+      [this.userFollowsMap, value => value.followerId === userId || value.followingId === userId],
+      [this.userBlocksMap, value => value.blockerId === userId || value.blockedId === userId],
+      [this.groupChatMembersMap, value => value.userId === userId],
+      [this.weeklyIncomesMap, value => value.moderatorId === userId],
+      [this.calendarEventsMap, value => value.createdBy === userId],
+      [this.directMessages, value => value.senderId === userId || value.receiverId === userId],
+    ];
+    for (const [map, predicate] of privateMaps) removeWhere(map, predicate);
+
+    // Keep public marketplace, team, moderation and financial history, but sever
+    // identity links and remove message/review/submission content authored by them.
+    const sharedMaps = [
+      this.jobs, this.transactions, this.chatMessages, this.teamNotes, this.teamTasks, this.teamMessages,
+      this.ratings, this.customerRatings, this.reports, this.cancellationRequests, this.roleUpgradeRequests, this.moderatorTasks, this.moderatorMeetings,
+      this.meetingExemptions, this.userBansMap, this.weeklyIncomesMap, this.teamRoomMessages, this.vaultTransactions, this.jobRecommendations, this.escrowRecords,
+      this.jobFreelancersMap, this.jobSubmissionsMap, this.disputesMap, this.moderationLogsMap,
+      this.scheduledTasksMap, this.customerReviewsMap, this.cancellationNegotiationsMap, this.groupChatsMap,
+      this.groupChatMessagesMap, this.leadershipVotesMap, this.leadershipVoteCastsMap, this.meetingsMap,
+    ] as Map<string, any>[];
+    for (const map of sharedMaps) {
+      anonymizeMap(map, (value, original) => {
+        if (original.senderId === userId || original.authorId === userId) {
+          if ("message" in value) value.message = "[deleted]";
+          if ("content" in value) value.content = "[deleted]";
+          if ("notes" in value) value.notes = "[deleted]";
+        }
+        if (map === this.reports && original.reporterId === userId) {
+          value.reason = "[deleted]";
+          value.description = "[deleted]";
+        }
+        if ((map === this.reports && original.reviewerId === userId) || (map === this.roleUpgradeRequests && original.reviewerId === userId) || (map === this.cancellationRequests && original.reviewerId === userId)) {
+          if ("reviewNotes" in value) value.reviewNotes = "[deleted]";
+          if ("actionTaken" in value) value.actionTaken = "[deleted]";
+        }
+        if (map === this.meetingExemptions && original.reviewedById === userId) value.reviewNote = "[deleted]";
+        if (map === this.moderatorTasks && original.assignedById === userId) {
+          value.title = "[deleted]";
+          value.description = "[deleted]";
+        }
+        if (map === this.moderatorMeetings && original.scheduledById === userId) {
+          value.title = "[deleted]";
+          value.description = "[deleted]";
+        }
+        if (map === this.userBansMap && original.bannedById === userId) value.reason = "[deleted]";
+        if (map === this.jobRecommendations && original.recommenderId === userId) {
+          value.recommenderMessage = "[deleted]";
+          value.freelancerMessage = "[deleted]";
+        }
+        if ((map === this.ratings || map === this.customerRatings) && (original.customerId === userId || original.freelancerId === userId)) value.review = "[deleted]";
+        if (map === this.jobRecommendations && original.recommenderId === userId) {
+          value.recommenderMessage = "[deleted]";
+          value.freelancerMessage = "[deleted]";
+        }
+        if (map === this.jobs && original.customerId === userId) {
+          value.title = "[deleted]";
+          value.description = "[deleted]";
+          value.requirements = null;
+        }
+
+        if (map === this.jobSubmissionsMap && original.freelancerId === userId) {
+          value.notes = "[deleted]";
+          value.proofFiles = [];
+          value.proofLinks = [];
+        }
+        if (map === this.customerReviewsMap && original.customerId === userId) value.rejectionReason = "[deleted]";
+        if (map === this.moderationLogsMap && original.moderatorId === userId) value.notes = "[deleted]";
+        if (map === this.vaultTransactions && (original.fromUserId === userId || original.toUserId === userId || original.distributedByUserId === userId)) value.note = "[deleted]";
+        if (map === this.transactions && ownedWalletIds.has(original.walletId)) value.walletId = deletedReference;
+        if (map === this.teamTasks && value.assigneeId === deletedReference) value.assigneeId = null;
+        if (map === this.moderatorTasks && Array.isArray(value.teamMembers)) value.teamMembers = value.teamMembers.filter((id: string) => id !== deletedReference);
+        if (map === this.moderatorMeetings && Array.isArray(value.invitedModeratorIds)) value.invitedModeratorIds = value.invitedModeratorIds.filter((id: string) => id !== deletedReference);
+        if (map === this.meetingsMap) {
+          if (Array.isArray(value.mutedUserIds)) value.mutedUserIds = value.mutedUserIds.filter((id: string) => id !== deletedReference);
+          if (Array.isArray(value.invitedModeratorIds)) value.invitedModeratorIds = value.invitedModeratorIds.filter((id: string) => id !== deletedReference);
+        }
+        if (map === this.scheduledTasksMap && value.metadata && typeof value.metadata === "object" && value.metadata.userId === deletedReference) delete value.metadata.userId;
+        if (map === this.disputesMap) {
+          if (original.openedByUserId === userId) value.reason = "[deleted]";
+          if (original.moderatorId === userId) value.resolutionNotes = "[deleted]";
+        }
+        return value;
+      });
+    }
+    for (const [id, user] of Array.from(this.users.entries())) {
+      if (user.blacklistedFreelancers?.includes(userId)) {
+        this.users.set(id, { ...user, blacklistedFreelancers: user.blacklistedFreelancers.filter(blockedId => blockedId !== userId) });
+      }
+    }
+    this.users.delete(userId);
+  }
+
 
   // Job operations
   async getJob(id: string): Promise<Job | undefined> {
