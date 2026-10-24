@@ -15,6 +15,25 @@ interface TutorialSlide {
   table?: { headers: string[]; rows: (string | number)[][] };
 }
 
+const levelingSystemSlide: TutorialSlide = {
+  title: "Freelancer Leveling System",
+  description: "Your level sets your rate per job and is based on cumulative lifetime earnings. Each threshold is the total earnings needed to reach that level.",
+  icon: Star,
+  table: {
+    headers: ["Level", "Rate per Job", "Lifetime Earnings to Unlock"],
+    rows: Object.entries(LEVEL_PAYOUTS).map(([level, rate]) => [
+      `Level ${level}`,
+      `${Math.round(rate * 100)}%`,
+      `$${LEVEL_EARNINGS_THRESHOLDS[Number(level) - 1].toLocaleString()}`,
+    ]),
+  },
+  tips: [
+    "The rate is your share of the job budget paid to you at that level.",
+    "Earnings thresholds are cumulative: Level 1 starts at $0; Level 2 starts at $20, then $50, $100, $250, $450, $750, and $1,500 for Levels 3–8.",
+    "Your level and rate update automatically as eligible job earnings are recorded.",
+  ],
+};
+
 const freelancerSlides: TutorialSlide[] = [
   {
     title: "Welcome to Linxova",
@@ -71,27 +90,9 @@ const freelancerSlides: TutorialSlide[] = [
     description: "Level up as your lifetime earnings grow.",
     icon: Star,
     tips: [
-      "Earn $20 to reach Level 2",
-      "Higher levels unlock more opportunities",
-      "Apply to become a Moderator at level 5 "
-    ]
-  },
-  {
-    title: "Levels, Rates & Net Profit",
-    description: "Each level keeps a bigger share of every job. Levels are based on your lifetime net earnings.",
-    icon: Star,
-    table: {
-      headers: ["Level", "Rate", "Net Profit Needed"],
-      rows: Object.entries(LEVEL_PAYOUTS).map(([level, rate]) => [
-        `Level ${level}`,
-        `${Math.round(rate * 100)}%`,
-        `$${LEVEL_EARNINGS_THRESHOLDS[Number(level) - 1].toLocaleString()}`,
-      ]),
-    },
-    tips: [
-      "Rate = your share of the job budget (the rest covers platform costs)",
-      "Net Profit Needed = lifetime net earnings to unlock that level",
-      "Your progress updates automatically as jobs complete"
+      "Level 1 is the starting level; levels 2–8 unlock at lifetime earnings of $20, $50, $100, $250, $450, $750, and $1,500",
+      "Your level determines the share of each job budget you receive; higher levels earn a higher rate",
+      "Apply to become a Moderator at level 5"
     ]
   }
 ];
@@ -310,31 +311,25 @@ export function TutorialModal({ open, onOpenChange }: TutorialModalProps) {
   const { user } = useAuth();
   const [currentSlide, setCurrentSlide] = useState(0);
 
-  const getSlides = (): TutorialSlide[] | null => {
+  const getSlides = (): TutorialSlide[] => {
+    let roleSlides: TutorialSlide[];
     if (user?.role === "founder") {
-      return founderSlides;
+      roleSlides = founderSlides;
+    } else if (user?.role === "head_of_moderation") {
+      roleSlides = headOfModerationSlides;
+    } else if (user?.role === "moderator" || user?.role === "staff") {
+      roleSlides = moderatorSlides;
+    } else if (user?.role === "customer") {
+      roleSlides = customerSlides;
+    } else {
+      roleSlides = freelancerSlides;
     }
-    if (user?.role === "head_of_moderation") {
-      return headOfModerationSlides;
-    }
-    if (user?.role === "moderator" || user?.role === "staff") {
-      return moderatorSlides;
-    }
-    if (user?.role === "customer") {
-      return customerSlides;
-    }
-    return freelancerSlides;
+    // Keep leveling guidance available in the tutorial regardless of current role,
+    // so customers and staff can find it if they later become freelancers.
+    return [...roleSlides, levelingSystemSlide];
   };
 
   const slides = getSlides();
-  
-  // If no slides (e.g., founder), close the modal immediately
-  if (!slides) {
-    if (open) {
-      onOpenChange(false);
-    }
-    return null;
-  }
   
   // Clamp the index so out-of-range state (e.g. from rapid clicking) can never crash the modal.
   const safeSlideIndex = Math.min(Math.max(currentSlide, 0), slides.length - 1);

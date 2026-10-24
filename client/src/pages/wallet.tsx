@@ -22,9 +22,6 @@ interface WalletData {
   usdtBalance: string;
   pendingUsdtBalance: string;
   availableUsdtBalance: string;
-  solBalance: string;
-  btcBalance: string;
-  ltcBalance: string;
   walletAddress: string;
 }
 
@@ -248,6 +245,7 @@ export default function WalletPage() {
   const totalBalance = wallet ? parseFloat(wallet.usdtBalance || "0") : 0;
   const availableBalance = wallet ? parseFloat(wallet.availableUsdtBalance || "0") : 0;
   const pendingBalance = wallet ? parseFloat(wallet.pendingUsdtBalance || "0") : 0;
+  const withdrawalBalance = availableBalance;
 
   if (walletLoading) {
     return (
@@ -327,13 +325,13 @@ export default function WalletPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <Label>Amount (USD)</Label>
+                  <Label>Amount (USDT)</Label>
                   <div className="flex gap-2">
                     <Input
                       type="number"
-                      step="0.01"
-                      min="0.01"
-                      placeholder="0.00"
+                      step="0.00000001"
+                      min="0.00000001"
+                      placeholder="0.00000000"
                       value={withdrawalAmount}
                       onChange={(e) => setWithdrawalAmount(e.target.value)}
                       data-testid="input-withdraw-amount"
@@ -341,20 +339,24 @@ export default function WalletPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => setWithdrawalAmount(availableBalance.toFixed(2))}
-                      disabled={availableBalance <= 0}
+                      onClick={() => setWithdrawalAmount(withdrawalBalance.toFixed(8))}
+                      disabled={withdrawalBalance <= 0}
                       data-testid="button-max-withdraw"
                     >
                       Max
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Available: ${availableBalance.toFixed(2)}
+                    Available: ${withdrawalBalance.toFixed(8)} USDT
+                    {withdrawalBalance >= 0.01 && withdrawalBalance < 1 && " (minimum withdrawal is $0.01 unless withdrawing the full balance)"}
                   </p>
+                  {withdrawalBalance > 0 && withdrawalBalance < 0.01 && (
+                    <p className="text-xs text-muted-foreground">This remaining balance can be withdrawn in full using Max.</p>
+                  )}
                 </div>
                 <Button
                   onClick={handleWithdraw}
-                  disabled={!withdrawalAmount || parseFloat(withdrawalAmount) > availableBalance || withdrawMutation.isPending}
+                  disabled={!withdrawalAmount || parseFloat(withdrawalAmount) > withdrawalBalance || withdrawMutation.isPending}
                   className="w-full"
                   data-testid="button-confirm-withdraw"
                 >
@@ -536,7 +538,7 @@ export default function WalletPage() {
             <div className="text-5xl font-bold mb-2" data-testid="text-total-balance">
               ${totalBalance.toFixed(2)}
             </div>
-            <p className="text-sm text-muted-foreground">USD</p>
+            <p className="text-sm text-muted-foreground">USDT</p>
           </CardContent>
         </Card>
 
@@ -569,7 +571,7 @@ export default function WalletPage() {
               </div>
               <div className="pt-2 border-t">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Total</span>
+                  <span className="text-sm font-medium">Total USDT</span>
                   <span className="font-mono font-bold">
                     ${totalBalance.toFixed(2)}
                   </span>

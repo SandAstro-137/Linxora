@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { User } from "@shared/schema";
+import { saveAccountProfileIfRequested } from "./saved-accounts";
 
 interface SuspensionInfo {
   suspendedUntil: string;
@@ -50,7 +51,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
+        saveAccountProfileIfRequested(userData, sessionStorage.getItem("addAccountPending") === "true");
+        sessionStorage.removeItem("addAccountPending");
         setSuspensionInfo(null);
+        if (import.meta.env.DEV && sessionStorage.getItem("oauthTabAuthPending") === "true") {
+          sessionStorage.setItem("tabUserId", userData.id);
+          sessionStorage.removeItem("oauthTabAuthPending");
+          window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: true }));
+        }
       } else if (response.status === 403) {
         const data = await response.json();
         if (data.accountStatus === "suspended") {
@@ -86,10 +94,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (response.ok) {
           const userData = await response.json();
           setUser(userData);
+          saveAccountProfileIfRequested(userData, sessionStorage.getItem("addAccountPending") === "true");
+          sessionStorage.removeItem("addAccountPending");
           setSuspensionInfo(null);
-          // Remember this tab's demo account so a second tab can log into a
-          // different account at the same time.
+          // Persist the selected account in this tab so it is restored after
+          // refresh despite the browser-wide session cookie being shared.
+          sessionStorage.setItem("tabUserId", userData.id);
           sessionStorage.setItem("demoUserId", demoId);
+          window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: true }));
           window.location.href = "/dashboard";
         } else if (response.status === 403) {
           const data = await response.json();
@@ -112,7 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
       });
+      sessionStorage.removeItem("tabUserId");
       sessionStorage.removeItem("demoUserId");
+      sessionStorage.removeItem("addAccountPending");
+      sessionStorage.removeItem("oauthPending");
+      window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: false }));
       setUser(null);
       setSuspensionInfo(null);
       window.location.href = "/";

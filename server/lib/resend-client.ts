@@ -77,6 +77,45 @@ async function getResendCredentials() {
   return { apiKey: connectionSettings.settings.api_key, fromEmail: connectionSettings.settings.from_email };
 }
 
+// Resolve the browser-facing host while correcting localhost's port to the
+// actual port that accepted the request (proxies can rewrite the Host header).
+export function getVerificationRequestOrigin(protocol: string, host: string, listenerPort?: number): string {
+  const origin = new URL(`${protocol}://${host}`);
+  if (origin.protocol !== 'http:' && origin.protocol !== 'https:') {
+    throw new Error('Unsupported verification request protocol');
+  }
+  if (!origin.username && !origin.password &&
+      (origin.hostname === 'localhost' || origin.hostname === '127.0.0.1') &&
+      Number.isInteger(listenerPort) && listenerPort! > 0 && listenerPort! <= 65535) {
+    origin.port = String(listenerPort);
+  }
+  return origin.origin;
+}
+
+// Resolve a public-facing origin from the current request. In development this
+// keeps emailed links on the same hostname and port used to request the change.
+export function getVerificationAppUrl(requestOrigin?: string): string {
+  const isProd = process.env.NODE_ENV === 'production';
+  const override = process.env.APP_BASE_URL;
+  const looksLocal = override && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?:\/|$)/i.test(override);
+
+  if (isProd) return override && !looksLocal ? override : 'https://linxova.com';
+  if (requestOrigin) {
+    try {
+      const origin = new URL(requestOrigin);
+      if ((origin.protocol === 'http:' || origin.protocol === 'https:') && !origin.username && !origin.password) {
+        return origin.origin;
+      }
+    } catch {
+      // Ignore malformed request origins and use the configured local default.
+    }
+  }
+  if (override) return override;
+  if (process.env.REPLIT_DEV_DOMAIN) return `https://${process.env.REPLIT_DEV_DOMAIN}`;
+  const port = Number(process.env.PORT);
+  return `http://localhost:${Number.isInteger(port) && port > 0 ? port : 5006}`;
+}
+
 // WARNING: Never cache the Resend client.
 // Access tokens expire, so a new client must be created each time.
 export async function getResendClient() {
@@ -116,20 +155,9 @@ const htmlEmailTemplate = (username: string, verificationUrl: string) => `<!DOCT
       </body>
     </html>`;
 
-export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string) {
-  // Production default is the live site so verification links always work.
-  // In development, APP_BASE_URL may legitimately point at localhost so that
-  // emailed links hit the local server that holds the verification tokens.
-  const isProd = process.env.NODE_ENV === 'production';
-  const override = process.env.APP_BASE_URL;
-  const looksLocal = override && /^https?:\/\/(localhost|127\.0\.0\.1)/i.test(override);
-  const appUrl = process.env.REPLIT_DEV_DOMAIN
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : isProd
-      ? (override && !looksLocal ? override : 'https://linxova.com')
-      : (override || `http://localhost:${process.env.PORT || '5000'}`);
-
-  const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+export async function sendVerificationEmail(toEmail: string, verificationToken: string, username: string, requestOrigin?: string) {
+  const appUrl = getVerificationAppUrl(requestOrigin);
+  const verificationUrl = `${appUrl.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
   const subject = 'Verify your email address - Linxova';
   const html = htmlEmailTemplate(username, verificationUrl);
 

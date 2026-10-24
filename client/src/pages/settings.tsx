@@ -16,9 +16,10 @@ import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock, X, Check, Ban, UserMinus, Search, FileText, LogOut, RefreshCw, Plus, ChevronUp, ZoomIn, ZoomOut, Move } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
+import { clearSavedAccounts, getGoogleLoginUrl, getSavedAccounts, getSwitchableAccounts } from "@/lib/saved-accounts";
 
 function ImageCropper({ imageSrc, onCrop, onCancel }: { imageSrc: string; onCrop: (dataUrl: string) => void; onCancel: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -317,23 +318,38 @@ function BlacklistSection() {
   );
 }
 
-const defaultDemoAccounts = [
-  { id: "demo-freelancer-1", username: "Alex Chen", role: "freelancer", avatar: null as string | null },
-  { id: "demo-freelancer-2", username: "Sarah Johnson", role: "freelancer", avatar: null as string | null },
-  { id: "demo-customer-1", username: "Tech Startup Inc", role: "customer", avatar: null as string | null },
-  { id: "demo-moderator-1", username: "Admin User", role: "moderator", avatar: null as string | null },
-  { id: "demo-founder-1", username: "Founder", role: "founder", avatar: null as string | null },
-];
-
 export default function SettingsPage() {
-  const { user, refetchUser, logout, login } = useAuth();
+  const { user, refetchUser, logout } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [accountSwitchError, setAccountSwitchError] = useState<string | null>(() => {
+    const url = new URL(window.location.href);
+    const error = url.searchParams.get("error");
+    if (error !== "account_mismatch" && error !== "account_not_found") return null;
+    url.searchParams.delete("error");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    return error === "account_not_found"
+      ? "That Google account does not have a Linxova account yet. Create the account first, then add it to Swap Accounts."
+      : "Google signed in with a different account. Choose the saved account you want to switch to and try again.";
+  });
   const [username, setUsername] = useState(user?.username || "");
   const [bio, setBio] = useState(user?.bio || "");
   const [newEmail, setNewEmail] = useState("");
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  const [savedAccounts, setSavedAccounts] = useState(() => getSavedAccounts());
+  const switchableAccounts = getSwitchableAccounts(savedAccounts, user?.id);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteCountdown, setDeleteCountdown] = useState<number | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteEligibilityChecked, setDeleteEligibilityChecked] = useState(false);
+  const [deleteEligibilityIssues, setDeleteEligibilityIssues] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!accountSwitchError) return;
+    toast({ title: "Account not switched", description: accountSwitchError, variant: "destructive" });
+    setAccountSwitchError(null);
+  }, [accountSwitchError, toast]);
 
   useEffect(() => {
     if (user) {
@@ -341,12 +357,6 @@ export default function SettingsPage() {
       setBio(user.bio || "");
     }
   }, [user]);
-
-  const { data: demoAccounts } = useQuery<{ id: string; username: string; role: string; avatar: string | null }[]>({
-    queryKey: ["/api/auth/demo-accounts"],
-  });
-
-  const accounts = demoAccounts || defaultDemoAccounts;
 
   const { data: settings, isLoading } = useQuery<UserPreferences>({
     queryKey: ["/api/settings"],
@@ -469,22 +479,189 @@ export default function SettingsPage() {
   };
 
   const handleSwitchAccount = async (accountId: string) => {
+    const account = savedAccounts.find(saved => saved.id === accountId);
+    if (!account) return;
     setSwitchingTo(accountId);
     try {
-      await logout();
-      await login(accountId);
-      setAccountSheetOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/demo-accounts"] });
-      toast({ title: "Account switched", description: "You are now logged in as a different account." });
+      const response = await fetch("/api/auth/switch-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ userId: account.id }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        if (response.status === 403) {
+          sessionStorage.setItem("addAccountPending", "true");
+          if (import.meta.env.DEV) {
+            // A stale per-tab identity header would override the OAuth callback's
+            // newly selected account when /api/auth/me runs after the redirect.
+            sessionStorage.setItem("oauthPending", "true");
+            sessionStorage.setItem("oauthTabAuthPending", "true");
+            sessionStorage.removeItem("tabUserId");
+            sessionStorage.removeItem("demoUserId");
+          }
+          const loginUrl = getGoogleLoginUrl(account);
+          const separator = loginUrl.includes("?") ? "&" : "?";
+          window.location.href = `${loginUrl}${separator}add_account=true`;
+          return;
+        }
+        throw new Error(error.error || "Could not switch accounts.");
+      }
+      if (import.meta.env.DEV) {
+        // The development tab-auth middleware restores the shared cookie session
+        // after each request, so keep this tab pinned to the selected identity.
+        sessionStorage.setItem("tabUserId", account.id);
+        sessionStorage.removeItem("demoUserId");
+        window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: true }));
+      } else {
+        sessionStorage.removeItem("tabUserId");
+        sessionStorage.removeItem("demoUserId");
+      }
+      sessionStorage.removeItem("addAccountPending");
+      window.location.assign("/dashboard");
     } catch {
       toast({ title: "Error", description: "Failed to switch account.", variant: "destructive" });
-    } finally {
       setSwitchingTo(null);
     }
   };
 
+  const handleAddAccount = async () => {
+    sessionStorage.setItem("addAccountPending", "true");
+    if (import.meta.env.DEV) {
+      // OAuth returns through a full-page navigation, so clear this tab's old
+      // identity override after the server has had a chance to capture it.
+      sessionStorage.setItem("oauthPending", "true");
+      sessionStorage.setItem("oauthTabAuthPending", "true");
+    }
+
+    try {
+      // Capture this tab's authenticated user before leaving for Google. If
+      // this endpoint is unavailable on an older server, the OAuth entry route
+      // can still preserve the cookie-backed session itself.
+      await fetch("/api/auth/add-account", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch {
+      // Continue to OAuth; the server entry route also handles add-account setup.
+    }
+
+    if (import.meta.env.DEV) {
+      sessionStorage.removeItem("tabUserId");
+      sessionStorage.removeItem("demoUserId");
+    }
+    const loginUrl = getGoogleLoginUrl();
+    const separator = loginUrl.includes("?") ? "&" : "?";
+    window.location.href = `${loginUrl}${separator}add_account=true`;
+  };
+
   const handleLogout = () => {
     logout();
+  };
+
+  const checkAccountDeletionEligibility = async () => {
+    if (deleteEligibilityChecked || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteEligibilityChecked(false);
+    setDeleteEligibilityIssues([]);
+    try {
+      const response = await fetch("/api/settings/delete-account/eligibility", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: import.meta.env.DEV && sessionStorage.getItem("tabUserId")
+          ? { "X-Tab-User": sessionStorage.getItem("tabUserId")! }
+          : {},
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("The deletion check returned an invalid response. Refresh the page and try again.");
+      }
+      const result = await response.json() as { eligible: boolean; issues: string[]; error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not check deletion requirements. Refresh and try again.");
+      setDeleteEligibilityIssues(Array.isArray(result.issues) ? result.issues : ["Could not check deletion requirements. Refresh and try again."]);
+      setDeleteEligibilityChecked(true);
+    } catch (error) {
+      const message = getApiErrorMessage(error, "Could not check deletion requirements. Refresh and try again.");
+      const userMessage = /failed to fetch|networkerror|unexpected token|<!doctype|html|api endpoint not found|invalid response/i.test(message)
+        ? "Could not check account requirements. The server returned an unexpected page instead of the eligibility result. Refresh and try again."
+        : message;
+      setDeleteEligibilityIssues([userMessage]);
+      setDeleteEligibilityChecked(true);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (deleteCountdown === null || deleteCountdown > 0) return;
+    void checkAccountDeletionEligibility();
+  }, [deleteCountdown, deleteEligibilityChecked, deleteBusy]);
+
+  useEffect(() => {
+    if (deleteCountdown === null || deleteCountdown <= 0) return;
+    const timer = window.setTimeout(() => {
+      setDeleteCountdown(value => value === null ? null : Math.max(0, value - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [deleteCountdown]);
+
+  const cancelAccountDeletion = async () => {
+    setDeleteCountdown(null);
+    setDeleteEligibilityChecked(false);
+    setDeleteEligibilityIssues([]);
+    setDeleteConfirmOpen(false);
+    try {
+      await apiRequest("DELETE", "/api/settings/delete-account/confirmation");
+    } catch {
+      // Closing the dialog always resets the visible timer; server confirmation is idempotent.
+    }
+  };
+
+  const startAccountDeletion = async () => {
+    setDeleteBusy(true);
+    try {
+      await apiRequest("POST", "/api/settings/delete-account/confirmation", {});
+      setDeleteEligibilityChecked(false);
+      setDeleteEligibilityIssues([]);
+      setDeleteCountdown(8);
+    } catch (error) {
+      toast({ title: "Cannot delete account", description: getApiErrorMessage(error), variant: "destructive" });
+      setDeleteConfirmOpen(false);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    setDeleteBusy(true);
+    try {
+      if (!deleteEligibilityChecked || deleteEligibilityIssues.length > 0) {
+        throw new Error("Deletion requirements have not been satisfied.");
+      }
+      await apiRequest("DELETE", "/api/settings/delete-account");
+      clearSavedAccounts();
+      setSavedAccounts([]);
+      setDeleteCountdown(null);
+      setDeleteConfirmOpen(false);
+      queryClient.clear();
+      await logout();
+    } catch (error) {
+      const message = getApiErrorMessage(error);
+      const issues = /^(Job posted or pending|In a job|Pending job application|Wallet funds remain|Pending funds|Funds are held in escrow|Pending wallet transaction|Pending money request)/i.test(message)
+        ? [message]
+        : [];
+      if (issues.length) {
+        setDeleteEligibilityIssues(issues);
+        setDeleteEligibilityChecked(true);
+      }
+      toast({ title: "Account deletion failed", description: message, variant: "destructive" });
+      if (!issues.length) await cancelAccountDeletion();
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const toggleSetting = (key: keyof UserPreferences, value: boolean) => {
@@ -895,7 +1072,10 @@ export default function SettingsPage() {
               <p className="font-medium">Swap Accounts</p>
               <p className="text-sm text-muted-foreground">Switch to a different account</p>
             </div>
-            <Sheet open={accountSheetOpen} onOpenChange={setAccountSheetOpen}>
+            <Sheet open={accountSheetOpen} onOpenChange={(open) => {
+              if (open) setSavedAccounts(getSavedAccounts());
+              setAccountSheetOpen(open);
+            }}>
               <SheetTrigger asChild>
                 <Button variant="outline" data-testid="button-swap-accounts">
                   <RefreshCw className="h-4 w-4 mr-2" />
@@ -914,18 +1094,16 @@ export default function SettingsPage() {
                   </SheetDescription>
                 </SheetHeader>
                 <div className="mt-6 space-y-2 max-h-[50vh] overflow-y-auto">
-                  {accounts.map((account) => {
-                    const isCurrentAccount = user?.discordId === account.id;
-                    return (
+                  {switchableAccounts.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground" data-testid="text-no-saved-accounts">
+                      No other accounts have been added on this device yet.
+                    </p>
+                  ) : switchableAccounts.map((account) => (
                       <button
                         key={account.id}
-                        onClick={() => !isCurrentAccount && handleSwitchAccount(account.id)}
-                        disabled={isCurrentAccount || switchingTo !== null}
-                        className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${
-                          isCurrentAccount 
-                            ? "bg-primary/10 border-2 border-primary cursor-default" 
-                            : "hover-elevate border border-border"
-                        } ${switchingTo === account.id ? "opacity-50" : ""}`}
+                        onClick={() => handleSwitchAccount(account.id)}
+                        disabled={switchingTo !== null}
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors hover-elevate border border-border ${switchingTo === account.id ? "opacity-50" : ""}`}
                         data-testid={`account-switch-${account.id}`}
                       >
                         <Avatar className="h-12 w-12">
@@ -940,26 +1118,19 @@ export default function SettingsPage() {
                             <Badge variant="secondary" className="text-xs capitalize">
                               {account.role}
                             </Badge>
-                            {isCurrentAccount && (
-                              <span className="text-xs text-primary font-medium">Current</span>
-                            )}
                           </div>
                         </div>
                         {switchingTo === account.id && (
                           <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
                         )}
-                        {isCurrentAccount && (
-                          <Check className="h-5 w-5 text-primary" />
-                        )}
                       </button>
-                    );
-                  })}
+                    ))}
                 </div>
                 <div className="mt-4 pt-4 border-t">
                   <Button 
                     variant="outline" 
                     className="w-full" 
-                    onClick={handleLogout}
+                    onClick={() => void handleAddAccount()}
                     data-testid="button-add-account"
                   >
                     <Plus className="h-4 w-4 mr-2" />
@@ -979,6 +1150,53 @@ export default function SettingsPage() {
               <LogOut className="h-4 w-4 mr-2" />
               Logout
             </Button>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-destructive">Delete account</p>
+              <p className="text-sm text-muted-foreground">Permanently delete your account and private data. This cannot be undone.</p>
+            </div>
+            <AlertDialog open={deleteConfirmOpen} onOpenChange={(open) => {
+              if (!open) void cancelAccountDeletion();
+              else setDeleteConfirmOpen(true);
+            }}>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" data-testid="button-delete-account">Delete account</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Are you sure you want to delete your account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This is permanent and cannot be recovered. Before continuing, you'll need to resolve any active or posted jobs, pending applications, wallet funds, pending funds, escrow, wallet transactions, and money requests.
+                    {deleteCountdown !== null && deleteCountdown > 0 && (
+                      <span className="mt-3 block font-medium text-foreground" aria-live="polite">Wait {deleteCountdown} seconds before the final delete button is enabled.</span>
+                    )}
+                    {deleteCountdown === 0 && !deleteEligibilityChecked && <span className="mt-3 block font-medium text-foreground" aria-live="polite">Checking deletion requirements…</span>}
+                    {deleteEligibilityIssues.length > 0 && (
+                      <ul className="mt-3 list-disc space-y-1 pl-5 font-medium text-destructive" role="alert" data-testid="account-deletion-issues">
+                        {deleteEligibilityIssues.map((issue, index) => <li key={`${index}-${issue}`}>{issue}</li>)}
+                      </ul>
+                    )}
+                    {deleteCountdown === 0 && deleteEligibilityChecked && deleteEligibilityIssues.length === 0 && (
+                      <span className="mt-3 block font-medium text-foreground">Requirements verified. You can now permanently delete your account.</span>
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel onClick={() => void cancelAccountDeletion()} data-testid="button-cancel-delete-account">Cancel</AlertDialogCancel>
+                  {deleteCountdown === null ? (
+                    <Button variant="destructive" onClick={() => void startAccountDeletion()} disabled={deleteBusy} data-testid="button-confirm-delete-account">
+                      Yes, continue
+                    </Button>
+                  ) : (
+                    <Button variant="destructive" onClick={() => void deleteAccount()} disabled={deleteCountdown > 0 || deleteBusy || !deleteEligibilityChecked || deleteEligibilityIssues.length > 0} data-testid="button-final-delete-account">
+                      {deleteBusy ? (deleteCountdown === 0 ? "Checking…" : "Deleting…") : deleteCountdown > 0 ? `Delete account (${deleteCountdown})` : deleteEligibilityIssues.length > 0 ? "Resolve issues to continue" : !deleteEligibilityChecked ? "Checking requirements…" : "Delete account permanently"}
+                    </Button>
+                  )}
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </CardContent>
       </Card>

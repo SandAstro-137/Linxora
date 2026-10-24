@@ -1,3 +1,4 @@
+import { EmailAlreadyInUseError, findEmailConflict, normalizeEmailAddress } from "./lib/email-uniqueness";
 import {
   type User,
   type InsertUser,
@@ -145,6 +146,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUsers(): Promise<User[]>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser, allowFounder?: boolean): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
@@ -596,6 +598,12 @@ export class MemStorage implements IStorage {
     return Array.from(this.users.values()).find((user) => user.discordId === discordId);
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const normalizedEmail = normalizeEmailAddress(email);
+    if (!normalizedEmail) return undefined;
+    return Array.from(this.users.values()).find(user => normalizeEmailAddress(user.email) === normalizedEmail);
+  }
+
   async getUserByUsername(username: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find((user) => user.username === username);
   }
@@ -614,6 +622,9 @@ export class MemStorage implements IStorage {
       }
     }
     
+    const emailConflict = findEmailConflict(this.users.values(), [insertUser.email, insertUser.pendingEmail]);
+    if (emailConflict) throw new EmailAlreadyInUseError();
+
     const id = randomUUID();
     const userId = this.userIdCounter++; // Assign sequential permanent User ID
     
@@ -640,6 +651,10 @@ export class MemStorage implements IStorage {
       completionPercentage: insertUser.completionPercentage ?? "0",
       totalEarned: insertUser.totalEarned ?? "0",
       workingHours: insertUser.workingHours ?? {},
+      bio: insertUser.bio ?? null,
+      accountStatus: insertUser.accountStatus ?? "active",
+      suspendedUntil: insertUser.suspendedUntil ?? null,
+      suspendedReason: insertUser.suspendedReason ?? null,
       blacklistedFreelancers: insertUser.blacklistedFreelancers ?? [],
       lastActive: insertUser.lastActive ?? new Date(),
       createdAt: new Date(),
@@ -657,6 +672,10 @@ export class MemStorage implements IStorage {
     // Founder role can only be set during initial seed
     if (updates.role === "founder") {
       throw new Error("Cannot assign Founder role via user update");
+    }
+    if (updates.email !== undefined || updates.pendingEmail !== undefined) {
+      const emailConflict = findEmailConflict(this.users.values(), [updates.email, updates.pendingEmail], id);
+      if (emailConflict) throw new EmailAlreadyInUseError();
     }
     
     // Security: If user is already Founder, prevent role changes
@@ -860,7 +879,6 @@ export class MemStorage implements IStorage {
     this.users.delete(userId);
   }
 
-
   // Job operations
   async getJob(id: string): Promise<Job | undefined> {
     return this.jobs.get(id);
@@ -902,18 +920,24 @@ export class MemStorage implements IStorage {
       id,
       status: insertJob.status ?? "draft",
       freelancerId: insertJob.freelancerId ?? null,
+      projectLeaderId: insertJob.projectLeaderId ?? null,
       requirements: insertJob.requirements ?? null,
       deadline: insertJob.deadline ?? null,
       lastDeadlineReminderAt: insertJob.lastDeadlineReminderAt ?? null,
       deadlineArrivalNotified: insertJob.deadlineArrivalNotified ?? false,
       collaborators: insertJob.collaborators ?? [],
       moderatorFeedback: insertJob.moderatorFeedback ?? null,
-      expiresAt: null,
-      approvedAt: null,
-      submittedAt: null,
-      autoCompleteAt: null,
+      expiresAt: insertJob.expiresAt ?? null,
+      approvedAt: insertJob.approvedAt ?? null,
+      submittedAt: insertJob.submittedAt ?? null,
+      autoCompleteAt: insertJob.autoCompleteAt ?? null,
       maxFreelancers: insertJob.maxFreelancers ?? 1,
-      isLocked: false,
+      isLocked: insertJob.isLocked ?? false,
+      preDisputeStatus: insertJob.preDisputeStatus ?? null,
+      customerArchived: insertJob.customerArchived ?? false,
+      isPremium: insertJob.isPremium ?? false,
+      premiumAmount: insertJob.premiumAmount ?? "0",
+      submittedForReviewAt: insertJob.submittedForReviewAt ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -948,9 +972,6 @@ export class MemStorage implements IStorage {
       walletAddress: insertWallet.walletAddress ?? null,
       usdtBalance: insertWallet.usdtBalance ?? "0",
       pendingUsdtBalance: insertWallet.pendingUsdtBalance ?? "0",
-      solBalance: insertWallet.solBalance ?? "0",
-      btcBalance: insertWallet.btcBalance ?? "0",
-      ltcBalance: insertWallet.ltcBalance ?? "0",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1323,7 +1344,7 @@ export class MemStorage implements IStorage {
   }
 
   async deleteAllNotifications(userId: string): Promise<void> {
-    for (const [id, notif] of this.notifications.entries()) {
+    for (const [id, notif] of Array.from(this.notifications.entries())) {
       if (notif.userId === userId) {
         this.notifications.delete(id);
       }
@@ -1338,7 +1359,7 @@ export class MemStorage implements IStorage {
   }
 
   async dismissAllNotifications(userId: string): Promise<void> {
-    for (const [id, notif] of this.notifications.entries()) {
+    for (const [id, notif] of Array.from(this.notifications.entries())) {
       if (notif.userId === userId && !notif.dismissed) {
         this.notifications.set(id, { ...notif, dismissed: true, read: true });
       }
@@ -1362,6 +1383,9 @@ export class MemStorage implements IStorage {
       allowDirectMessages: prefs.allowDirectMessages ?? "everyone",
       allowMessagesFromUnknown: prefs.allowMessagesFromUnknown ?? true,
       accountDeactivated: prefs.accountDeactivated ?? false,
+      emailVisibility: prefs.emailVisibility ?? "private",
+      spamFilterEnabled: prefs.spamFilterEnabled ?? true,
+      teamRequestNotificationsEnabled: prefs.teamRequestNotificationsEnabled ?? true,
       deactivatedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -1607,6 +1631,8 @@ export class MemStorage implements IStorage {
       description: insertReport.description ?? null,
       reviewerId: null,
       reviewNotes: null,
+      actionTaken: null,
+      forwardedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1874,7 +1900,7 @@ export class MemStorage implements IStorage {
     const pending = matches.find(r => r.status === "pending");
     if (pending) return pending;
     // Otherwise return the most recently created
-    return matches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    return matches.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
   }
 
   async createJobRequest(insertRequest: InsertJobRequest): Promise<JobRequest> {
@@ -2255,7 +2281,7 @@ export class MemStorage implements IStorage {
   }
 
   async removeJobFreelancer(jobId: string, freelancerId: string): Promise<void> {
-    for (const [key, jf] of this.jobFreelancersMap.entries()) {
+    for (const [key, jf] of Array.from(this.jobFreelancersMap.entries())) {
       if (jf.jobId === jobId && jf.freelancerId === freelancerId) {
         this.jobFreelancersMap.delete(key);
         break;
@@ -2551,7 +2577,7 @@ export class MemStorage implements IStorage {
   }
 
   async removeGroupChatMember(groupId: string, userId: string): Promise<void> {
-    for (const [key, member] of this.groupChatMembersMap.entries()) {
+    for (const [key, member] of Array.from(this.groupChatMembersMap.entries())) {
       if (member.groupId === groupId && member.userId === userId) {
         this.groupChatMembersMap.delete(key);
         break;
@@ -2560,7 +2586,7 @@ export class MemStorage implements IStorage {
   }
 
   async updateGroupChatMemberRole(groupId: string, userId: string, role: string): Promise<void> {
-    for (const [key, member] of this.groupChatMembersMap.entries()) {
+    for (const [key, member] of Array.from(this.groupChatMembersMap.entries())) {
       if (member.groupId === groupId && member.userId === userId) {
         this.groupChatMembersMap.set(key, { ...member, role });
         break;
@@ -2589,10 +2615,10 @@ export class MemStorage implements IStorage {
   }
 
   async deleteGroupChat(groupId: string): Promise<void> {
-    for (const [key, member] of this.groupChatMembersMap.entries()) {
+    for (const [key, member] of Array.from(this.groupChatMembersMap.entries())) {
       if (member.groupId === groupId) this.groupChatMembersMap.delete(key);
     }
-    for (const [key, msg] of this.groupChatMessagesMap.entries()) {
+    for (const [key, msg] of Array.from(this.groupChatMessagesMap.entries())) {
       if (msg.groupId === groupId) this.groupChatMessagesMap.delete(key);
     }
     this.groupChatsMap.delete(groupId);
@@ -2752,7 +2778,7 @@ export class MemStorage implements IStorage {
   }
 
   async unfollowUser(followerId: string, followingId: string): Promise<void> {
-    for (const [key, f] of this.userFollowsMap.entries()) {
+    for (const [key, f] of Array.from(this.userFollowsMap.entries())) {
       if (f.followerId === followerId && f.followingId === followingId) {
         this.userFollowsMap.delete(key);
         break;
@@ -2808,7 +2834,7 @@ export class MemStorage implements IStorage {
   }
 
   async unblockUser(blockerId: string, blockedId: string): Promise<void> {
-    for (const [key, b] of this.userBlocksMap.entries()) {
+    for (const [key, b] of Array.from(this.userBlocksMap.entries())) {
       if (b.blockerId === blockerId && b.blockedId === blockedId) {
         this.userBlocksMap.delete(key);
         break;

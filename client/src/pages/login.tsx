@@ -11,6 +11,7 @@ import logoLight from "@assets/logo-light.png";
 // caused white-on-white UI).
 export default function LoginPage() {
   const { login } = useAuth();
+  const authError = new URLSearchParams(window.location.search).get("error");
   // Demo accounts are shown only when the server actually offers them —
   // production returns 401, so an official launch never shows demo accounts.
   const [demoAccounts, setDemoAccounts] = useState<{ id: string; label: string; description: string }[] | null>(null);
@@ -74,9 +75,21 @@ export default function LoginPage() {
               <CardDescription className="text-neutral-600">
                 Sign in to access your account
               </CardDescription>
+              {authError === "email_already_in_use" && (
+                <p role="alert" className="text-sm text-red-600 text-center">
+                  This email address is already in use by another account. Sign in with the account that already uses it.
+                </p>
+              )}
             </CardHeader>
             <CardContent className="space-y-6">
-              <a href="/api/auth/google" className="block">
+              <a href="/api/auth/google" className="block" onClick={() => {
+                if (import.meta.env.DEV) {
+                  sessionStorage.setItem("oauthPending", "true");
+                  sessionStorage.setItem("oauthTabAuthPending", "true");
+                  sessionStorage.removeItem("tabUserId");
+                  sessionStorage.removeItem("demoUserId");
+                }
+              }}>
                 <Button
                   className="w-full h-12 text-base gap-3 bg-white text-neutral-800 border border-neutral-300 hover:bg-neutral-100 shadow-sm"
                   data-testid="button-google-login"
@@ -130,8 +143,8 @@ export default function LoginPage() {
               },
               {
                 icon: Wallet,
-                title: "Crypto Wallet",
-                text: "Track and manage USDT, BTC, SOL, and LTC payments",
+                title: "USDT Wallet",
+                text: "Manage USDT deposits, withdrawals, and job payments",
               },
               {
                 icon: Users,

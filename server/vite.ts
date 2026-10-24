@@ -22,7 +22,7 @@ export function log(message: string, source = "express") {
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server },
+    hmr: { server, clientPort: Number(process.env.PORT || 5006) },
     allowedHosts: true as const,
   };
 
@@ -40,7 +40,13 @@ export async function setupVite(app: Express, server: Server) {
     appType: "custom",
   });
 
+  // Handle unknown API paths before Vite's middleware; its HTML fallback can
+  // otherwise return index.html to API callers expecting JSON.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "API endpoint not found." });
+  });
   app.use(vite.middlewares);
+
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
@@ -78,7 +84,8 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
-  // Unknown API paths must return JSON, not the SPA HTML shell.
+  // Unknown API paths must remain JSON in production too; otherwise the SPA
+  // fallback returns index.html and clients mistake it for an API response.
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API endpoint not found." });
   });

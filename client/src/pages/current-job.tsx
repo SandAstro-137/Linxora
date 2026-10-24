@@ -133,7 +133,7 @@ export default function CurrentJobPage() {
   const isPrimaryFreelancer = currentJob && user && (currentJob as any).freelancerId === user.id;
   const { data: joinRequests = [] } = useQuery<any[]>({
     queryKey: ["/api/jobs", currentJob?.id, "requests"],
-    enabled: !!currentJob?.id && isPrimaryFreelancer,
+    enabled: !!currentJob?.id && !!isPrimaryFreelancer,
     refetchInterval: 15000,
   });
   const pendingJoinRequests = joinRequests.filter((r: any) => r.status === "pending");

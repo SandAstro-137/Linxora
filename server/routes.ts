@@ -3,10 +3,15 @@ import { createServer, type Server } from "http";
 import { randomBytes, randomUUID } from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { AccountDeletionBlockedError, storage, type CalendarEvent } from "./storage";
+import { EmailAlreadyInUseError, findEmailAccount, normalizeEmailAddress, resolveGoogleEmailAccount } from "./lib/email-uniqueness";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, getLevelFromEarnings, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertCustomerRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus, insertLeadershipVoteSchema, insertLeadershipVoteCastSchema, insertMeetingSchema, LeadershipVoteStatus, LeadershipVoteChoice, MeetingStatus, AbandonStatus } from "@shared/schema";
-import { getCryptoPrices } from "./lib/coingecko";
-import { getCryptoPriceService } from "./lib/crypto-price-ws";
+import { shouldRestoreGoogleCustomerRole } from "./lib/google-auth-role";
+import { canCreateGoogleAccount, canSwitchToLinkedAuthAccount, completeAuthAccountLink, createGoogleOAuthState, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition } from "./lib/auth-account-switch";
+import { shouldApplyDemoIdentity } from "./lib/demo-auth";
+import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
+import { shouldApplyTabIdentity } from "./lib/tab-auth";
+import { getCurrentFreelancerJobs } from "./lib/current-jobs";
 import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -280,22 +285,65 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     userRole?: string;
+    oauthState?: string;
     accountDeletionUserId?: string;
     accountDeletionConfirmUntil?: number;
     accountDeletionIssues?: string[];
+    isDemoSession?: boolean;
+    linkedAccountIds?: string[];
+    addAccountUserId?: string;
+    addAccountFlow?: boolean;
+    authFlow?: "add-account";
+    addAccountTargetUserId?: string;
+    addAccountLinkedIds?: string[];
   }
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Dev/demo: per-tab demo identity. The session cookie is shared across all
-  // tabs of a browser, so logging into a different demo account in another tab
-  // silently rewrites the shared session. Each tab remembers its chosen demo
-  // account in sessionStorage and sends it as X-Demo-User on every request; we
-  // honor that header (development only) so two demo accounts can run side by
-  // side in two tabs. Real (Discord) sessions are unaffected.
+  // In development only, restore each browser tab's selected account before
+  // auth middleware runs. Express cookies are shared by tabs; the tab-local
+  // header lets demo and OAuth identities remain independent across refreshes.
   app.use(async (req, res, next) => {
-    const demoId = req.headers['x-demo-user'];
-    if (typeof demoId === 'string' && demoId && process.env.NODE_ENV !== 'production') {
+    const tabUserId = req.headers["x-tab-user"];
+    if (shouldApplyTabIdentity(process.env.NODE_ENV, tabUserId)) {
+      try {
+        const tabUser = await storage.getUser(tabUserId);
+        if (tabUser) {
+          const previousIdentity = {
+            userId: req.session.userId,
+            userRole: req.session.userRole,
+            isDemoSession: req.session.isDemoSession,
+          };
+          const restoreIdentity = () => {
+            req.session.userId = previousIdentity.userId;
+            req.session.userRole = previousIdentity.userRole;
+            if (previousIdentity.isDemoSession === undefined) delete req.session.isDemoSession;
+            else req.session.isDemoSession = previousIdentity.isDemoSession;
+          };
+          const originalEnd = res.end;
+          (res as any).end = function (chunk?: any, encoding?: any, callback?: any) {
+            if (req.session) restoreIdentity();
+            return (originalEnd as any).call(this, chunk, encoding, callback);
+          };
+
+          // Set request-local identity for the existing auth middleware and
+          // routes. Restore it before express-session serializes the shared
+          // browser cookie, so another tab cannot overwrite the login.
+          req.session.userId = tabUser.id;
+          req.session.userRole = tabUser.role;
+          if (tabUser.discordId?.startsWith("demo-")) req.session.isDemoSession = true;
+          else delete req.session.isDemoSession;
+          return next();
+        }
+      } catch {
+        // Fall back to the cookie-backed session identity.
+      }
+    }
+
+    // Backward compatibility for older development clients, restricted to
+    // sessions created by dev-login so a stale demo header cannot shadow OAuth.
+    const demoId = req.headers["x-demo-user"];
+    if (!req.headers["x-tab-user"] && shouldApplyDemoIdentity(process.env.NODE_ENV, req.session.isDemoSession, demoId)) {
       try {
         const demoUser = await storage.getUserByDiscordId(demoId);
         if (demoUser) {
@@ -303,7 +351,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           req.session.userRole = demoUser.role;
         }
       } catch {
-        // Fall back to the session identity
+        // Fall back to the session identity.
       }
     }
     next();
@@ -320,8 +368,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let user = await storage.getUserByDiscordId(discordId);
       
       if (!user) {
-        // Create demo user
-        const getRoleAndName = (id: string) => {
+      // Create demo user
+      const getRoleAndName = (id: string) => {
           if (id.includes('founder')) return { role: 'founder', name: 'Demo Founder' };
           if (id.includes('head-mod')) return { role: 'head_of_moderation', name: 'Demo Head of Moderation' };
           if (id.includes('moderator')) return { role: 'moderator', name: 'Demo Moderator' };
@@ -370,13 +418,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       req.session.userId = user.id;
       req.session.userRole = user.role;
+      req.session.isDemoSession = true;
       res.json(user);
     } catch (error) {
       res.status(500).json({ error: "Login failed" });
     }
   });
 
-  // Auth routes - Discord OAuth (Direct implementation)
+  // Auth routes - account switching and OAuth entry points.
+  app.post("/api/auth/add-account", (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Sign in before adding another account." });
+    }
+    prepareAuthAccountAddition(req.session, req.session.userId);
+    req.session.addAccountFlow = true;
+    req.session.authFlow = "add-account";
+    req.session.save(error => {
+      if (error) return res.status(500).json({ error: "Could not prepare account linking." });
+      res.json({ success: true });
+    });
+  });
+
+  app.post("/api/auth/switch-account", async (req, res) => {
+    try {
+      const userId = typeof req.body?.userId === "string" ? req.body.userId : "";
+      const authenticatedUserId = req.session.userId;
+      if (!canSwitchToLinkedAuthAccount(req.session, userId)) {
+        if (authenticatedUserId) {
+          // Capture the request-local identity. In development it may come from
+          // X-Tab-User, while the shared cookie is restored after this response.
+          prepareAuthAccountAddition(req.session, authenticatedUserId);
+          req.session.addAccountTargetUserId = userId;
+        }
+        return res.status(403).json({ error: "This account has not been added to the current sign-in session. Sign in with Google to add it." });
+      }
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser || targetUser.accountStatus === "banned" || (
+        targetUser.accountStatus === "suspended" && targetUser.suspendedUntil && new Date(targetUser.suspendedUntil) > new Date()
+      )) {
+        return res.status(403).json({ error: "This account cannot be selected right now." });
+      }
+      req.session.userId = targetUser.id;
+      req.session.userRole = targetUser.role;
+      delete req.session.isDemoSession;
+      if (process.env.NODE_ENV === "development") {
+        req.session.linkedAccountIds = Array.from(new Set([...(req.session.linkedAccountIds || []), authenticatedUserId, targetUser.id].filter((id): id is string => typeof id === "string")));
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Could not switch account." });
+    }
+  });
+
   // Google OAuth (primary customer sign-in). The Google account ID is stored
   // in the existing external-auth-ID column (discordId), which acts as a
   // "platform provider account id"; users from different providers live in the
@@ -389,16 +482,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Google OAuth missing config:", { clientId: !!clientId, redirectUri: !!redirectUri });
         return res.status(500).json({ error: "Google OAuth not configured" });
       }
+      // Add-account OAuth starts from a signed-in session. Capture the
+      // request-local identity when present (including development tab auth),
+      // because the shared cookie session is restored after each tab request.
+      const addAccountRequested = req.query.add_account === "true";
+      const addAccountFlow = addAccountRequested || req.session.addAccountFlow === true || req.session.authFlow === "add-account";
+      if (addAccountFlow) {
+        if (!req.session.addAccountUserId && req.session.userId) {
+          prepareAuthAccountAddition(req.session, req.session.userId);
+        }
+        if (!req.session.addAccountUserId) {
+          return res.redirect("/settings?error=add_account_requires_login");
+        }
+        req.session.addAccountFlow = true;
+        req.session.authFlow = "add-account";
+      }
+      const isAddingAccount = addAccountFlow && !!req.session.addAccountUserId;
+      const previousUserId = isAddingAccount
+        ? (req.session.addAccountUserId || req.session.userId)
+        : undefined;
+      const previousLinkedAccountIds = isAddingAccount
+        ? [...(req.session.addAccountLinkedIds || req.session.linkedAccountIds || [])]
+        : [];
       // CSRF state (crypto-random, session-anchored — same pattern as Discord).
       const state = randomBytes(24).toString('hex');
-      req.session.oauthState = 'g:' + state;
+      const oauthState = createGoogleOAuthState(state, isAddingAccount);
+      req.session.oauthState = oauthState;
+      if (isAddingAccount) {
+        req.session.addAccountUserId = previousUserId;
+        req.session.addAccountLinkedIds = previousLinkedAccountIds;
+      } else {
+        delete req.session.addAccountUserId;
+        delete req.session.addAccountTargetUserId;
+        delete req.session.addAccountLinkedIds;
+        delete req.session.addAccountFlow;
+        delete req.session.authFlow;
+      }
+      if (isAddingAccount && process.env.NODE_ENV === "development") {
+        req.session.userId = previousUserId;
+      } else {
+        delete req.session.isDemoSession;
+      }
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
         scope: 'openid email profile',
-        state: state,
+        state: oauthState,
         prompt: 'select_account',
+        ...(typeof req.query.login_hint === 'string' ? { login_hint: req.query.login_hint } : {}),
       });
       res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
     } catch (error) {
@@ -415,10 +547,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect("/?error=oauth_denied");
       }
       if (!code) return res.redirect("/?error=no_code");
-      if (!state || typeof state !== 'string' || req.session.oauthState !== 'g:' + state) {
+      if (!state || typeof state !== 'string' || !matchesGoogleOAuthState(req.session.oauthState, state)) {
         console.error("Google state mismatch:", { received: state, expected: req.session.oauthState });
         return res.redirect("/?error=invalid_state");
       }
+      const isAddAccountCallback = isGoogleAddAccountState(req.session.oauthState);
       delete req.session.oauthState;
 
       const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -457,17 +590,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect("/?error=user_fetch_failed");
       }
 
-      // Find or create user (Google account id is stored in the external-ID column)
-      let user = await storage.getUserByDiscordId(payload.sub);
-      if (!user) {
-        const name = payload.given_name || payload.name || String(payload.email || 'user').split('@')[0];
+      // Resolve by the stable Google subject first. Older accounts may have
+      // been created from email in a prior release, so reconcile those too.
+      const googleId = String(payload.sub);
+      const googleEmail = normalizeEmailAddress(payload.email ? String(payload.email) : null);
+      const googleSubjectAccount = await storage.getUserByDiscordId(googleId);
+      const emailAccount = googleEmail && payload.email_verified === true
+        ? findEmailAccount(await storage.getUsers(), googleEmail)
+        : undefined;
+      // Reuse the email-owning account for legitimate sign-ins, even when
+      // legacy duplicates have multiple Google subjects attached to them.
+      let user = resolveGoogleEmailAccount(googleSubjectAccount, emailAccount, googleEmail);
+      // The state marker is authoritative for new flows. Also honor the
+      // session marker so an add-account flow started by a prior app version
+      // cannot fall through to the normal account-creation branch.
+      const isAddingAccount = isAddAccountCallback || req.session.addAccountFlow === true || req.session.authFlow === "add-account";
+      if (!canCreateGoogleAccount(isAddingAccount, !!user)) {
+        delete req.session.addAccountUserId;
+        delete req.session.addAccountTargetUserId;
+        delete req.session.addAccountLinkedIds;
+        delete req.session.addAccountFlow;
+        delete req.session.authFlow;
+        return res.redirect("/settings?error=account_not_found");
+      }
+
+      if (user) {
+        const isSameGoogleAccount = user.discordId === googleId || (
+          payload.email_verified === true && user.email?.trim().toLowerCase() === googleEmail
+        );
+        if (!isSameGoogleAccount) {
+          return res.redirect("/?error=account_link_conflict");
+        }
+        const updates: { role?: string; discordId?: string; email?: string; emailVerified?: boolean } = {};
+        // Google is customer-first. Keep privileged roles and established
+        // freelancer accounts unchanged while correcting legacy default roles.
+        if (user.role === "freelancer") {
+          const assignedJobs = await storage.getJobs({ freelancerId: user.id });
+          const jobFreelancers = await storage.getJobFreelancersByFreelancer(user.id);
+          const relevantJobIds = Array.from(new Set(jobFreelancers.filter(assignment => !["removed", "completed", "paid"].includes(assignment.status)).map(assignment => assignment.jobId)));
+          const assignmentJobs = await Promise.all(relevantJobIds.map(jobId => storage.getJob(jobId)));
+          const hasAssignedJobs = assignedJobs.length > 0 || assignmentJobs.some(job => job && ["claimed", "in_progress", "submitted", "awaiting_customer"].includes(job.status));
+          const belongsToGoogleSubject = user.discordId === googleId;
+          const hasVerifiedMatchingEmail = user.emailVerified === true && user.email?.trim().toLowerCase() === googleEmail;
+          if (shouldRestoreGoogleCustomerRole(user.role, user.completedJobs, user.totalJobs, hasAssignedJobs, belongsToGoogleSubject || hasVerifiedMatchingEmail)) {
+            updates.role = "customer";
+          }
+        }
+        // Do not transfer a Google subject from a legacy duplicate record to
+        // the canonical email owner; discordId is unique in storage. The email
+        // resolver will continue routing this subject to the canonical owner.
+        if (user.discordId !== googleId && (!googleSubjectAccount || googleSubjectAccount.id === user.id)) {
+          updates.discordId = googleId;
+        }
+        if (googleEmail && user.email?.trim().toLowerCase() !== googleEmail) updates.email = googleEmail;
+        if (payload.email_verified === true && !user.emailVerified) updates.emailVerified = true;
+        if (Object.keys(updates).length > 0) {
+          user = (await storage.updateUser(user.id, updates)) || user;
+        }
+      } else {
+        const name = payload.given_name || payload.name || googleEmail?.split('@')[0] || 'user';
         user = await storage.createUser({
-          discordId: payload.sub,
+          discordId: googleId,
           username: name,
-          email: payload.email ? String(payload.email).toLowerCase() : null,
+          email: googleEmail,
           emailVerified: payload.email_verified === true,
           avatar: payload.picture || null,
-          role: 'customer', // Default role for new accounts
+          role: "customer",
         });
         // Create wallet for new user (same as Discord flow)
         await storage.createWallet({
@@ -476,12 +664,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      req.session.userId = user.id;
+      if (!matchesRequestedAuthAccount(req.session, user.id)) {
+        // A login_hint only suggests an account to Google; it does not prove
+        // the selected saved account. Never silently fall back to another user.
+        delete req.session.addAccountUserId;
+        delete req.session.addAccountTargetUserId;
+        delete req.session.addAccountLinkedIds;
+        delete req.session.addAccountFlow;
+        delete req.session.authFlow;
+        delete req.session.addAccountUserId;
+        return res.redirect("/settings?error=account_mismatch");
+      }
+
       req.session.userRole = user.role;
-      res.redirect("/dashboard");
+      delete req.session.isDemoSession;
+      delete req.session.addAccountTargetUserId;
+      completeAuthAccountLink(req.session, user.id);
+      res.redirect(isAddingAccount ? "/dashboard?account_added=true" : "/dashboard");
     } catch (error) {
       console.error("Google OAuth callback error:", error);
-      res.redirect("/?error=callback_failed");
+      res.redirect(error instanceof EmailAlreadyInUseError
+        ? "/?error=email_already_in_use"
+        : "/?error=callback_failed");
     }
   });
 
@@ -498,6 +702,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate state for CSRF protection
       const state = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       req.session.oauthState = state;
+      delete req.session.isDemoSession;
 
       // Build Discord OAuth URL
       const params = new URLSearchParams({
@@ -605,14 +810,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // A verified or pending email can belong to only one account, across providers.
+      if (discordUser.email) {
+        const emailOwner = await storage.getUserByEmail(String(discordUser.email));
+        if (emailOwner && emailOwner.id !== user?.id) {
+          return res.redirect("/?error=email_already_in_use");
+        }
+      }
+
       // Set session
+      const previousAccountId = req.session.addAccountUserId;
+      const previousLinkedAccountIds = req.session.addAccountLinkedIds || [];
+      delete req.session.addAccountUserId;
+      delete req.session.addAccountLinkedIds;
       req.session.userId = user.id;
       req.session.userRole = user.role;
-
+      delete req.session.isDemoSession;
+      req.session.linkedAccountIds = Array.from(new Set([...previousLinkedAccountIds, previousAccountId, user.id].filter((id): id is string => typeof id === "string")));
       res.redirect("/dashboard");
     } catch (error) {
       console.error("OAuth callback error:", error);
-      res.redirect("/?error=callback_failed");
+      res.redirect(error instanceof EmailAlreadyInUseError
+        ? "/?error=email_already_in_use"
+        : "/?error=callback_failed");
     }
   });
 
@@ -660,6 +880,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy(() => {
+      res.clearCookie("connect.sid", { path: "/" });
       res.json({ success: true });
     });
   });
@@ -990,22 +1211,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/freelancer/jobs", requireRole("freelancer"), async (req, res) => {
     try {
       const userId = req.session.userId!;
-      
-      // Get all jobs where this user is the freelancer or a collaborator
-      const allJobs = await storage.getJobs({});
-      
-      // Also check jobFreelancers table for multi-freelancer assignments
-      const freelancerAssignments = await storage.getJobFreelancersByFreelancer(userId);
-      const assignedJobIds = new Set(freelancerAssignments.map(jf => jf.jobId));
-      
-      const freelancerJobs = allJobs.filter(job => 
-        job.freelancerId === userId || 
-        (job.collaborators && job.collaborators.includes(userId)) ||
-        assignedJobIds.has(job.id)
-      );
-      
-      res.json(freelancerJobs);
+      const [allJobs, freelancerAssignments] = await Promise.all([
+        storage.getJobs({}),
+        storage.getJobFreelancersByFreelancer(userId),
+      ]);
+      const freelancerJobs = getCurrentFreelancerJobs(userId, allJobs, freelancerAssignments);
+      res.set("Cache-Control", "no-store").json(freelancerJobs);
     } catch (error) {
+      console.error("Error loading freelancer jobs:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -1908,6 +2121,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "This job is not available for assignment" });
       }
 
+      const freelancer = await storage.getUser(freelancerId);
+      if (!freelancer || freelancer.role !== "freelancer") {
+        return res.status(400).json({ error: "Only a freelancer account can be assigned to a job" });
+      }
+
       // Find the pending request for this freelancer
       const jobRequest = await storage.getJobRequestByJobAndFreelancer(req.params.id, freelancerId);
       if (!jobRequest || jobRequest.status !== "pending") {
@@ -1915,9 +2133,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check if freelancer is still eligible (no active jobs)
-      const freelancerActiveJobs = await storage.getJobs({ freelancerId, status: "in_progress" });
-      const freelancerClaimedJobs = await storage.getJobs({ freelancerId, status: "claimed" });
-      if (freelancerActiveJobs.length > 0 || freelancerClaimedJobs.length > 0) {
+      const [freelancerActiveJobs, freelancerClaimedJobs, freelancerAssignments] = await Promise.all([
+        storage.getJobs({ freelancerId, status: "in_progress" }),
+        storage.getJobs({ freelancerId, status: "claimed" }),
+        storage.getJobFreelancersByFreelancer(freelancerId),
+      ]);
+      const hasActiveTeamAssignment = freelancerAssignments.some(assignment => assignment.status !== "removed" && assignment.status !== "completed" && assignment.status !== "paid");
+      if (freelancerActiveJobs.length > 0 || freelancerClaimedJobs.length > 0 || hasActiveTeamAssignment) {
         // Mark the request as cancelled since freelancer is busy
         await storage.updateJobRequest(jobRequest.id, { status: "cancelled" });
         return res.status(400).json({ error: "This freelancer already has an active job and cannot accept new jobs" });
@@ -1931,6 +2153,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "claimed",
         freelancerId: freelancerId,
       });
+      if (!updatedJob) {
+        return res.status(404).json({ error: "Job not found" });
+      }
 
       // Mark this request as accepted
       await storage.updateJobRequest(jobRequest.id, { status: "accepted" });
@@ -4775,30 +5000,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Return wallet with calculated available balance
       res.json({
         ...wallet,
+        usdtBalance: Number(wallet.usdtBalance || 0).toFixed(8),
+        pendingUsdtBalance: pendingUsdtBalance.toFixed(8),
         availableUsdtBalance: availableBalance.toFixed(8),
       });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.get("/api/wallet/prices", async (req, res) => {
-    try {
-      // Get real-time prices from polling service
-      const priceService = getCryptoPriceService();
-      const currentPrices = priceService.getCurrentPrices();
-      
-      // Return in the format expected by frontend
-      const prices = {
-        btc: { usd: currentPrices.btc, usd_24h_change: 0 },
-        sol: { usd: currentPrices.sol, usd_24h_change: 0 },
-        ltc: { usd: currentPrices.ltc, usd_24h_change: 0 },
-        usdt: { usd: currentPrices.usdt, usd_24h_change: 0 },
-      };
-      
-      res.json(prices);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch prices" });
     }
   });
 
@@ -4835,46 +5042,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (isNaN(withdrawAmount) || withdrawAmount <= 0) {
         return res.status(400).json({ error: "Withdrawal amount must be greater than $0" });
       }
-      
-      // Minimum withdrawal is $0.01
-      if (withdrawAmount < 0.01) {
-        return res.status(400).json({ error: "Minimum withdrawal is $0.01" });
+      const normalizedCurrency = typeof currency === "string" ? currency.toUpperCase() : "";
+      if (normalizedCurrency !== "USDT") {
+        return res.status(400).json({ error: "Only USDT withdrawals are supported." });
       }
-
-      // Simulate withdrawal (in production, this would interact with blockchain)
-      const currencyKey = `${currency.toLowerCase()}Balance` as keyof typeof wallet;
-      const currentBalance = parseFloat(wallet[currencyKey] as string);
-
-      // For USDT, check available balance (total - pending)
-      if (currency.toUpperCase() === "USDT") {
-        const pendingUsdtBalance = parseFloat(wallet.pendingUsdtBalance || "0");
-        const availableBalance = currentBalance - pendingUsdtBalance;
-        
-        if (availableBalance < withdrawAmount) {
-          return res.status(400).json({ 
-            error: "Insufficient available balance",
-            details: `You have ${availableBalance.toFixed(2)} USDT available (${pendingUsdtBalance.toFixed(2)} USDT locked in active jobs)`
-          });
-        }
-      } else if (currentBalance < withdrawAmount) {
-        return res.status(400).json({ error: "Insufficient balance" });
+      const currentBalance = Number(wallet.usdtBalance ?? 0);
+      if (!Number.isFinite(currentBalance)) {
+        return res.status(400).json({ error: "Wallet balance is invalid; contact support before withdrawing." });
       }
+      const pendingUsdtBalance = Number(wallet.pendingUsdtBalance || 0);
+      const availableBalance = currentBalance - pendingUsdtBalance;
+      if (withdrawAmount < 0.01 && !isFullWalletWithdrawal(availableBalance, withdrawAmount)) {
+        return res.status(400).json({ error: "Minimum withdrawal is $0.01 unless withdrawing your entire available balance." });
+      }
+      if (!hasSufficientWalletBalance(availableBalance, withdrawAmount)) {
+        return res.status(400).json({
+          error: "Insufficient available balance",
+          details: `You have ${availableBalance.toFixed(8)} USDT available (${pendingUsdtBalance.toFixed(8)} USDT locked in active jobs)`
+        });
+      }
+      const remainingBalance = getRemainingWalletBalance(currentBalance, withdrawAmount);
+      await storage.updateWallet(req.session.userId!, { usdtBalance: remainingBalance });
 
-      // Update wallet balance
-      await storage.updateWallet(req.session.userId!, {
-        [currencyKey]: (currentBalance - withdrawAmount).toString(),
-      });
-
-      // Get current price
-      const prices = await getCryptoPrices();
-      const price = prices[currency.toLowerCase()]?.usd || 0;
+      // USDT is pegged to USD.
+      const price = 1;
 
       // Create transaction record
       const transaction = await storage.createTransaction({
         walletId: wallet.id,
         type: "withdrawal",
-        currency,
-        amount: withdrawAmount.toString(),
+        currency: normalizedCurrency,
+        amount: withdrawAmount.toFixed(8),
         usdAmount: (withdrawAmount * price).toString(),
         status: "completed",
         transactionHash: `0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`,
@@ -4889,7 +5087,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Deposit endpoint
   app.post("/api/wallet/deposit", requireAuth, async (req, res) => {
     try {
-      const { currency, amount } = req.body;
+      const { currency = "USDT", amount } = req.body;
       
       const wallet = await storage.getWallet(req.session.userId!);
       if (!wallet) {
@@ -4908,24 +5106,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Minimum deposit is $1.00" });
       }
 
-      const currencyKey = `${currency.toLowerCase()}Balance` as keyof typeof wallet;
-      const currentBalance = parseFloat(wallet[currencyKey] as string || "0");
+      if (typeof currency !== "string" || currency.toUpperCase() !== "USDT") {
+        return res.status(400).json({ error: "Only USDT deposits are supported." });
+      }
+      const currentBalance = parseFloat(wallet.usdtBalance || "0");
 
       // Update wallet balance
       await storage.updateWallet(req.session.userId!, {
-        [currencyKey]: (currentBalance + depositAmount).toString(),
+        usdtBalance: (currentBalance + depositAmount).toFixed(8),
       });
 
-      // Get current price
-      const prices = await getCryptoPrices();
-      const price = prices[currency.toLowerCase()]?.usd || 1;
+      const price = 1;
 
       // Create transaction record
       const transaction = await storage.createTransaction({
         walletId: wallet.id,
         type: "deposit",
-        currency,
-        amount: depositAmount.toString(),
+        currency: "USDT",
+        amount: depositAmount.toFixed(8),
         usdAmount: (depositAmount * price).toString(),
         status: "completed",
         transactionHash: `0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`,
@@ -6778,8 +6976,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
       
+      // An email can belong to only one account, including pending changes.
+      const emailOwner = await storage.getUserByEmail(trimmedEmail);
+      if (emailOwner && emailOwner.id !== user.id) {
+        return res.status(409).json({ error: "This email address is already in use." });
+      }
+
       // Check if email is same as current
-      if (user.email === trimmedEmail) {
+      if (user.email?.trim().toLowerCase() === trimmedEmail) {
         return res.status(400).json({ error: "This is already your current email" });
       }
       
@@ -6812,19 +7016,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expiresAt,
       });
       
-      // Update user with pending email
-      await storage.updateUser(user.id, { pendingEmail: trimmedEmail });
+      // Reserve the new address before sending its verification link.
+      try {
+        await storage.updateUser(user.id, { pendingEmail: trimmedEmail });
+      } catch (error) {
+        if (error instanceof EmailAlreadyInUseError) {
+          await storage.deleteEmailVerificationTokensByUserId(user.id);
+          return res.status(409).json({ error: "This email address is already in use." });
+        }
+        throw error;
+      }
       
       // Dev aid: when no email provider is configured, make the verification
       // link retrievable from the server log so the flow stays testable.
       if (!process.env.ZOHO_SMTP_USER && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
-        console.log(`[email-verification] No email provider configured. Verification link for ${trimmedEmail}: http://localhost:5000/api/profile/email-verify?token=${token}`);
+        const localOrigin = `${req.protocol}://${req.get("host")}`;
+        console.log(`[email-verification] No email provider configured. Verification link for ${trimmedEmail}: ${localOrigin}/api/profile/email-verify?token=${token}`);
       }
       
       // Send verification email
       try {
-        const { sendVerificationEmail } = await import('./lib/resend-client');
-        await sendVerificationEmail(trimmedEmail, token, user.username);
+        const { getVerificationRequestOrigin, sendVerificationEmail } = await import('./lib/resend-client');
+        const requestOrigin = getVerificationRequestOrigin(
+          req.protocol,
+          req.get("host") || `localhost:${process.env.PORT || '5006'}`,
+          req.socket.localPort,
+        );
+        await sendVerificationEmail(trimmedEmail, token, user.username, requestOrigin);
       } catch (emailError: any) {
         console.error('Failed to send verification email:', emailError);
         const msg = String(emailError?.message || '');
@@ -6886,12 +7104,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark token as used
       await storage.markEmailVerificationTokenUsed(token);
       
-      // Update user's email
-      const user = await storage.updateUser(verificationToken.userId, {
-        email: verificationToken.newEmail,
-        emailVerified: true,
-        pendingEmail: null,
-      });
+      // Update user's email; a concurrent claim must not bypass uniqueness.
+      let user;
+      try {
+        user = await storage.updateUser(verificationToken.userId, {
+          email: verificationToken.newEmail,
+          emailVerified: true,
+          pendingEmail: null,
+        });
+      } catch (error) {
+        if (error instanceof EmailAlreadyInUseError) {
+          return res.status(409).json({ error: "This email address is already in use." });
+        }
+        throw error;
+      }
       
       if (!user) {
         return res.status(404).json({ error: "User not found" });
@@ -11691,60 +11917,12 @@ Your role is to help users understand how to use Linxova. Here is what you know 
     }
   });
 
-  // Set up WebSocket server for real-time price broadcasts
-  const wss = new WebSocketServer({ noServer: true });
-  
-  // Initialize crypto price service
-  const priceService = getCryptoPriceService();
-  
-  wss.on('connection', (ws: WebSocket) => {
-    console.log('[WebSocket] Client connected to price feed');
-    
-    // Send current prices immediately on connection
-    const currentPrices = priceService.getCurrentPrices();
-    ws.send(JSON.stringify({
-      type: 'prices',
-      data: currentPrices
-    }));
-    
-    ws.on('error', (error) => {
-      console.error('[WebSocket] Client error:', error.message);
-    });
-    
-    ws.on('close', () => {
-      console.log('[WebSocket] Client disconnected from price feed');
-    });
-  });
-  
-  // Broadcast price updates every 3 seconds to all connected clients
-  setInterval(() => {
-    const currentPrices = priceService.getCurrentPrices();
-    const priceData = {
-      type: 'prices',
-      data: currentPrices
-    };
-    
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(priceData));
-      }
-    });
-  }, 3000); // Broadcast every 3 seconds
-  
-  // Route WebSocket upgrades by path. Each WebSocketServer is created with
-  // noServer:true so a non-matching path isn’t aborted by ws (it destroys the
-  // socket with a 400 otherwise, killing connections handled by the other server
-  // sharing this HTTP server — e.g. the team room vs the price feed).
   httpServer.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
     if (pathname === "/ws/team-room") {
-      teamRoomWss.handleUpgrade(req, socket, head, (ws) => {
-        teamRoomWss.emit("connection", ws, req);
-      });
-    } else if (pathname === "/ws/prices") {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req);
-      });
+      teamRoomWss.handleUpgrade(req, socket, head, ws => teamRoomWss.emit("connection", ws, req));
+    } else {
+      socket.destroy();
     }
   });
 

@@ -156,8 +156,9 @@ const freelancerSteps: OnboardingStep[] = [
         <p>Set up your profile:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Go to Profile to set your working hours</li>
-          <li>Your level (1-8) determines payout percentage: Level 1 = 65%, Level 2 = 75%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%, Level 6 = 93%, Level 7 = 95%, Level 8 = 97%</li>
-          <li>Level up as your lifetime earnings grow ($20, $50, $100, $250, $450, $750, $1500)</li>
+          <li>Your level (1–8) determines your rate for each job: Level 1 = 65%, Level 2 = 75%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%, Level 6 = 93%, Level 7 = 95%, Level 8 = 97%</li>
+          <li>Levels 2–8 unlock at cumulative lifetime earnings of $20, $50, $100, $250, $450, $750, and $1,500 respectively; Level 1 starts at $0</li>
+          <li>The rate is your share of the job budget; your level updates as eligible earnings are recorded</li>
         </ul>
       </div>
     ),

@@ -234,18 +234,12 @@ export async function seedData() {
   const freelancer1Wallet = await storage.createWallet({
     userId: freelancer1.id,
     usdtBalance: "1250.50",
-    solBalance: "12.5",
-    btcBalance: "0.05",
-    ltcBalance: "8.2",
     walletAddress: "0xabc123def456ghi789jkl012mno345pqr678stu",
   });
 
   const freelancer2Wallet = await storage.createWallet({
     userId: freelancer2.id,
     usdtBalance: "3400.00",
-    solBalance: "25.8",
-    btcBalance: "0.12",
-    ltcBalance: "15.6",
     walletAddress: "0xdef789abc012ghi345jkl678mno901pqr234stu",
   });
 
@@ -294,9 +288,9 @@ export async function seedData() {
   await storage.createTransaction({
     walletId: freelancer1Wallet.id,
     type: "withdrawal",
-    currency: "BTC",
+    currency: "USDT",
     amount: "0.01",
-    usdAmount: "430.00",
+    usdAmount: "0.01",
     status: "completed",
     transactionHash: "0xabcdef1234567890abcdef1234567890abcdef12",
   });

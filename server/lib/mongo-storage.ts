@@ -5,6 +5,8 @@ import {
   type InsertUser,
   type Job,
   type InsertJob,
+  type JobFreelancer,
+  type InsertJobFreelancer,
   type Wallet,
   type InsertWallet,
   type Transaction,
@@ -31,9 +33,13 @@ import {
   type InsertCustomerRating,
   type DirectMessage,
   type InsertDirectMessage,
+  type Friend,
+  type FriendRequest,
+  type InsertFriendRequest,
 } from "@shared/schema";
 import { AccountDeletionBlockedError, type IStorage } from "../storage";
 import { getWalletBalanceBlockReason } from "./wallet-amounts";
+import { EmailAlreadyInUseError, findEmailConflict, normalizeEmailAddress } from "./email-uniqueness";
 
 export class MongoStorage implements IStorage {
   private client: MongoClient;
@@ -53,7 +59,11 @@ export class MongoStorage implements IStorage {
   private ratings: Collection;
   private customerRatings: Collection;
   private directMessages: Collection;
+  private friends: Collection;
+  private friendRequests: Collection;
+  private jobFreelancers: Collection;
   private counters: Collection;
+  private emailClaims: Collection;
 
   constructor(mongoUri: string) {
     // Add connection options if not already in URI
@@ -82,42 +92,126 @@ export class MongoStorage implements IStorage {
     this.ratings = this.db.collection('ratings');
     this.customerRatings = this.db.collection('customerRatings');
     this.directMessages = this.db.collection('directMessages');
+    this.friends = this.db.collection('friends');
+    this.friendRequests = this.db.collection('friendRequests');
+    this.jobFreelancers = this.db.collection('jobFreelancers');
     this.counters = this.db.collection('counters');
+    this.emailClaims = this.db.collection('emailClaims');
   }
 
   async connect(): Promise<void> {
     await this.client.connect();
     await this.db.command({ ping: 1 });
-    await this.createIndexes();
-    // Initialize userId counter if it doesn't exist
+    // Older deployments may have users with missing/non-numeric IDs and a
+    // counter that was never advanced. Repair records before creating the unique ID index.
+    const highestExistingUser = await this.users.find({ userId: { $type: "number" } })
+      .sort({ userId: -1 })
+      .limit(1)
+      .project({ userId: 1 })
+      .next();
+    const minimumSequence = highestExistingUser && Number.isSafeInteger(highestExistingUser.userId)
+      ? highestExistingUser.userId
+      : 0;
     await this.counters.updateOne(
       { _id: 'userId' as any },
-      { $setOnInsert: { sequence: 0 } },
+      [{ $set: { sequence: { $max: [{ $ifNull: ["$sequence", 0] }, minimumSequence] } } }],
       { upsert: true }
     );
+
+    const usersWithoutNumericIds = this.users.find({ userId: { $not: { $type: "number" } } })
+      .sort({ createdAt: 1, _id: 1 })
+      .project({ _id: 1 });
+    for await (const user of usersWithoutNumericIds) {
+      const userId = await this.getNextUserId();
+      await this.users.updateOne(
+        { _id: user._id, userId: { $not: { $type: "number" } } },
+        { $set: { userId } }
+      );
+    }
+
+    await this.createIndexes();
+    await this.syncEmailClaims();
     console.log('✓ Connected to MongoDB successfully');
   }
 
   private async getNextUserId(): Promise<number> {
-    const result = await this.counters.findOneAndUpdate(
+    const counter = await this.counters.findOneAndUpdate(
       { _id: 'userId' as any },
       { $inc: { sequence: 1 } },
       { returnDocument: 'after', upsert: true }
     );
-    if (!result) {
+    if (!counter || !Number.isSafeInteger(counter.sequence) || counter.sequence < 1) {
       throw new Error("Failed to generate user ID");
     }
-    return result.sequence as number;
+    return counter.sequence;
   }
 
   async close(): Promise<void> {
     await this.client.close();
   }
 
+  private async syncEmailClaims(): Promise<void> {
+    const users = await this.users.find({}).sort({ createdAt: 1, _id: 1 }).toArray();
+    for (const user of users) {
+      const emails = new Set([
+        normalizeEmailAddress(user.email),
+        normalizeEmailAddress(user.pendingEmail),
+      ].filter((email): email is string => !!email));
+      for (const email of Array.from(emails)) {
+        // When older data already contains duplicates, the oldest account keeps
+        // the claim. Do not delete or otherwise rewrite the existing accounts.
+        try {
+          await this.emailClaims.updateOne(
+            { _id: email } as any,
+            { $setOnInsert: { userId: user._id } },
+            { upsert: true },
+          );
+        } catch (error: any) {
+          if (error?.code !== 11000) throw error;
+        }
+      }
+    }
+  }
+
+  private async reserveEmail(email: string, userId: string): Promise<boolean> {
+    const normalizedEmail = normalizeEmailAddress(email);
+    if (!normalizedEmail) return false;
+
+    let inserted = false;
+    try {
+      const result = await this.emailClaims.updateOne(
+        { _id: normalizedEmail } as any,
+        { $setOnInsert: { userId: new ObjectId(userId) } },
+        { upsert: true },
+      );
+      inserted = result.upsertedCount === 1;
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+    }
+
+    const claim = await this.emailClaims.findOne({ _id: normalizedEmail } as any);
+    if (!claim || String(claim.userId) !== userId) throw new EmailAlreadyInUseError();
+    return inserted;
+  }
+
+  private async releaseEmailClaims(userId: string, emails?: Array<string | null | undefined>): Promise<void> {
+    const normalizedEmails = emails?.map(normalizeEmailAddress).filter((email): email is string => !!email);
+    if (normalizedEmails) {
+      if (normalizedEmails.length > 0) {
+        await this.emailClaims.deleteMany({ userId: new ObjectId(userId), _id: { $in: Array.from(new Set(normalizedEmails)) } } as any);
+      }
+      return;
+    }
+    await this.emailClaims.deleteMany({ userId: new ObjectId(userId) });
+  }
+
   private async createIndexes(): Promise<void> {
     await this.users.createIndex({ discordId: 1 }, { unique: true });
     await this.users.createIndex({ userId: 1 }, { unique: true });
     await this.users.createIndex({ username: 1 });
+    await this.friendRequests.createIndex({ fromUserId: 1, toUserId: 1, createdAt: -1 });
+    await this.friends.createIndex({ userId: 1 });
+    await this.friends.createIndex({ friendId: 1 });
     await this.jobs.createIndex({ status: 1 });
     await this.jobs.createIndex({ customerId: 1 });
     await this.jobs.createIndex({ freelancerId: 1 });
@@ -147,12 +241,15 @@ export class MongoStorage implements IStorage {
     await this.ratings.createIndex({ freelancerId: 1 });
     await this.ratings.createIndex({ customerId: 1 });
     await this.customerRatings.createIndex({ jobId: 1 }, { unique: true });
+    await this.jobFreelancers.createIndex({ freelancerId: 1 });
+    await this.jobFreelancers.createIndex({ jobId: 1 });
     await this.customerRatings.createIndex({ customerId: 1 });
     await this.customerRatings.createIndex({ freelancerId: 1 });
   }
 
   private toUser(doc: any): User {
     return {
+      ...doc,
       id: doc._id.toString(),
       userId: doc.userId,
       discordId: doc.discordId,
@@ -171,6 +268,11 @@ export class MongoStorage implements IStorage {
       totalRatings: doc.totalRatings ?? 0,
       completionPercentage: doc.completionPercentage ?? "0",
       totalEarned: doc.totalEarned ?? "0",
+      blacklistedFreelancers: doc.blacklistedFreelancers ?? [],
+      accountStatus: doc.accountStatus ?? "active",
+      suspendedUntil: doc.suspendedUntil ?? null,
+      suspendedReason: doc.suspendedReason ?? null,
+      lastActive: doc.lastActive ?? null,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };
@@ -178,6 +280,7 @@ export class MongoStorage implements IStorage {
 
   private toJob(doc: any): Job {
     return {
+      ...doc,
       id: doc._id.toString(),
       customerId: doc.customerId,
       title: doc.title,
@@ -190,6 +293,7 @@ export class MongoStorage implements IStorage {
       deadlineArrivalNotified: doc.deadlineArrivalNotified ?? false,
       status: doc.status,
       freelancerId: doc.freelancerId ?? null,
+      projectLeaderId: doc.projectLeaderId ?? null,
       collaborators: doc.collaborators ?? [],
       moderatorFeedback: doc.moderatorFeedback ?? null,
       createdAt: doc.createdAt,
@@ -203,9 +307,6 @@ export class MongoStorage implements IStorage {
       userId: doc.userId,
       usdtBalance: doc.usdtBalance ?? null,
       pendingUsdtBalance: doc.pendingUsdtBalance ?? "0",
-      solBalance: doc.solBalance ?? null,
-      btcBalance: doc.btcBalance ?? null,
-      ltcBalance: doc.ltcBalance ?? null,
       walletAddress: doc.walletAddress ?? null,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
@@ -286,6 +387,10 @@ export class MongoStorage implements IStorage {
       message: doc.message,
       relatedId: doc.relatedId ?? null,
       read: doc.read ?? false,
+      dismissed: doc.dismissed ?? false,
+      sourceType: doc.sourceType ?? null,
+      sourceId: doc.sourceId ?? null,
+      redirectUrl: doc.redirectUrl ?? null,
       createdAt: doc.createdAt,
     };
   }
@@ -358,6 +463,13 @@ export class MongoStorage implements IStorage {
     return doc ? this.toUser(doc) : undefined;
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const normalizedEmail = normalizeEmailAddress(email);
+    if (!normalizedEmail) return undefined;
+    const doc = await this.users.findOne({ email: { $regex: `^${normalizedEmail.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}$`, $options: "i" } });
+    return doc ? this.toUser(doc) : undefined;
+  }
+
   async getUserByUsername(username: string): Promise<User | undefined> {
     const doc = await this.users.findOne({ username });
     return doc ? this.toUser(doc) : undefined;
@@ -387,14 +499,43 @@ export class MongoStorage implements IStorage {
       }
     }
     
+    const requestedEmail = normalizeEmailAddress(insertUser.email);
+    const requestedPendingEmail = normalizeEmailAddress(insertUser.pendingEmail);
+    if (requestedEmail || requestedPendingEmail) {
+      const existingUsers = await this.users.find({}).toArray();
+      if (findEmailConflict(existingUsers.map((user: any) => ({
+        id: user._id.toString(),
+        email: user.email,
+        pendingEmail: user.pendingEmail,
+      })), [requestedEmail, requestedPendingEmail])) {
+        throw new EmailAlreadyInUseError();
+      }
+    }
+
+    const userObjectId = new ObjectId();
+    let userId = 0;
+    const claimedEmails: string[] = [];
+    try {
+      userId = await this.getNextUserId();
+      for (const email of Array.from(new Set([requestedEmail, requestedPendingEmail].filter((value): value is string => !!value)))) {
+        if (await this.reserveEmail(email, userObjectId.toString())) claimedEmails.push(email);
+      }
+    } catch (error) {
+      await this.releaseEmailClaims(userObjectId.toString(), claimedEmails);
+      throw error;
+    }
+
     const now = new Date();
-    const userId = await this.getNextUserId(); // Get sequential permanent User ID
     const doc = {
+      _id: userObjectId,
       userId,
       discordId: insertUser.discordId,
       username: insertUser.username,
       email: insertUser.email ?? null,
+      emailVerified: insertUser.emailVerified ?? false,
+      pendingEmail: insertUser.pendingEmail ?? null,
       avatar: insertUser.avatar ?? null,
+      bio: insertUser.bio ?? null,
       role: insertUser.role ?? "customer",
       level: insertUser.level ?? 1,
       specialization: insertUser.specialization ?? null,
@@ -406,11 +547,25 @@ export class MongoStorage implements IStorage {
       onboardingCompleted: insertUser.onboardingCompleted ?? false,
       totalRatings: insertUser.totalRatings ?? 0,
       completionPercentage: insertUser.completionPercentage ?? "0",
+      totalEarned: insertUser.totalEarned ?? "0",
+      blacklistedFreelancers: insertUser.blacklistedFreelancers ?? [],
+      accountStatus: insertUser.accountStatus ?? "active",
+      suspendedUntil: insertUser.suspendedUntil ?? null,
+      suspendedReason: insertUser.suspendedReason ?? null,
+      lastActive: insertUser.lastActive ?? now,
       createdAt: now,
       updatedAt: now,
     };
-    const result = await this.users.insertOne(doc);
-    return this.toUser({ ...doc, _id: result.insertedId });
+    try {
+      const result = await this.users.insertOne(doc);
+      return this.toUser({ ...doc, _id: result.insertedId });
+    } catch (error: any) {
+      await this.releaseEmailClaims(userObjectId.toString(), claimedEmails);
+      if (error?.code === 11000 && (error?.keyPattern?.email || error?.keyPattern?.pendingEmail)) {
+        throw new EmailAlreadyInUseError();
+      }
+      throw error;
+    }
   }
 
   async getAccountDeletionBlockReasons(userId: string): Promise<string[]> {
@@ -431,7 +586,7 @@ export class MongoStorage implements IStorage {
 
     // Include denormalized assignment rows where the job's participant fields
     // are stale or missing.
-    const assignments = await this.db.collection("jobFreelancers").find({ freelancerId: { $in: possibleUserIds } }).toArray();
+    const assignments = await this.jobFreelancers.find({ freelancerId: { $in: possibleUserIds } }).toArray();
     const assignmentJobIds = assignments
       .filter(assignment => !["completed", "paid", "removed", "cancelled", "rejected"].includes(String(assignment.status ?? "").toLowerCase()))
       .map(assignment => String(assignment.jobId));
@@ -540,7 +695,7 @@ export class MongoStorage implements IStorage {
     await remove("hiddenConversations", { $or: [{ userId }, { partnerId: userId }] });
     await remove("emailVerificationTokens", { userId });
     await remove("jobRequests", { freelancerId: { $in: userIds } });
-    await this.db.collection("jobFreelancers").deleteMany({ freelancerId: { $in: userIds } });
+    await this.jobFreelancers.deleteMany({ freelancerId: { $in: userIds } });
     await remove("oauthAccounts", { userId });
     await remove("sessions", { "session.userId": { $in: userIds } });
     await remove("friends", { $or: [{ userId }, { friendId: userId }] });
@@ -612,6 +767,7 @@ export class MongoStorage implements IStorage {
     if (userDeleteResult.deletedCount !== 1) {
       throw new Error("Account record was not deleted; deletion did not complete.");
     }
+    await this.releaseEmailClaims(userId);
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
@@ -626,14 +782,67 @@ export class MongoStorage implements IStorage {
     if (existingUser?.role === "founder" && updates.role && updates.role !== "founder") {
       throw new Error("Cannot change Founder's role");
     }
-    
-    const { id: _, ...updateDoc } = updates as any;
-    const result = await this.users.findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      { $set: { ...updateDoc, updatedAt: new Date() } },
-      { returnDocument: 'after' }
-    );
-    return result ? this.toUser(result) : undefined;
+    if (!existingUser) return undefined;
+    const nextEmail = updates.email !== undefined ? updates.email : existingUser.email;
+    const nextPendingEmail = updates.pendingEmail !== undefined ? updates.pendingEmail : existingUser.pendingEmail;
+    const previousEmails = [existingUser.email, existingUser.pendingEmail];
+    const requestedEmail = normalizeEmailAddress(nextEmail);
+    const requestedPendingEmail = normalizeEmailAddress(nextPendingEmail);
+    if (updates.pendingEmail !== undefined && requestedPendingEmail) {
+      const pendingOwner = await this.users.findOne({
+        $or: [
+          { email: { $regex: `^${requestedPendingEmail.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}$`, $options: "i" } },
+          { pendingEmail: { $regex: `^${requestedPendingEmail.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}$`, $options: "i" } },
+        ],
+        _id: { $ne: new ObjectId(id) },
+      });
+      if (pendingOwner) throw new EmailAlreadyInUseError();
+    }
+    if (updates.email !== undefined && requestedEmail) {
+      const emailOwner = await this.users.findOne({
+        email: { $regex: `^${requestedEmail.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}$`, $options: "i" },
+        _id: { $ne: new ObjectId(id) },
+      });
+      if (emailOwner) throw new EmailAlreadyInUseError();
+    }
+    if (requestedEmail || requestedPendingEmail) {
+      const otherUsers = await this.users.find({ _id: { $ne: new ObjectId(id) } }).toArray();
+      if (findEmailConflict(otherUsers.map((user: any) => ({
+        id: user._id.toString(),
+        email: user.email,
+        pendingEmail: user.pendingEmail,
+      })), [requestedEmail, requestedPendingEmail])) {
+        throw new EmailAlreadyInUseError();
+      }
+    }
+
+    const nextEmailSet = new Set([requestedEmail, requestedPendingEmail].filter((email): email is string => !!email));
+    const previousEmailSet = new Set(previousEmails.map(normalizeEmailAddress).filter((email): email is string => !!email));
+    const newlyClaimed: string[] = [];
+    try {
+      for (const email of Array.from(nextEmailSet)) {
+        if (await this.reserveEmail(email, id)) newlyClaimed.push(email);
+      }
+
+      const { id: _, ...updateDoc } = updates as any;
+      const result = await this.users.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: { ...updateDoc, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+      if (result) {
+        await this.releaseEmailClaims(id, Array.from(previousEmailSet).filter(email => !nextEmailSet.has(email)));
+        return this.toUser(result);
+      }
+      await this.releaseEmailClaims(id, newlyClaimed);
+      return undefined;
+    } catch (error: any) {
+      await this.releaseEmailClaims(id, newlyClaimed);
+      if (error?.code === 11000 && (error?.keyPattern?.email || error?.keyPattern?.pendingEmail)) {
+        throw new EmailAlreadyInUseError();
+      }
+      throw error;
+    }
   }
 
   async getJob(id: string): Promise<Job | undefined> {
@@ -673,10 +882,12 @@ export class MongoStorage implements IStorage {
       deadline: insertJob.deadline ?? null,
       status: insertJob.status ?? "pending",
       freelancerId: insertJob.freelancerId ?? null,
+      projectLeaderId: insertJob.projectLeaderId ?? null,
       collaborators: insertJob.collaborators ?? [],
       createdAt: now,
       updatedAt: now,
     };
+
     const result = await this.jobs.insertOne(doc);
     return this.toJob({ ...doc, _id: result.insertedId });
   }
@@ -700,6 +911,75 @@ export class MongoStorage implements IStorage {
     return result ? this.toJob(result) : undefined;
   }
 
+  private toJobFreelancer(doc: any): JobFreelancer {
+    return {
+      ...doc,
+      id: doc._id.toString(),
+      jobId: String(doc.jobId),
+      freelancerId: doc.freelancerId,
+      shareAmount: doc.shareAmount,
+      levelAtTime: doc.levelAtTime,
+      payoutAmount: doc.payoutAmount ?? null,
+      status: doc.status,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  async getJobFreelancers(jobId: string): Promise<JobFreelancer[]> {
+    const possibleIds: unknown[] = [jobId];
+    if (ObjectId.isValid(jobId)) possibleIds.push(new ObjectId(jobId));
+    const docs = await this.jobFreelancers.find({ jobId: { $in: possibleIds } }).toArray();
+    return docs.map(doc => this.toJobFreelancer(doc));
+  }
+
+  async getJobFreelancersByFreelancer(freelancerId: string): Promise<JobFreelancer[]> {
+    const docs = await this.jobFreelancers.find({ freelancerId }).toArray();
+    const jobIds = docs.map(doc => String(doc.jobId));
+    if (jobIds.length === 0) return [];
+
+    // Job IDs are Mongo ObjectIds while jobFreelancer references may have
+    // been persisted as either strings or ObjectIds by older versions.
+    const jobs = await this.jobs.find({ _id: { $in: jobIds.filter(ObjectId.isValid).map(id => new ObjectId(id)) } }).project({ _id: 1 }).toArray();
+    const canonicalJobIds = new Set(jobs.map(job => job._id.toString()));
+    return docs
+      .filter(doc => canonicalJobIds.has(String(doc.jobId)))
+      .map(doc => this.toJobFreelancer(doc));
+  }
+
+  async createJobFreelancer(insertJF: InsertJobFreelancer): Promise<JobFreelancer> {
+    const doc = {
+      jobId: String(insertJF.jobId),
+      freelancerId: insertJF.freelancerId,
+      shareAmount: insertJF.shareAmount,
+      levelAtTime: insertJF.levelAtTime,
+      payoutAmount: insertJF.payoutAmount ?? null,
+      status: insertJF.status ?? "accepted",
+      createdAt: new Date(),
+    };
+    const result = await this.jobFreelancers.insertOne(doc);
+    return this.toJobFreelancer({ ...doc, _id: result.insertedId });
+  }
+
+  async updateJobFreelancer(id: string, updates: Partial<JobFreelancer>): Promise<JobFreelancer | undefined> {
+    const { id: _id, ...updateDoc } = updates;
+    const result = await this.jobFreelancers.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: updateDoc },
+      { returnDocument: "after" }
+    );
+    return result ? this.toJobFreelancer(result) : undefined;
+  }
+
+  async deleteJobFreelancer(id: string): Promise<void> {
+    await this.jobFreelancers.deleteOne({ _id: new ObjectId(id) });
+  }
+
+  async removeJobFreelancer(jobId: string, freelancerId: string): Promise<void> {
+    const possibleIds: unknown[] = [jobId];
+    if (ObjectId.isValid(jobId)) possibleIds.push(new ObjectId(jobId));
+    await this.jobFreelancers.deleteOne({ jobId: { $in: possibleIds }, freelancerId });
+  }
+
   async getWallet(userId: string): Promise<Wallet | undefined> {
     const doc = await this.wallets.findOne({ userId });
     return doc ? this.toWallet(doc) : undefined;
@@ -710,9 +990,6 @@ export class MongoStorage implements IStorage {
     const doc = {
       userId: insertWallet.userId,
       usdtBalance: insertWallet.usdtBalance ?? "0",
-      solBalance: insertWallet.solBalance ?? "0",
-      btcBalance: insertWallet.btcBalance ?? "0",
-      ltcBalance: insertWallet.ltcBalance ?? "0",
       walletAddress: insertWallet.walletAddress ?? null,
       createdAt: now,
       updatedAt: now,
@@ -1216,4 +1493,123 @@ export class MongoStorage implements IStorage {
       { $set: { read: true } }
     );
   }
+
+  // Friend operations are persisted in the same collections used by the rest
+  // of MongoStorage; the previous in-memory-only implementations meant requests
+  // never reached seeded Mongo demo users and disappeared after restart.
+  private toFriend(doc: any): Friend {
+    return {
+      id: doc._id.toString(),
+      userId: doc.userId,
+      friendId: doc.friendId,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  private toFriendRequest(doc: any): FriendRequest {
+    return {
+      id: doc._id.toString(),
+      fromUserId: doc.fromUserId,
+      toUserId: doc.toUserId,
+      status: doc.status ?? "pending",
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt ?? doc.createdAt,
+    };
+  }
+
+  async getFriends(userId: string): Promise<Friend[]> {
+    const docs = await this.friends.find({ $or: [{ userId }, { friendId: userId }] }).toArray();
+    return docs.map(doc => this.toFriend(doc));
+  }
+
+  async getFriendRequest(id: string): Promise<FriendRequest | undefined> {
+    if (!ObjectId.isValid(id)) return undefined;
+    const doc = await this.friendRequests.findOne({ _id: new ObjectId(id) });
+    return doc ? this.toFriendRequest(doc) : undefined;
+  }
+
+  async getFriendRequestsByUser(userId: string): Promise<FriendRequest[]> {
+    const docs = await this.friendRequests.find({ $or: [{ fromUserId: userId }, { toUserId: userId }] })
+      .sort({ createdAt: -1 }).toArray();
+    return docs.map(doc => this.toFriendRequest(doc));
+  }
+
+  async getIncomingFriendRequests(userId: string): Promise<FriendRequest[]> {
+    const docs = await this.friendRequests.find({ toUserId: userId, status: "pending" })
+      .sort({ createdAt: -1 }).toArray();
+    return docs.map(doc => this.toFriendRequest(doc));
+  }
+
+  async getFriendRequestBetweenUsers(userId1: string, userId2: string): Promise<FriendRequest | undefined> {
+    const doc = await this.friendRequests.findOne({
+      $or: [
+        { fromUserId: userId1, toUserId: userId2 },
+        { fromUserId: userId2, toUserId: userId1 },
+      ],
+      status: { $in: ["pending", "accepted", "declined"] },
+    }, { sort: { createdAt: -1 } });
+    return doc ? this.toFriendRequest(doc) : undefined;
+  }
+
+  async areFriends(userId1: string, userId2: string): Promise<boolean> {
+    return !!await this.friends.findOne({
+      $or: [
+        { userId: userId1, friendId: userId2 },
+        { userId: userId2, friendId: userId1 },
+      ],
+    });
+  }
+
+  async createFriendRequest(request: InsertFriendRequest): Promise<FriendRequest> {
+    const now = new Date();
+    const doc = {
+      fromUserId: request.fromUserId,
+      toUserId: request.toUserId,
+      status: request.status ?? "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await this.friendRequests.insertOne(doc);
+    return this.toFriendRequest({ ...doc, _id: result.insertedId });
+  }
+
+  async updateFriendRequest(id: string, updates: Partial<FriendRequest>): Promise<FriendRequest | undefined> {
+    if (!ObjectId.isValid(id)) return undefined;
+    const { id: _id, ...changes } = updates;
+    const result = await this.friendRequests.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { ...changes, updatedAt: new Date() } },
+      { returnDocument: "after" }
+    );
+    return result ? this.toFriendRequest(result) : undefined;
+  }
+
+  async createFriendship(userId: string, friendId: string): Promise<void> {
+    const existing = await this.friends.findOne({
+      $or: [
+        { userId, friendId },
+        { userId: friendId, friendId: userId },
+      ],
+    });
+    if (!existing) await this.friends.insertOne({ userId, friendId, createdAt: new Date() });
+  }
+
+  async removeFriendship(userId: string, friendId: string): Promise<void> {
+    await this.friends.deleteMany({
+      $or: [
+        { userId, friendId },
+        { userId: friendId, friendId: userId },
+      ],
+    });
+    const request = await this.getFriendRequestBetweenUsers(userId, friendId);
+    if (request?.status === "accepted") {
+      await this.updateFriendRequest(request.id, { status: "accepted", updatedAt: new Date() });
+    }
+  }
+
+  async searchUsersByUserId(userIdQuery: number): Promise<User[]> {
+    const doc = await this.users.findOne({ userId: userIdQuery });
+    return doc ? [this.toUser(doc)] : [];
+  }
+
 }
