@@ -36,6 +36,9 @@ import {
   type Friend,
   type FriendRequest,
   type InsertFriendRequest,
+  type EmailVerificationToken,
+  type InsertEmailVerificationToken,
+  JobStatus,
 } from "@shared/schema";
 import { AccountDeletionBlockedError, type IStorage } from "../storage";
 import { getWalletBalanceBlockReason } from "./wallet-amounts";
@@ -245,6 +248,8 @@ export class MongoStorage implements IStorage {
     await this.jobFreelancers.createIndex({ jobId: 1 });
     await this.customerRatings.createIndex({ customerId: 1 });
     await this.customerRatings.createIndex({ freelancerId: 1 });
+    await this.db.collection("emailVerificationTokens").createIndex({ token: 1 }, { unique: true });
+    await this.db.collection("emailVerificationTokens").createIndex({ userId: 1, createdAt: -1 });
   }
 
   private toUser(doc: any): User {
@@ -862,7 +867,10 @@ export class MongoStorage implements IStorage {
   }
 
   async getJobsByStatus(status: string): Promise<Job[]> {
-    const docs = await this.jobs.find({ status }).sort({ createdAt: -1 }).toArray();
+    const statuses = status === "pending" || status === JobStatus.PENDING_APPROVAL
+      ? ["pending", JobStatus.PENDING_APPROVAL]
+      : [status];
+    const docs = await this.jobs.find({ status: { $in: statuses } }).sort({ createdAt: -1 }).toArray();
     return docs.map(doc => this.toJob(doc));
   }
 
@@ -881,6 +889,10 @@ export class MongoStorage implements IStorage {
       requirements: insertJob.requirements ?? null,
       deadline: insertJob.deadline ?? null,
       status: insertJob.status ?? "pending",
+      isPremium: insertJob.isPremium ?? false,
+      premiumAmount: insertJob.premiumAmount ?? "0",
+      submittedForReviewAt: insertJob.submittedForReviewAt ?? null,
+      moderatorFeedback: insertJob.moderatorFeedback ?? null,
       freelancerId: insertJob.freelancerId ?? null,
       projectLeaderId: insertJob.projectLeaderId ?? null,
       collaborators: insertJob.collaborators ?? [],
@@ -893,13 +905,14 @@ export class MongoStorage implements IStorage {
   }
 
   async updateJob(id: string, updates: Partial<Job>): Promise<Job | undefined> {
-    const { id: _, ...updateDoc } = updates as any;
-    const result = await this.jobs.findOneAndUpdate(
+    const { id: _, _id: _mongoId, ...updateDoc } = updates as any;
+    const result = await this.jobs.updateOne(
       { _id: new ObjectId(id) },
       { $set: { ...updateDoc, updatedAt: new Date() } },
-      { returnDocument: 'after' }
     );
-    return result ? this.toJob(result) : undefined;
+    if (result.matchedCount === 0) return undefined;
+    const updated = await this.jobs.findOne({ _id: new ObjectId(id) });
+    return updated ? this.toJob(updated) : undefined;
   }
 
   async claimJob(jobId: string, freelancerId: string): Promise<Job | undefined> {
@@ -1520,6 +1533,60 @@ export class MongoStorage implements IStorage {
   async getFriends(userId: string): Promise<Friend[]> {
     const docs = await this.friends.find({ $or: [{ userId }, { friendId: userId }] }).toArray();
     return docs.map(doc => this.toFriend(doc));
+  }
+
+  // Email verification tokens are persisted separately from users so a
+  // request remains verifiable across Render restarts and Mongo-backed sessions.
+  private toEmailVerificationToken(doc: any): EmailVerificationToken {
+    return {
+      id: doc._id.toString(),
+      userId: doc.userId,
+      token: doc.token,
+      newEmail: doc.newEmail,
+      expiresAt: doc.expiresAt,
+      usedAt: doc.usedAt ?? null,
+      createdAt: doc.createdAt ?? null,
+    };
+  }
+
+  async getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined> {
+    const doc = await this.db.collection("emailVerificationTokens").findOne({ token });
+    return doc ? this.toEmailVerificationToken(doc) : undefined;
+  }
+
+  async getEmailVerificationTokenByUserId(userId: string): Promise<EmailVerificationToken | undefined> {
+    const docs = await this.db.collection("emailVerificationTokens")
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    const doc = docs.find((item: any) => !item.usedAt);
+    return doc ? this.toEmailVerificationToken(doc) : undefined;
+  }
+
+  async createEmailVerificationToken(insertToken: InsertEmailVerificationToken): Promise<EmailVerificationToken> {
+    const doc = {
+      userId: insertToken.userId,
+      token: insertToken.token,
+      newEmail: insertToken.newEmail,
+      expiresAt: insertToken.expiresAt,
+      usedAt: null,
+      createdAt: new Date(),
+    };
+    const result = await this.db.collection("emailVerificationTokens").insertOne(doc);
+    return this.toEmailVerificationToken({ ...doc, _id: result.insertedId });
+  }
+
+  async markEmailVerificationTokenUsed(tokenValue: string): Promise<EmailVerificationToken | undefined> {
+    const result = await this.db.collection("emailVerificationTokens").findOneAndUpdate(
+      { token: tokenValue, usedAt: null },
+      { $set: { usedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    return result ? this.toEmailVerificationToken(result) : undefined;
+  }
+
+  async deleteEmailVerificationTokensByUserId(userId: string): Promise<void> {
+    await this.db.collection("emailVerificationTokens").deleteMany({ userId });
   }
 
   async getFriendRequest(id: string): Promise<FriendRequest | undefined> {

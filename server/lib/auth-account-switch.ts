@@ -29,6 +29,19 @@ export function canSwitchToLinkedAuthAccount(session: AuthenticatedAccountSessio
   return !!userId && Array.isArray(session.linkedAccountIds) && session.linkedAccountIds.includes(userId);
 }
 
+export function canSwitchToAccount(
+  session: AuthenticatedAccountSession,
+  userId: string,
+  currentAccountIsDemo: boolean,
+  targetAccountIsDemo: boolean,
+  nodeEnv: string | undefined,
+): boolean {
+  if (currentAccountIsDemo || targetAccountIsDemo) {
+    return nodeEnv === "development" && currentAccountIsDemo && targetAccountIsDemo;
+  }
+  return canSwitchToLinkedAuthAccount(session, userId);
+}
+
 export function createGoogleOAuthState(nonce: string, addingAccount: boolean): string {
   return addingAccount ? `g:add:${nonce}` : `g:${nonce}`;
 }

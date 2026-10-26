@@ -157,6 +157,8 @@ export default function ModerationPage() {
   const { data: pendingJobs, isLoading: jobsLoading } = useQuery<Job[]>({
     queryKey: ["/api/moderation/pending"],
     refetchInterval: 10000, // Keep the pending-jobs queue current without a manual refresh
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const { data: allModJobs = [], isLoading: allJobsLoading } = useQuery<Job[]>({

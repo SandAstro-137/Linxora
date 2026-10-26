@@ -22,6 +22,8 @@ try {
   process.env.APP_BASE_URL = "http://localhost:3000/";
   assert.equal(getVerificationAppUrl("http://localhost:5006"), "http://localhost:5006");
   assert.equal(getVerificationAppUrl(), "http://localhost:3000/");
+  process.env.APP_BASE_URL = "https://my-public-preview.example/";
+  assert.equal(getVerificationAppUrl("http://localhost:5006"), "https://my-public-preview.example/");
   delete process.env.APP_BASE_URL;
 
   process.env.NODE_ENV = "production";
@@ -34,7 +36,7 @@ try {
   process.env.NODE_ENV = "development";
   delete process.env.APP_BASE_URL;
   process.env.REPLIT_DEV_DOMAIN = "app.example.replit.dev";
-  assert.equal(getVerificationAppUrl("http://localhost:3000"), "http://localhost:3000");
+  assert.equal(getVerificationAppUrl("http://localhost:3000"), "https://app.example.replit.dev");
   assert.equal(getVerificationAppUrl("https://external.example"), "https://external.example");
 } finally {
   for (const key of envKeys) {

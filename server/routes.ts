@@ -7,12 +7,13 @@ import { EmailAlreadyInUseError, findEmailAccount, normalizeEmailAddress, resolv
 import { requireAuth, requireRole } from "./middleware/auth";
 import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insertCancellationRequestSchema, getLevelPayout, getLevelFromEarnings, workingHoursSchema, insertTeamNoteSchema, insertTeamTaskSchema, insertTeamMessageSchema, insertRatingSchema, insertCustomerRatingSchema, insertRoleUpgradeRequestSchema, RoleUpgradeStatus, RoleUpgradeType, UserRole, insertReportSchema, ReportStatus, insertModeratorTaskSchema, ModeratorTaskStatus, ModeratorTaskType, insertModeratorMeetingSchema, insertMeetingRsvpSchema, MeetingRsvpStatus, insertTeamRoomMessageSchema, JobStatus, EscrowStatus, ScheduledTaskStatus, DisputeStatus, insertJobSubmissionSchema, JobSubmissionStatus, insertLeadershipVoteSchema, insertLeadershipVoteCastSchema, insertMeetingSchema, LeadershipVoteStatus, LeadershipVoteChoice, MeetingStatus, AbandonStatus } from "@shared/schema";
 import { shouldRestoreGoogleCustomerRole } from "./lib/google-auth-role";
-import { canCreateGoogleAccount, canSwitchToLinkedAuthAccount, completeAuthAccountLink, createGoogleOAuthState, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition } from "./lib/auth-account-switch";
+import { canCreateGoogleAccount, canSwitchToAccount, completeAuthAccountLink, createGoogleOAuthState, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition } from "./lib/auth-account-switch";
 import { shouldApplyDemoIdentity } from "./lib/demo-auth";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
 import { shouldApplyTabIdentity } from "./lib/tab-auth";
 import { getCurrentFreelancerJobs } from "./lib/current-jobs";
 import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
+import { getJobFundingRequirement, getJobFundingShortfall } from "@shared/job-funding";
 import { z } from "zod";
 import OpenAI from "openai";
 
@@ -443,7 +444,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = typeof req.body?.userId === "string" ? req.body.userId : "";
       const authenticatedUserId = req.session.userId;
-      if (!canSwitchToLinkedAuthAccount(req.session, userId)) {
+      const [currentUser, targetUser] = await Promise.all([
+        authenticatedUserId ? storage.getUser(authenticatedUserId) : Promise.resolve(undefined),
+        userId ? storage.getUser(userId) : Promise.resolve(undefined),
+      ]);
+      const currentAccountIsDemo = !!currentUser?.discordId?.startsWith("demo-");
+      const targetAccountIsDemo = !!targetUser?.discordId?.startsWith("demo-");
+      const requestedDemoSwitch = req.body?.demo === true;
+      if (requestedDemoSwitch !== targetAccountIsDemo) {
+        return res.status(403).json({ error: "The selected account is not available for this switch." });
+      }
+      const canSwitch = canSwitchToAccount(
+        req.session,
+        userId,
+        currentAccountIsDemo,
+        targetAccountIsDemo,
+        process.env.NODE_ENV,
+      );
+      if (!canSwitch) {
+        // Demo identities are only switchable between one another in local
+        // development. Never turn an attempted real/demo switch into an OAuth
+        // account-linking flow.
+        if (currentAccountIsDemo || targetAccountIsDemo) {
+          return res.status(403).json({ error: "Demo accounts can only switch to other demo accounts in development." });
+        }
         if (authenticatedUserId) {
           // Capture the request-local identity. In development it may come from
           // X-Tab-User, while the shared cookie is restored after this response.
@@ -452,7 +476,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         return res.status(403).json({ error: "This account has not been added to the current sign-in session. Sign in with Google to add it." });
       }
-      const targetUser = await storage.getUser(userId);
       if (!targetUser || targetUser.accountStatus === "banned" || (
         targetUser.accountStatus === "suspended" && targetUser.suspendedUntil && new Date(targetUser.suspendedUntil) > new Date()
       )) {
@@ -460,7 +483,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       req.session.userId = targetUser.id;
       req.session.userRole = targetUser.role;
-      delete req.session.isDemoSession;
+      if (targetAccountIsDemo) req.session.isDemoSession = true;
+      else delete req.session.isDemoSession;
       if (process.env.NODE_ENV === "development") {
         req.session.linkedAccountIds = Array.from(new Set([...(req.session.linkedAccountIds || []), authenticatedUserId, targetUser.id].filter((id): id is string => typeof id === "string")));
       }
@@ -878,6 +902,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/auth/switchable-demo-accounts", requireAuth, async (req, res) => {
+    if (process.env.NODE_ENV !== "development") {
+      return res.json([]);
+    }
+    try {
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.discordId?.startsWith("demo-")) {
+        return res.json([]);
+      }
+
+      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-head-mod-1", "demo-founder-1"];
+      const accounts = [];
+      for (const discordId of demoIds) {
+        const user = await storage.getUserByDiscordId(discordId);
+        if (user && user.id !== currentUser.id) {
+          accounts.push({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            role: user.role,
+            avatar: user.avatar,
+            isDemo: true,
+          });
+        }
+      }
+      res.set("Cache-Control", "no-store");
+      res.json(accounts);
+    } catch {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy(() => {
       res.clearCookie("connect.sid", { path: "/" });
@@ -1231,6 +1287,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Job not found" });
       }
 
+      res.set("Cache-Control", "no-store");
+
       // Enrich job data with customer info
       const customer = await storage.getUser(job.customerId);
       
@@ -1358,69 +1416,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validated.requirements = sanitizeText(validated.requirements);
       }
 
-      const existingJobs = await storage.getJobs({ customerId: req.session.userId! });
-      const hasPendingReview = existingJobs.find(
-        j => j.status === JobStatus.PENDING_APPROVAL || j.status === "pending"
-      );
-      if (hasPendingReview) {
-        return res.status(400).json({
-          error: `You already have a job pending review ("${hasPendingReview.title}"). Please wait for it to be reviewed before submitting another.`
-        });
-      }
-
-      const wallet = await storage.getWallet(req.session.userId!);
-      if (!wallet) {
-        return res.status(400).json({ error: "Wallet not found" });
-      }
 
       const budget = parseFloat(validated.budget);
-      if (Number.isNaN(budget) || budget < 5) {
+      if (!Number.isFinite(budget) || budget < 5) {
         return res.status(400).json({ error: "Budget must be at least $5" });
       }
       const premiumFee = parseFloat(validated.premiumAmount || "0");
-      if (validated.isPremium && premiumFee < 100) {
+      if (validated.isPremium && (!Number.isFinite(premiumFee) || premiumFee < 100)) {
         return res.status(400).json({ error: "Premium amount must be at least $100" });
       }
-      const totalCost = budget + (validated.isPremium ? premiumFee : 0);
-      const walletBalance = parseFloat(wallet.usdtBalance || "0");
-
-      if (totalCost > walletBalance) {
-        return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Balance: $${walletBalance.toFixed(2)}.`
-        });
-      }
-
-      // Charge wallet immediately when creating job for review
-      await storage.updateWallet(req.session.userId!, {
-        usdtBalance: (walletBalance - totalCost).toFixed(8),
-      });
-
-      await storage.createTransaction({
-        walletId: wallet.id,
-        type: "escrow_lock",
-        currency: "USDT",
-        amount: totalCost.toFixed(8),
-        usdAmount: totalCost.toFixed(2),
-        status: "completed",
-        transactionHash: `escrow-lock-newjob-${Date.now()}`,
-      });
-
       const job = await storage.createJob({
         ...validated,
         premiumAmount: validated.isPremium ? (premiumFee || 0).toString() : "0",
         customerId: req.session.userId!,
-        status: "pending",
-        submittedForReviewAt: new Date(),
+        status: JobStatus.DRAFT,
+        submittedForReviewAt: null,
       });
 
-      // Create escrow record
-      await storage.createEscrow({
-        jobId: job.id,
-        customerId: req.session.userId!,
-        totalAmount: totalCost.toFixed(2),
-        status: EscrowStatus.HELD,
-      });
-
+      res.set("Cache-Control", "no-store");
       res.json(job);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid job data" });
@@ -1439,43 +1452,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "You can only edit your own jobs" });
       }
 
-      // Only allow editing if job is pending, changes_requested, or rejected
-      if (!["pending", "changes_requested", "rejected"].includes(job.status)) {
+      // Only allow editing jobs that are awaiting moderation, already withdrawn
+      // to a draft, or need changes.
+      if (!["pending", JobStatus.PENDING_APPROVAL, JobStatus.DRAFT, "changes_requested", "rejected"].includes(job.status)) {
         return res.status(400).json({ error: "Cannot edit jobs that are active or in progress" });
       }
 
       const validated = insertJobSchema.parse(req.body);
-      
-      // Check wallet balance covers budget + premium fee
-      const wallet = await storage.getWallet(req.session.userId!);
-      if (!wallet) {
-        return res.status(400).json({ error: "Wallet not found" });
-      }
-
-      const budget = parseFloat(validated.budget);
-      if (Number.isNaN(budget) || budget < 5) {
-        return res.status(400).json({ error: "Budget must be at least $5" });
-      }
-      const premiumFee = parseFloat(validated.premiumAmount || "0");
-      if (validated.isPremium && premiumFee < 100) {
-        return res.status(400).json({ error: "Premium amount must be at least $100" });
-      }
-      const totalCost = budget + (validated.isPremium ? premiumFee : 0);
-      const availableBalance = parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0");
-
-      if (totalCost > availableBalance) {
-        return res.status(400).json({ 
-          error: `Insufficient funds. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium` : ""}). Available: $${availableBalance.toFixed(2)}.`
+      if (["pending", JobStatus.PENDING_APPROVAL].includes(job.status)) {
+        return res.status(400).json({
+          error: "Withdraw this job from review before saving edits so its escrow is refunded first.",
         });
       }
 
+      // Validate only the edited job fields here. Refund escrow on a separate
+      // explicit withdraw action; editing must not implicitly release a hold.
+      const budget = parseFloat(validated.budget);
+      if (!Number.isFinite(budget) || budget < 5) {
+        return res.status(400).json({ error: "Budget must be at least $5" });
+      }
+      const premiumFee = parseFloat(validated.premiumAmount || "0");
+      if (validated.isPremium && (!Number.isFinite(premiumFee) || premiumFee < 100)) {
+        return res.status(400).json({ error: "Premium amount must be at least $100" });
+      }
+
       const updatedJob = await storage.updateJob(req.params.id, {
-        ...validated,
+        title: validated.title,
+        description: validated.description,
+        category: validated.category,
+        budget: validated.budget,
+        requirements: validated.requirements ?? null,
+        deadline: validated.deadline ?? null,
+        isPremium: validated.isPremium ?? false,
         premiumAmount: validated.isPremium ? (premiumFee || 0).toString() : "0",
-        status: "pending",
-        moderatorFeedback: null,
+        moderatorFeedback: job.status === JobStatus.DRAFT ? null : job.moderatorFeedback,
       });
 
+      res.set("Cache-Control", "no-store");
       res.json(updatedJob);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid job data" });
@@ -2573,6 +2586,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // NEW JOB LIFECYCLE ROUTES (From Spec)
   // ============================================================
 
+  // Withdraw a pending job from moderation and return its escrow to the customer.
+  app.post("/api/jobs/:id/withdraw-for-edit", requireRole("customer"), async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.customerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the job owner can withdraw this job" });
+      }
+      if (!["pending", JobStatus.PENDING_APPROVAL].includes(job.status)) {
+        return res.status(400).json({ error: "Only jobs awaiting moderation can be withdrawn for editing" });
+      }
+
+      const wallet = await storage.getWallet(job.customerId);
+      if (!wallet) return res.status(400).json({ error: "Wallet not found" });
+
+      const escrow = await storage.getEscrowByJob(job.id);
+      const heldAmount = escrow?.status === EscrowStatus.HELD
+        ? parseFloat(escrow.totalAmount || "0")
+        : !escrow || escrow.status === EscrowStatus.REFUNDED
+          ? parseFloat(job.budget || "0") + (job.isPremium ? parseFloat(job.premiumAmount || "0") : 0)
+          : 0;
+      if (!Number.isFinite(heldAmount) || heldAmount < 0) {
+        return res.status(400).json({ error: "Could not determine the job's held escrow amount" });
+      }
+
+      if (escrow?.status === EscrowStatus.HELD) {
+        await storage.updateEscrow(escrow.id, { status: EscrowStatus.REFUNDED });
+      }
+      if (heldAmount > 0) {
+        const currentWallet = await storage.getWallet(job.customerId);
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (parseFloat(currentWallet?.usdtBalance || "0") + heldAmount).toFixed(8),
+        });
+        await storage.createTransaction({
+          walletId: wallet.id,
+          type: "refund",
+          currency: "USDT",
+          amount: heldAmount.toFixed(8),
+          usdAmount: heldAmount.toFixed(2),
+          status: "completed",
+          transactionHash: `job-withdraw-refund-${job.id}-${Date.now()}`,
+        });
+      }
+
+      const updatedJob = await storage.updateJob(job.id, {
+        status: JobStatus.DRAFT,
+        submittedForReviewAt: null,
+      });
+      res.json(updatedJob);
+    } catch (error: any) {
+      console.error("Error withdrawing job for editing:", error);
+      res.status(500).json({ error: "Failed to withdraw job for editing" });
+    }
+  });
+
   // Submit job for approval (Customer submits DRAFT -> PENDING_APPROVAL)
   app.post("/api/jobs/:id/submit-for-approval", requireAuth, async (req, res) => {
     try {
@@ -2590,17 +2658,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only draft jobs can be submitted for approval" });
       }
 
-      // Prevent submitting more than one job for review at a time (including this job itself)
-      const customerJobs = await storage.getJobs({ customerId: job.customerId });
-      const pendingReviewJob = customerJobs.find(
-        j => (j.status === JobStatus.PENDING_APPROVAL || j.status === "pending")
-      );
-      if (pendingReviewJob) {
-        return res.status(400).json({ 
-          error: `You already have a job pending review ("${pendingReviewJob.title}"). Please wait for it to be reviewed before submitting another.`
+      const missingRequiredFields = [
+        !job.title?.trim() ? "name" : null,
+        !job.category?.trim() ? "category" : null,
+        !job.description?.trim() ? "description" : null,
+      ].filter((field): field is string => field !== null);
+      if (missingRequiredFields.length > 0) {
+        return res.status(400).json({
+          error: `Please add a ${missingRequiredFields.join(", ")} before submitting this job for review.`,
+          fields: missingRequiredFields,
         });
       }
-
 
       // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);
@@ -2609,39 +2677,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const budget = parseFloat(job.budget);
-      const premiumFee = parseFloat(job.premiumAmount || "0");
+      if (!Number.isFinite(budget) || budget < 5) {
+        return res.status(400).json({ error: "Budget must be at least $5" });
+      }
+      const premiumFee = job.isPremium ? parseFloat(job.premiumAmount || "0") : 0;
+      if (job.isPremium && (!Number.isFinite(premiumFee) || premiumFee < 100)) {
+        return res.status(400).json({ error: "Premium amount must be at least $100" });
+      }
       const totalCost = budget + premiumFee;
       const walletBalance = parseFloat(wallet.usdtBalance || "0");
+      const availableBalance = walletBalance - parseFloat(wallet.pendingUsdtBalance || "0");
+      const priorEscrow = await storage.getEscrowByJob(job.id);
+      const priorHeldAmount = priorEscrow?.status === EscrowStatus.HELD ? parseFloat(priorEscrow.totalAmount || "0") : 0;
+      const requiredNewHold = getJobFundingRequirement(totalCost, priorHeldAmount);
+      const fundingShortfall = getJobFundingShortfall(totalCost, availableBalance, priorHeldAmount);
 
-      if (totalCost > walletBalance) {
-        return res.status(400).json({ 
-          error: `Insufficient balance. Need $${totalCost.toFixed(2)} (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium fee` : ""}). Balance: $${walletBalance.toFixed(2)}.` 
+      if (fundingShortfall > 0) {
+        return res.status(400).json({
+          error: `Insufficient balance. Need $${fundingShortfall.toFixed(2)} more (budget${premiumFee > 0 ? ` + $${premiumFee.toFixed(2)} premium fee` : ""}). Available: $${availableBalance.toFixed(2)}.`
         });
       }
 
-      // Charge wallet immediately when submitting for review
-      await storage.updateWallet(job.customerId, {
-        usdtBalance: (walletBalance - totalCost).toFixed(8),
-      });
+      if (requiredNewHold > 0) {
+        await storage.updateWallet(job.customerId, {
+          usdtBalance: (walletBalance - requiredNewHold).toFixed(8),
+        });
+        await storage.createTransaction({
+          walletId: wallet.id,
+          type: "escrow_lock",
+          currency: "USDT",
+          amount: requiredNewHold.toFixed(8),
+          usdAmount: requiredNewHold.toFixed(2),
+          status: "completed",
+          transactionHash: `escrow-lock-${job.id}-${Date.now()}`,
+        });
+      }
 
-      // Create transaction record for the charge
-      await storage.createTransaction({
-        walletId: wallet.id,
-        type: "escrow_lock",
-        currency: "USDT",
-        amount: totalCost.toFixed(8),
-        usdAmount: totalCost.toFixed(2),
-        status: "completed",
-        transactionHash: `escrow-lock-${job.id}-${Date.now()}`,
-      });
-
-      // Create escrow record
-      await storage.createEscrow({
-        jobId: job.id,
-        customerId: job.customerId,
-        totalAmount: totalCost.toFixed(2),
-        status: EscrowStatus.HELD,
-      });
+      if (priorEscrow) {
+        await storage.updateEscrow(priorEscrow.id, { totalAmount: totalCost.toFixed(2), status: EscrowStatus.HELD });
+      } else {
+        await storage.createEscrow({
+          jobId: job.id,
+          customerId: job.customerId,
+          totalAmount: totalCost.toFixed(2),
+          status: EscrowStatus.HELD,
+        });
+      }
 
       // Update job status to pending approval and record submission time
       const updatedJob = await storage.updateJob(req.params.id, {
@@ -2649,6 +2730,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         moderatorFeedback: null,
         submittedForReviewAt: new Date(),
       });
+      if (!updatedJob) {
+        return res.status(500).json({ error: "Could not update the submitted job" });
+      }
 
       // Notify moderators
       const moderators = await storage.getUsers();
@@ -4537,7 +4621,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Moderation routes
   app.get("/api/moderation/pending", requireRole("staff", "moderator", "head_of_moderation", "founder"), async (req, res) => {
     try {
-      const pendingJobs = await storage.getJobsByStatus("pending");
+      const allPendingJobs = await storage.getJobs({});
+      const pendingJobs = allPendingJobs.filter(
+        job => job.status === "pending" || job.status === JobStatus.PENDING_APPROVAL
+      );
+      res.set("Cache-Control", "no-store");
+      res.set("X-Moderation-Queue-Refreshed-At", new Date().toISOString());
       res.json(pendingJobs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -7046,15 +7135,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (emailError: any) {
         console.error('Failed to send verification email:', emailError);
         const msg = String(emailError?.message || '');
-        // Surface a misconfigured email provider clearly so the user isn't
-        // left wondering why nothing arrives in their inbox.
+        // A failed send must not leave the account looking as though an email
+        // was sent, or hold the email address/cooldown for a message that does
+        // not exist. Keep cleanup best-effort so the original provider failure
+        // remains the useful diagnostic in the server log.
+        try {
+          await storage.deleteEmailVerificationTokensByUserId(user.id);
+          await storage.updateUser(user.id, { pendingEmail: null });
+        } catch (cleanupError) {
+          console.error('Failed to clear unsent email verification request:', cleanupError);
+        }
+
         if (msg.includes('not set and no Replit connector') || msg.includes('Resend not connected')) {
           return res.status(503).json({
-            error: "Email sending is not configured on this server (missing ZOHO_SMTP_USER/ZOHO_SMTP_PASSWORD, SENDGRID_API_KEY, or RESEND_API_KEY). The verification email was not sent — ask the administrator to configure an email provider. In development you can verify with:\n/api/profile/email-verify?token=<token from server log>",
-            pendingEmail: trimmedEmail,
+            error: "Email sending is not configured on this server. Ask the administrator to check the email provider settings.",
           });
         }
-        return res.status(500).json({ error: "Failed to send verification email. Please try again later." });
+        if (msg.includes('Zoho SMTP')) {
+          return res.status(502).json({
+            error: "Zoho could not send the verification email. Check the Render service logs and confirm the Zoho mailbox credentials, account-specific SMTP host, and sender address.",
+          });
+        }
+        return res.status(500).json({ error: "The verification email could not be sent. Check the server logs for the email provider error, then try again." });
       }
       
       res.json({ 

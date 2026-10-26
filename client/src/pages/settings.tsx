@@ -19,7 +19,7 @@ import { Settings, Bell, Shield, User, Camera, Save, AlertTriangle, Mail, Clock,
 import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { UserPreferences } from "@shared/schema";
-import { clearSavedAccounts, getGoogleLoginUrl, getSavedAccounts, getSwitchableAccounts } from "@/lib/saved-accounts";
+import { clearSavedAccounts, getAccountsAllowedForCurrentUser, getGoogleLoginUrl, getSavedAccountsForUser, isDemoAccount, saveAccountProfile } from "@/lib/saved-accounts";
 
 function ImageCropper({ imageSrc, onCrop, onCancel }: { imageSrc: string; onCrop: (dataUrl: string) => void; onCancel: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -337,8 +337,33 @@ export default function SettingsPage() {
   const [newEmail, setNewEmail] = useState("");
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
-  const [savedAccounts, setSavedAccounts] = useState(() => getSavedAccounts());
-  const switchableAccounts = getSwitchableAccounts(savedAccounts, user?.id);
+  const [savedAccounts, setSavedAccounts] = useState(() => getSavedAccountsForUser(user?.id));
+  const [demoAccounts, setDemoAccounts] = useState<ReturnType<typeof getSavedAccountsForUser>>([]);
+  const switchableAccounts = getAccountsAllowedForCurrentUser(
+    [...savedAccounts, ...demoAccounts.map(account => ({ ...account, isDemo: true }))],
+    user?.discordId?.startsWith("demo-") === true,
+    user?.id,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.discordId?.startsWith("demo-") || !import.meta.env.DEV) {
+      setDemoAccounts([]);
+      return;
+    }
+    fetch("/api/auth/switchable-demo-accounts", { credentials: "include", cache: "no-store" })
+      .then(response => response.ok ? response.json() : [])
+      .then(accounts => {
+        if (!cancelled && Array.isArray(accounts)) {
+          setDemoAccounts(accounts);
+          accounts.forEach(account => saveAccountProfile({ ...account, discordId: `demo-${account.id}` }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDemoAccounts([]);
+      });
+    return () => { cancelled = true; };
+  }, [user?.id, user?.discordId]);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState<number | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -401,10 +426,10 @@ export default function SettingsPage() {
       });
     },
     onError: (error: any) => {
-      toast({ 
-        title: "Error", 
-        description: error?.message || "Failed to send verification email.", 
-        variant: "destructive" 
+      toast({
+        title: "Could not send verification email",
+        description: getApiErrorMessage(error, "The email could not be sent. Please try again."),
+        variant: "destructive",
       });
     },
   });
@@ -479,20 +504,30 @@ export default function SettingsPage() {
   };
 
   const handleSwitchAccount = async (accountId: string) => {
-    const account = savedAccounts.find(saved => saved.id === accountId);
+    const account = switchableAccounts.find(saved => saved.id === accountId);
     if (!account) return;
     setSwitchingTo(accountId);
     try {
+      const isDemoTarget = isDemoAccount(account);
       const response = await fetch("/api/auth/switch-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ userId: account.id }),
+        body: JSON.stringify({ userId: account.id, demo: isDemoTarget }),
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
+        if (response.status === 403 && isDemoTarget) {
+          toast({ title: "Account not switched", description: error.error || "Demo accounts are only available in development.", variant: "destructive" });
+          setSwitchingTo(null);
+          return;
+        }
         if (response.status === 403) {
           sessionStorage.setItem("addAccountPending", "true");
+          if (user?.id) {
+            sessionStorage.setItem("addAccountSourceUserId", user.id);
+            saveAccountProfile(user);
+          }
           if (import.meta.env.DEV) {
             // A stale per-tab identity header would override the OAuth callback's
             // newly selected account when /api/auth/me runs after the redirect.
@@ -512,7 +547,8 @@ export default function SettingsPage() {
         // The development tab-auth middleware restores the shared cookie session
         // after each request, so keep this tab pinned to the selected identity.
         sessionStorage.setItem("tabUserId", account.id);
-        sessionStorage.removeItem("demoUserId");
+        if (isDemoAccount(account)) sessionStorage.setItem("demoUserId", account.id);
+        else sessionStorage.removeItem("demoUserId");
         window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: true }));
       } else {
         sessionStorage.removeItem("tabUserId");
@@ -528,6 +564,10 @@ export default function SettingsPage() {
 
   const handleAddAccount = async () => {
     sessionStorage.setItem("addAccountPending", "true");
+    if (user?.id) {
+      sessionStorage.setItem("addAccountSourceUserId", user.id);
+      saveAccountProfile(user);
+    }
     if (import.meta.env.DEV) {
       // OAuth returns through a full-page navigation, so clear this tab's old
       // identity override after the server has had a chance to capture it.
@@ -847,8 +887,7 @@ export default function SettingsPage() {
                 <div className="flex-1">
                   <p className="font-medium text-amber-800 dark:text-amber-200">Verification Pending</p>
                   <p className="text-sm text-amber-700 dark:text-amber-300">
-                    A verification email was sent to <strong>{user?.pendingEmail}</strong>. 
-                    Please check your inbox and click the verification link.
+                    An email change request is pending for <strong>{user?.pendingEmail}</strong>. If no message arrived, cancel this request and try again.
                   </p>
                 </div>
                 <Button
@@ -1073,7 +1112,7 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">Switch to a different account</p>
             </div>
             <Sheet open={accountSheetOpen} onOpenChange={(open) => {
-              if (open) setSavedAccounts(getSavedAccounts());
+              if (open) setSavedAccounts(getSavedAccountsForUser(user?.id));
               setAccountSheetOpen(open);
             }}>
               <SheetTrigger asChild>

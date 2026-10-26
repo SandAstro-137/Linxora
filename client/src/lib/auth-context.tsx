@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { User } from "@shared/schema";
-import { saveAccountProfileIfRequested } from "./saved-accounts";
+import { linkSavedAccounts, saveAccountProfileIfRequested } from "./saved-accounts";
 
 interface SuspensionInfo {
   suspendedUntil: string;
@@ -51,8 +51,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
-        saveAccountProfileIfRequested(userData, sessionStorage.getItem("addAccountPending") === "true");
+        const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
+        saveAccountProfileIfRequested(userData, addAccountPending);
+        const previousAccountId = sessionStorage.getItem("addAccountSourceUserId");
+        if (addAccountPending && previousAccountId && previousAccountId !== userData.id) {
+          linkSavedAccounts(previousAccountId, userData.id);
+        }
         sessionStorage.removeItem("addAccountPending");
+        sessionStorage.removeItem("addAccountSourceUserId");
         setSuspensionInfo(null);
         if (import.meta.env.DEV && sessionStorage.getItem("oauthTabAuthPending") === "true") {
           sessionStorage.setItem("tabUserId", userData.id);
@@ -94,8 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (response.ok) {
           const userData = await response.json();
           setUser(userData);
-          saveAccountProfileIfRequested(userData, sessionStorage.getItem("addAccountPending") === "true");
+          const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
+          saveAccountProfileIfRequested(userData, addAccountPending);
+          const previousAccountId = sessionStorage.getItem("addAccountSourceUserId");
+          if (addAccountPending && previousAccountId && previousAccountId !== userData.id) {
+            linkSavedAccounts(previousAccountId, userData.id);
+          }
           sessionStorage.removeItem("addAccountPending");
+          sessionStorage.removeItem("addAccountSourceUserId");
           setSuspensionInfo(null);
           // Persist the selected account in this tab so it is restored after
           // refresh despite the browser-wide session cookie being shared.
@@ -127,6 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionStorage.removeItem("tabUserId");
       sessionStorage.removeItem("demoUserId");
       sessionStorage.removeItem("addAccountPending");
+      sessionStorage.removeItem("addAccountSourceUserId");
       sessionStorage.removeItem("oauthPending");
       window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: false }));
       setUser(null);

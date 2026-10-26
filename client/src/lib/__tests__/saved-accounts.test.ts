@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { clearSavedAccounts, getGoogleLoginUrl, getSavedAccounts, getSwitchableAccounts, saveAccountProfile, saveAccountProfileIfRequested } from "../saved-accounts";
+import { clearSavedAccounts, getAccountsAllowedForCurrentUser, getGoogleLoginUrl, getSavedAccounts, getSavedAccountsForUser, getSwitchableAccounts, isDemoAccount, linkSavedAccounts, saveAccountProfile, saveAccountProfileIfRequested } from "../saved-accounts";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -65,7 +65,7 @@ assert.deepEqual(saveAccountProfile({
   discordId: "demo-founder-1",
   username: "Founder",
   role: "founder",
-}, emptyStorage), [], "demo users are never stored as switchable accounts");
+}, emptyStorage).map(account => account.id), ["demo-founder"], "demo users can be cached locally for the dev-only demo switch list");
 
 const firstAccount = {
   id: "google-user-1",
@@ -81,37 +81,93 @@ const secondAccount = {
   role: "customer",
   email: "two@example.com",
 };
+const unrelatedAccount = {
+  id: "google-user-3",
+  discordId: "google-subject-3",
+  username: "Account Three",
+  role: "customer",
+  email: "three@example.com",
+};
+const demoAccount = {
+  id: "demo-user-1",
+  discordId: "demo-customer-1",
+  username: "Demo Customer",
+  role: "customer",
+  email: "demo-customer-1@demo.com",
+  isDemo: true,
+};
 saveAccountProfile(firstAccount, storage);
 saveAccountProfile(secondAccount, storage);
+saveAccountProfile(unrelatedAccount, storage);
+saveAccountProfile(demoAccount, storage);
+linkSavedAccounts(firstAccount.id, secondAccount.id, storage);
+assert.deepEqual(
+  getSavedAccountsForUser(firstAccount.id, storage).map(account => account.id),
+  [secondAccount.id, firstAccount.id],
+  "accounts explicitly added together are available in each other's switch list",
+);
+assert.deepEqual(
+  getSavedAccountsForUser(unrelatedAccount.id, storage).map(account => account.id),
+  [unrelatedAccount.id],
+  "a separate sign-in does not inherit another account group's switch options",
+);
+assert.deepEqual(
+  getAccountsAllowedForCurrentUser(
+    [...getSavedAccountsForUser(unrelatedAccount.id, storage), demoAccount],
+    false,
+    unrelatedAccount.id,
+  ).map(account => account.id),
+  [],
+  "real accounts cannot see demo accounts in their swap list",
+);
+assert.equal(isDemoAccount(demoAccount), true, "demo identities are recognizable in the local swap list");
+const secondDemoAccount = { ...demoAccount, id: "demo-user-2", username: "Demo Freelancer", email: "demo-freelancer-1@demo.com" };
+assert.deepEqual(
+  getAccountsAllowedForCurrentUser([firstAccount, demoAccount, secondDemoAccount], true, demoAccount.id).map(account => account.id),
+  [secondDemoAccount.id],
+  "demo accounts see other demos while excluding themselves and real accounts",
+);
+assert.deepEqual(
+  getSavedAccountsForUser(undefined, storage),
+  [],
+  "no saved switch options are exposed until the current identity is known",
+);
+const duplicateStorage = new MemoryStorage();
+saveAccountProfile(firstAccount, duplicateStorage);
 const duplicateProfile = saveAccountProfile({
   ...firstAccount,
   id: "google-user-1-copy",
   email: " ONE@example.com ",
   username: "Duplicate One",
-}, storage);
+}, duplicateStorage);
 assert.equal(
   duplicateProfile.filter(account => account.email?.trim().toLowerCase() === "one@example.com").length,
   1,
   "saving a new account record for an existing email does not add a duplicate swap entry",
 );
 assert.deepEqual(
-  getSwitchableAccounts(getSavedAccounts(storage), secondAccount.id).map(account => account.email?.trim().toLowerCase()),
+  getSwitchableAccounts(getSavedAccountsForUser(secondAccount.id, storage), secondAccount.id).map(account => account.email?.trim().toLowerCase()),
   ["one@example.com"],
-  "each unique email appears only once in the switch list, excluding the active account",
+  "each unique email appears only once in the linked switch list, excluding the active account",
+);
+assert.deepEqual(
+  getSwitchableAccounts(getSavedAccountsForUser(unrelatedAccount.id, storage), unrelatedAccount.id).map(account => account.id),
+  [],
+  "an account with no linked sign-ins has nothing to switch to",
 );
 assert.deepEqual(
   getSwitchableAccounts(getSavedAccounts(new MemoryStorage())).map(account => account.id),
   [],
-  "a new account with no other saved sign-ins has nothing to switch to",
+  "a new browser has no saved accounts to switch to",
 );
 assert.equal(
-  getGoogleLoginUrl(getSavedAccounts(storage).find(account => account.email?.trim().toLowerCase() === "one@example.com")),
-  "/api/auth/google?login_hint=ONE%40example.com",
+  getGoogleLoginUrl(getSavedAccountsForUser(secondAccount.id, storage).find(account => account.email?.trim().toLowerCase() === "one@example.com")),
+  "/api/auth/google?login_hint=one%40example.com",
   "switching starts Google auth with the selected account email as a sign-in hint",
 );
 assert.equal(getGoogleLoginUrl(), "/api/auth/google", "adding a new account starts Google account selection without a hint");
 assert.equal(
-  getGoogleLoginUrl(getSavedAccounts(storage).find(account => account.email?.trim().toLowerCase() === "two@example.com")),
+  getGoogleLoginUrl(getSavedAccountsForUser(secondAccount.id, storage).find(account => account.email?.trim().toLowerCase() === "two@example.com")),
   "/api/auth/google?login_hint=two%40example.com",
   "switch fallback targets the selected account email rather than the currently active account",
 );

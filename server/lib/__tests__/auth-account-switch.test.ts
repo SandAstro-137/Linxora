@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { canCreateGoogleAccount, canSwitchToLinkedAuthAccount, completeAuthAccountLink, createGoogleOAuthState, isAddAccountAuthFlow, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition, rememberLinkedAuthAccount } from "../auth-account-switch";
+import { canCreateGoogleAccount, canSwitchToAccount, canSwitchToLinkedAuthAccount, completeAuthAccountLink, createGoogleOAuthState, isAddAccountAuthFlow, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition, rememberLinkedAuthAccount } from "../auth-account-switch";
 
 const session: { linkedAccountIds?: string[] } = {};
 assert.equal(canSwitchToLinkedAuthAccount(session, "account-a"), false, "unlinked accounts cannot be switched into");
@@ -10,6 +10,11 @@ assert.deepEqual(session.linkedAccountIds, ["account-a", "account-b"], "linked a
 assert.equal(canSwitchToLinkedAuthAccount(session, "account-a"), true);
 assert.equal(canSwitchToLinkedAuthAccount(session, "account-b"), true);
 assert.equal(canSwitchToLinkedAuthAccount(session, "account-c"), false, "other users cannot switch into unlinked identities");
+assert.equal(canSwitchToAccount(session, "demo-2", true, true, "development"), true, "development demo users can switch to another demo identity");
+assert.equal(canSwitchToAccount(session, "demo-2", true, true, "production"), false, "demo switching is disabled outside development");
+assert.equal(canSwitchToAccount(session, "real-2", true, false, "development"), false, "demo users cannot switch to real accounts");
+assert.equal(canSwitchToAccount(session, "demo-2", false, true, "development"), false, "real users cannot switch into demo accounts");
+assert.equal(canSwitchToAccount(session, "account-b", false, false, "production"), true, "linked real accounts continue to switch normally");
 assert.equal(canCreateGoogleAccount(true, false), false, "adding an account cannot create a new Google account");
 assert.equal(canCreateGoogleAccount(true, true), true, "adding an account can link a Google identity with an existing user");
 assert.equal(canCreateGoogleAccount(false, false), true, "ordinary Google login may create a new user");

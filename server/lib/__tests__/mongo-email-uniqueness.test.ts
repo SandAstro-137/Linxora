@@ -34,6 +34,7 @@ function makeCollection(initial: any[] = []) {
       return documents.splice(index, 1)[0];
     },
     async insertOne(document: any) {
+      if (!document._id) document._id = { toString: () => `mock-${documents.length + 1}` };
       documents.push(document);
       return { insertedId: document._id };
     },
@@ -61,11 +62,15 @@ const storage = new MongoStorage("mongodb://127.0.0.1:27017/test");
 const internals = storage as any;
 const users = makeCollection();
 const emailClaims = makeCollection();
+const emailVerificationTokens = makeCollection();
+const collections = new Map<string, ReturnType<typeof makeCollection>>([
+  ["emailVerificationTokens", emailVerificationTokens],
+]);
 internals.users = users;
 internals.emailClaims = emailClaims;
 internals.counters = makeCollection();
 internals.client = { close: async () => {} };
-internals.db = { collection: () => makeCollection() };
+internals.db = { collection: (name: string) => collections.get(name) ?? makeCollection() };
 let nextUserId = 1;
 internals.getNextUserId = async () => nextUserId++;
 
@@ -108,6 +113,20 @@ assert.equal(
   owner.id,
   "Google login selects the original account despite a matching subject on a legacy duplicate",
 );
+
+const verificationToken = await storage.createEmailVerificationToken({
+  userId: owner.id,
+  token: "verification-token-test",
+  newEmail: "new@example.com",
+  expiresAt: new Date(Date.now() + 60_000),
+});
+assert.equal(verificationToken.token, "verification-token-test");
+assert.equal((await storage.getEmailVerificationToken("verification-token-test"))?.newEmail, "new@example.com");
+assert.equal((await storage.getEmailVerificationTokenByUserId(owner.id))?.token, "verification-token-test");
+assert.ok(await storage.markEmailVerificationTokenUsed("verification-token-test"));
+assert.equal(await storage.getEmailVerificationTokenByUserId(owner.id), undefined, "used token is excluded from resend cooldown lookup");
+await storage.deleteEmailVerificationTokensByUserId(owner.id);
+assert.equal(await storage.getEmailVerificationToken("verification-token-test"), undefined);
 
 const otherUser = await storage.createUser({ discordId: "mongo-email-other", username: "Other User" });
 await assert.rejects(

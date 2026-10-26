@@ -20,6 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { Save, Send, AlertCircle, Wallet, Star } from "lucide-react";
 import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { TIMEZONE } from "@/lib/timezone";
+import { getJobFundingShortfall } from "@shared/job-funding";
 
 function isFutureDeadline(value: string): boolean {
   if (!value) return true;
@@ -68,10 +69,16 @@ export default function CreateJobPage() {
   const isEditMode = !!editJobId;
   const [submitAction, setSubmitAction] = useState<"draft" | "submit">("submit");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasWithdrawnForEdit, setHasWithdrawnForEdit] = useState(false);
+  const [hasPrefilledEditJobId, setHasPrefilledEditJobId] = useState<string | null>(null);
 
 
   const { data: wallet } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
+  });
+  const { data: existingJob, isLoading: isLoadingJob } = useQuery<Job>({
+    queryKey: [`/api/jobs/${editJobId}`],
+    enabled: isEditMode && !!editJobId,
   });
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -94,20 +101,25 @@ export default function CreateJobPage() {
   const premiumAmountValue = parseFloat(form.watch("premiumAmount") || "0");
   const premiumFee = isPremium ? premiumAmountValue : 0;
   const totalCost = budgetValue + premiumFee;
-  const availableBalance = wallet 
-    ? parseFloat(wallet.usdtBalance || "0")
+  const availableBalance = wallet
+    ? parseFloat(wallet.usdtBalance || "0") - parseFloat(wallet.pendingUsdtBalance || "0")
     : 0;
-  const hasSufficientFunds = availableBalance >= totalCost;
+  const isPendingReviewJob = isEditMode && !hasWithdrawnForEdit && !!existingJob && ["pending", JobStatus.PENDING_APPROVAL].includes(existingJob.status);
+  const pendingReviewEscrowAmount = isPendingReviewJob
+    ? parseFloat(existingJob?.budget || "0") + (existingJob?.isPremium ? parseFloat(existingJob.premiumAmount || "0") : 0)
+    : 0;
+  const existingEscrowAmount = !hasWithdrawnForEdit && !!existingJob && ["pending", JobStatus.PENDING_APPROVAL].includes(existingJob.status)
+    ? pendingReviewEscrowAmount
+    : 0;
+  const amountToFund = Math.max(0, totalCost - existingEscrowAmount);
+  const fundingShortfall = getJobFundingShortfall(totalCost, availableBalance, existingEscrowAmount);
+  const isCheckingFundsForThisAction = !isEditMode || hasWithdrawnForEdit || !isPendingReviewJob;
+  const hasSufficientFunds = fundingShortfall === 0;
 
-  // Fetch job data when in edit mode
-  const { data: existingJob, isLoading: isLoadingJob } = useQuery<Job>({
-    queryKey: [`/api/jobs/${editJobId}`],
-    enabled: isEditMode && !!editJobId,
-  });
-
-  // Prefill form when job data loads
+  // Prefill once per edited job. Refetches after withdrawal must not replace
+  // changes the customer has already made in the form.
   useEffect(() => {
-    if (existingJob && isEditMode) {
+    if (existingJob && isEditMode && editJobId && hasPrefilledEditJobId !== editJobId) {
       form.reset({
         title: existingJob.title,
         description: existingJob.description,
@@ -120,8 +132,9 @@ export default function CreateJobPage() {
         isPremium: existingJob.isPremium || false,
         premiumAmount: existingJob.premiumAmount || "0",
       });
+      setHasPrefilledEditJobId(editJobId);
     }
-  }, [existingJob, isEditMode, form]);
+  }, [existingJob, isEditMode, editJobId, hasPrefilledEditJobId, form]);
 
   const createJobMutation = useMutation({
     mutationFn: async (data: z.infer<typeof formSchema> & { action?: "draft" | "submit" }) => {
@@ -130,35 +143,40 @@ export default function CreateJobPage() {
         ...formData,
         budget: formData.budget,
         deadline: formData.deadline ? fromZonedTime(formData.deadline, TIMEZONE).toISOString() : undefined,
-        status: JobStatus.DRAFT,
+        status: action === "draft" ? JobStatus.DRAFT : JobStatus.PENDING_APPROVAL,
       };
       
-      let result;
       if (isEditMode && editJobId) {
-        result = await apiRequest("PUT", `/api/jobs/${editJobId}`, jobData);
-      } else {
-        result = await apiRequest("POST", "/api/jobs", jobData);
+        const response = await apiRequest("PUT", `/api/jobs/${editJobId}`, jobData);
+        const savedJob = await response.json();
+        return { action, jobId: editJobId, savedJob };
       }
-      
-      return { result, action };
+
+      const response = await apiRequest("POST", "/api/jobs", jobData);
+      const savedJob = await response.json();
+      return { action, jobId: savedJob.id as string, savedJob };
     },
-    onSuccess: async ({ result, action }) => {
+    onSuccess: async ({ action, jobId, savedJob }) => {
+      queryClient.setQueryData<Job>([`/api/jobs/${jobId}`], (currentJob) =>
+        currentJob ? { ...currentJob, ...savedJob } : savedJob,
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
-      
+      queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
+
+      setIsSubmitting(false);
+      setHasWithdrawnForEdit(false);
       if (action === "draft") {
+        await queryClient.invalidateQueries({ queryKey: [`/api/jobs/${jobId}`] });
         toast({
           title: "Job saved as draft",
           description: "You can submit it for approval when ready.",
         });
         setLocation("/my-jobs");
-      } else if (action === "submit") {
-        const jobId = (result as any)?.id || editJobId;
-        if (jobId) {
-          submitForApprovalMutation.mutate(jobId);
-        }
+      } else {
+        submitForApprovalMutation.mutate(jobId);
       }
     },
     onError: (error: any) => {
@@ -171,9 +189,37 @@ export default function CreateJobPage() {
     },
   });
 
+  const withdrawForEditMutation = useMutation({
+    mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/withdraw-for-edit`, {}),
+    onSuccess: async () => {
+      queryClient.setQueryData([`/api/jobs/${editJobId}`], (job: Job | undefined) =>
+        job ? { ...job, status: JobStatus.DRAFT, submittedForReviewAt: null } : job,
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
+      setHasWithdrawnForEdit(true);
+      setIsSubmitting(false);
+      toast({
+        title: "Job withdrawn for editing",
+        description: "Its held escrow has been returned to your wallet. Your changes are not saved yet; save them as a draft, then submit for review when you are ready.",
+      });
+    },
+    onError: (error: any) => {
+      setIsSubmitting(false);
+      toast({
+        title: "Could not withdraw job",
+        description: error.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const submitForApprovalMutation = useMutation({
     mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/submit-for-approval`, {}),
-    onSuccess: () => {
+    onSuccess: (_result, jobId) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/jobs/${jobId}`], exact: true });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
@@ -301,7 +347,7 @@ export default function CreateJobPage() {
                   <FormItem>
                     <FormLabel>Budget (USD) *</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="500" {...field} data-testid="input-job-budget" />
+                      <Input type="number" placeholder="5" {...field} data-testid="input-job-budget" />
                     </FormControl>
                     <FormDescription>Enter the total budget in USD</FormDescription>
                     <FormMessage />
@@ -438,11 +484,11 @@ export default function CreateJobPage() {
                           {hasSufficientFunds ? "Funds available" : "Insufficient funds"}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Available: ${availableBalance.toFixed(2)} | Total required: ${totalCost.toFixed(2)}
+                          Available: ${availableBalance.toFixed(2)} | New amount required: ${amountToFund.toFixed(2)}
                           {isPremium && premiumFee > 0 && ` (Budget $${budgetValue.toFixed(2)} + Premium $${premiumFee.toFixed(2)})`}
                         </p>
                       </div>
-                      {!hasSufficientFunds && (
+                      {!hasSufficientFunds && isCheckingFundsForThisAction && (
                         <Button
                           type="button"
                           variant="outline"
@@ -458,13 +504,19 @@ export default function CreateJobPage() {
                 </Card>
               )}
 
-              {!hasSufficientFunds && totalCost > 0 && (
-                <Alert variant="destructive">
+              {((fundingShortfall > 0 && isCheckingFundsForThisAction) || (isPendingReviewJob && totalCost <= existingEscrowAmount)) && totalCost > 0 && (
+                <Alert variant="default">
                   <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Funds Required</AlertTitle>
+                  <AlertTitle>{fundingShortfall > 0 ? "Funds Required" : "Escrow Refund"}</AlertTitle>
                   <AlertDescription>
-                    You need ${(totalCost - availableBalance).toFixed(2)} more to submit this job for approval. 
-                    The total amount{isPremium && premiumFee > 0 ? " (budget + premium fee)" : ""} will be held in escrow when submitted.
+                    {fundingShortfall > 0
+                      ? `You need $${fundingShortfall.toFixed(2)} more to submit this job for approval${isPendingReviewJob ? " after the current escrow is refunded" : ""}.`
+                      : `You have $${(existingEscrowAmount - totalCost).toFixed(2)} more held than this job will require. Editing removes it from the moderator queue and refunds the full $${existingEscrowAmount.toFixed(2)} currently held in escrow. The edited job can then be resubmitted after funds are checked.`}
+                    {fundingShortfall > 0 && isPendingReviewJob && existingEscrowAmount > 0
+                      ? ` $${existingEscrowAmount.toFixed(2)} is already held in escrow; only the amount exceeding that is counted.`
+                      : fundingShortfall > 0
+                        ? ` The total amount${isPremium && premiumFee > 0 ? " (budget + premium fee)" : ""} will be held in escrow when submitted.`
+                        : ""}
                   </AlertDescription>
                 </Alert>
               )}
@@ -478,26 +530,49 @@ export default function CreateJobPage() {
                 >
                   Cancel
                 </Button>
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   variant="secondary"
-                  disabled={isSubmitting || createJobMutation.isPending}
+                  disabled={isSubmitting || createJobMutation.isPending || withdrawForEditMutation.isPending}
                   onClick={() => setSubmitAction("draft")}
                   data-testid="button-save-draft"
                 >
                   <Save className="w-4 h-4 mr-2" />
-                  {createJobMutation.isPending && submitAction === "draft" ? "Saving..." : "Save as Draft"}
+                  {withdrawForEditMutation.isPending || (createJobMutation.isPending && submitAction === "draft") ? "Saving..." : "Save as Draft"}
                 </Button>
-                <Button 
-                  type="submit" 
-                  disabled={isSubmitting || createJobMutation.isPending || submitForApprovalMutation.isPending || (!hasSufficientFunds && totalCost > 0) || (!!isPremium && premiumAmountValue < 100)}
-                  onClick={() => setSubmitAction("submit")}
+                <Button
+                  type="button"
+                  disabled={isSubmitting || createJobMutation.isPending || submitForApprovalMutation.isPending || withdrawForEditMutation.isPending || (isCheckingFundsForThisAction && !hasSufficientFunds && totalCost > 0 && submitAction === "submit" && !hasWithdrawnForEdit) || (!!isPremium && premiumAmountValue < 100)}
+                  onClick={() => {
+                    setSubmitAction("submit");
+                    if (isPendingReviewJob) {
+                      setIsSubmitting(true);
+                      withdrawForEditMutation.mutate(editJobId!);
+                    } else if (hasWithdrawnForEdit && isEditMode) {
+                      form.handleSubmit((values) => {
+                        setIsSubmitting(true);
+                        createJobMutation.mutate({ ...values, action: "submit" });
+                      })();
+                    } else {
+                      form.handleSubmit(onSubmit)();
+                    }
+                  }}
                   data-testid="button-submit-job"
                 >
                   <Send className="w-4 h-4 mr-2" />
-                  {isSubmitting && submitAction === "submit"
-                    ? (submitForApprovalMutation.isPending ? "Submitting for review..." : "Sent!") 
-                    : (isEditMode ? "Update & Submit" : "Submit for Review")}
+                  {withdrawForEditMutation.isPending
+                    ? "Withdrawing from review..."
+                    : createJobMutation.isPending && submitAction === "submit"
+                      ? "Saving draft..."
+                      : submitForApprovalMutation.isPending
+                        ? "Submitting for review..."
+                        : isPendingReviewJob
+                          ? "Withdraw for Editing"
+                          : hasWithdrawnForEdit
+                            ? "Submit Changes for Review"
+                            : isEditMode
+                              ? "Update & Submit"
+                              : "Submit for Review"}
                 </Button>
               </div>
             </form>

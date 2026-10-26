@@ -172,7 +172,8 @@ export default function MyJobsPage() {
 
       <div className="space-y-4">
         {myJobs.map((job) => {
-          const isPending = job.status === "pending";
+          const isPending = job.status === "pending" || job.status === "pending_approval";
+          const isDraft = job.status === "draft";
           const isRejected = job.status === "rejected";
           const needsChanges = job.status === "changes_requested";
 
@@ -295,7 +296,7 @@ export default function MyJobsPage() {
                       View Details
                     </Button>
                   </Link>
-                  {(needsChanges || isRejected || isPending) && (
+                  {(needsChanges || isRejected || isPending || isDraft) && (
                     <Link href={`/jobs/create?edit=${job.id}`}>
                       <Button size="sm" data-testid={`button-edit-resubmit-${job.id}`}>
                         Edit & Resubmit

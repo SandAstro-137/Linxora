@@ -92,26 +92,32 @@ export function getVerificationRequestOrigin(protocol: string, host: string, lis
   return origin.origin;
 }
 
-// Resolve a public-facing origin from the current request. In development this
-// keeps emailed links on the same hostname and port used to request the change.
+// Resolve the browser-facing origin from explicit configuration first, then
+// the current request. A configured public origin is required for phone users
+// to open local development verification links.
 export function getVerificationAppUrl(requestOrigin?: string): string {
   const isProd = process.env.NODE_ENV === 'production';
   const override = process.env.APP_BASE_URL;
   const looksLocal = override && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?:\/|$)/i.test(override);
 
   if (isProd) return override && !looksLocal ? override : 'https://linxova.com';
+  if (override && !looksLocal) return override;
+
+  let localRequestOrigin: string | undefined;
   if (requestOrigin) {
     try {
       const origin = new URL(requestOrigin);
       if ((origin.protocol === 'http:' || origin.protocol === 'https:') && !origin.username && !origin.password) {
-        return origin.origin;
+        if (origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') return origin.origin;
+        localRequestOrigin = origin.origin;
       }
     } catch {
       // Ignore malformed request origins and use the configured local default.
     }
   }
-  if (override) return override;
   if (process.env.REPLIT_DEV_DOMAIN) return `https://${process.env.REPLIT_DEV_DOMAIN}`;
+  if (localRequestOrigin) return localRequestOrigin;
+  if (override) return override;
   const port = Number(process.env.PORT);
   return `http://localhost:${Number.isInteger(port) && port > 0 ? port : 5006}`;
 }
@@ -133,8 +139,11 @@ const htmlEmailTemplate = (username: string, verificationUrl: string) => `<!DOCT
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
       </head>
       <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 40px 20px;">
-        <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-          <h1 style="color: #18181b; font-size: 24px; margin: 0 0 16px;">Verify your email address</h1>
+        <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <div style="text-align: center; margin: 0 0 24px;">
+            <img src="https://linxova.com/assets/logo-light-D4s3Nxh7.png" alt="Linxova" width="96" height="96" style="display: block; width: 96px; height: auto; max-width: 100%; margin: 0 auto; border: 0;">
+          </div>
+          <h1 style="color: #18181b; font-size: 24px; line-height: 1.3; margin: 0 0 16px;">Verify your email address</h1>
           <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
             Hi ${username},
           </p>
