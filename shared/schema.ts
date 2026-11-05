@@ -139,12 +139,12 @@ export type CancellationStatusType = typeof CancellationStatus[keyof typeof Canc
 
 // Level payout percentages
 export const LEVEL_PAYOUTS = {
-  1: 0.65,
-  2: 0.75,
-  3: 0.80,
-  4: 0.85,
-  5: 0.90,
-  6: 0.93,
+  1: 0.85,
+  2: 0.87,
+  3: 0.89,
+  4: 0.90,
+  5: 0.92,
+  6: 0.94,
   7: 0.95,
   8: 0.97
 } as const;
@@ -157,26 +157,28 @@ export function getLevelPayout(level: number): number {
 // Level progression is based on lifetime earnings (USD), not completed jobs.
 // Level 1 is the base level; each subsequent level unlocks at a cumulative earnings threshold.
 // Index i maps to the threshold for level i+1 (index 0 = base level 1).
-export const LEVEL_EARNINGS_THRESHOLDS = [0, 20, 50, 100, 250, 450, 750, 1500] as const; // levels 1..8
+export const LEVEL_EARNINGS_THRESHOLDS = [0, 50, 200, 750, 2000, 5000, 10000, 18000] as const; // levels 1..8
 
 export function getLevelFromEarnings(totalEarned: number): number {
-  if (totalEarned >= 1500) return 8;
-  if (totalEarned >= 750) return 7;
-  if (totalEarned >= 450) return 6;
-  if (totalEarned >= 250) return 5;
-  if (totalEarned >= 100) return 4;
-  if (totalEarned >= 50) return 3;
-  if (totalEarned >= 20) return 2;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[7]) return 8;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[6]) return 7;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[5]) return 6;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[4]) return 5;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[3]) return 4;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[2]) return 3;
+  if (totalEarned >= LEVEL_EARNINGS_THRESHOLDS[1]) return 2;
   return 1;
 }
 
-// Progress (0-100) toward the next level, measured as lifetime earnings relative
-// to the next level's cumulative threshold (e.g. $180 earned toward Level 4's $250 = 72%).
+// Progress (0-100) toward the next level, measured from the current level's
+// threshold to the next cumulative earnings threshold.
 export function getLevelProgressFromEarnings(totalEarned: number): number {
   const level = getLevelFromEarnings(totalEarned);
   if (level >= 8) return 100;
+  const currentThreshold = LEVEL_EARNINGS_THRESHOLDS[level - 1];
   const nextThreshold = LEVEL_EARNINGS_THRESHOLDS[level];
-  return Math.min(100, Math.max(0, (totalEarned / nextThreshold) * 100));
+  const levelRange = nextThreshold - currentThreshold;
+  return Math.min(100, Math.max(0, ((totalEarned - currentThreshold) / levelRange) * 100));
 }
 
 // How much more the freelancer must earn to reach the next level (0 once maxed).

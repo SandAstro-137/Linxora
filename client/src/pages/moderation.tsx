@@ -812,6 +812,13 @@ export default function ModerationPage() {
                       </div>
                     )}
 
+                    {job.moderatorFeedback?.startsWith("Automated review flags:") && (
+                      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3" data-testid={`text-automated-review-flags-${job.id}`}>
+                        <h4 className="font-semibold text-amber-700 dark:text-amber-400 mb-1">Automated review flags</h4>
+                        <p className="text-sm whitespace-pre-wrap break-words">{job.moderatorFeedback.replace("Automated review flags: ", "")}</p>
+                      </div>
+                    )}
+
                     {job.deadline && (
                       <div>
                         <h4 className="font-semibold mb-2">Deadline</h4>

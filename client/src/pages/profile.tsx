@@ -129,7 +129,7 @@ export default function ProfilePage() {
     .slice(0, 2);
 
   // Level progression is based on lifetime earnings (USD), not completed jobs.
-  // Level 1 is the base level; higher levels unlock at $20, $50, $100, $250, $450, $750, and $1500.
+  // Levels 2–8 unlock at cumulative lifetime earnings of $50, $200, $750, $2,000, $5,000, $10,000, and $18,000.
   const totalEarned = parseFloat(user.totalEarned || "0");
   const levelProgress = getLevelProgressFromEarnings(totalEarned);
   const earningsToNextLevel = getEarningsToNextLevel(totalEarned);

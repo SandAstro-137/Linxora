@@ -156,8 +156,8 @@ const freelancerSteps: OnboardingStep[] = [
         <p>Set up your profile:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Go to Profile to set your working hours</li>
-          <li>Your level (1–8) determines your rate for each job: Level 1 = 65%, Level 2 = 75%, Level 3 = 80%, Level 4 = 85%, Level 5 = 90%, Level 6 = 93%, Level 7 = 95%, Level 8 = 97%</li>
-          <li>Levels 2–8 unlock at cumulative lifetime earnings of $20, $50, $100, $250, $450, $750, and $1,500 respectively; Level 1 starts at $0</li>
+          <li>Your level (1–8) determines your rate for each job: Level 1 = 85%, Level 2 = 87%, Level 3 = 89%, Level 4 = 90%, Level 5 = 92%, Level 6 = 94%, Level 7 = 95%, Level 8 = 97%</li>
+          <li>Levels 2–8 unlock at cumulative lifetime earnings of $50, $200, $750, $2,000, $5,000, $10,000, and $18,000 respectively; Level 1 starts at $0</li>
           <li>The rate is your share of the job budget; your level updates as eligible earnings are recorded</li>
         </ul>
       </div>
@@ -174,7 +174,7 @@ const customerSteps: OnboardingStep[] = [
         <p>Getting started as a customer:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Create job posts with clear requirements</li>
-          <li>Jobs are reviewed by moderators before going live</li>
+          <li>Clean jobs publish automatically; posts flagged by the content check go to moderators before going live</li>
           <li>Review freelancer requests to take your jobs</li>
           <li>Pay securely</li>
         </ul>
@@ -194,7 +194,7 @@ const customerSteps: OnboardingStep[] = [
           <li>Set a required deadline (date and time in Eastern Time)</li>
         </ul>
         <p className="text-sm text-muted-foreground mt-4">
-          Jobs must be approved by moderators before going live.
+          Jobs are checked for potentially alarming content. Clean posts go live automatically; flagged posts wait in the moderator review queue.
         </p>
       </div>
     ),
@@ -206,9 +206,9 @@ const customerSteps: OnboardingStep[] = [
       <div className="space-y-4">
         <p>After you submit a job:</p>
         <ul className="list-disc pl-6 space-y-2">
-          <li><strong>Pending:</strong> Awaiting moderator review</li>
+          <li><strong>Pending:</strong> A content check flagged the job for moderator review</li>
           <li><strong>Changes Requested:</strong> Moderator feedback provided - edit and resubmit</li>
-          <li><strong>Approved:</strong> Job is live on the marketplace</li>
+          <li><strong>Automatically Posted:</strong> Clean jobs are live on the marketplace immediately</li>
           <li><strong>Rejected:</strong> Job did not meet quality standards</li>
         </ul>
       </div>

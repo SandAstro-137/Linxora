@@ -173,6 +173,7 @@ export default function MyJobsPage() {
       <div className="space-y-4">
         {myJobs.map((job) => {
           const isPending = job.status === "pending" || job.status === "pending_approval";
+          const hasAutomatedReviewFlags = job.moderatorFeedback?.startsWith("Automated review flags:") ?? false;
           const isDraft = job.status === "draft";
           const isRejected = job.status === "rejected";
           const needsChanges = job.status === "changes_requested";
@@ -191,11 +192,15 @@ export default function MyJobsPage() {
                         {job.title}
                       </CardTitle>
                       <Badge variant={getStatusColor(job.status)} data-testid={`badge-status-${job.id}`}>
-                        {job.status.replace("_", " ")}
+                        {job.status === "pending_acceptance" || job.status === "active"
+                          ? "Open for Applications"
+                          : job.status === "pending_approval" || job.status === "pending"
+                            ? "Pending Moderator Review"
+                            : job.status.replaceAll("_", " ")}
                       </Badge>
                       {isPending && (
                         <Badge variant="secondary" data-testid={`badge-pending-${job.id}`}>
-                          Awaiting Approval
+                          Pending content review
                         </Badge>
                       )}
                       {needsChanges && (
@@ -234,11 +239,13 @@ export default function MyJobsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {(needsChanges || isRejected) && job.moderatorFeedback && (
+                {(needsChanges || isRejected || (isPending && hasAutomatedReviewFlags)) && job.moderatorFeedback && (
                   <div className="bg-destructive/10 border border-destructive/20 rounded-md p-4">
-                    <h4 className="font-semibold text-destructive mb-2">Moderator Feedback</h4>
+                    <h4 className="font-semibold text-destructive mb-2">
+                      {isPending && hasAutomatedReviewFlags ? "Automated Content Review" : "Moderator Feedback"}
+                    </h4>
                     <p className="text-sm whitespace-pre-wrap break-words" data-testid={`text-moderator-feedback-${job.id}`}>
-                      {job.moderatorFeedback}
+                      {hasAutomatedReviewFlags ? job.moderatorFeedback.replace("Automated review flags: ", "") : job.moderatorFeedback}
                     </p>
                   </div>
                 )}

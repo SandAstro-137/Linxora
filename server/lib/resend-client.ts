@@ -1,10 +1,14 @@
 // Email sending client. Providers, checked in order:
-//   1. ZOHO_SMTP_USER + ZOHO_SMTP_PASSWORD (Zoho Mail SMTP — smtppro.zoho.com,
-//      sends from your own Zoho mailbox on linxova.com, no verification needed)
-//   2. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
+//   1. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
 //      e.g. em4731.linxova.com, must be verified via SendGrid Sender Auth)
-//   3. RESEND_API_KEY    (Resend HTTP API)
-//   4. Replit connector  (fallback when deployed on Replit)
+//   2. RESEND_API_KEY    (Resend HTTP API, or the Replit connector fallback)
+//   3. ZOHO_SMTP_USER + ZOHO_SMTP_PASSWORD (Zoho Mail SMTP — smtppro.zoho.com)
+//
+// HTTPS providers are tried first on purpose. Render *free* web services block
+// outbound traffic to SMTP ports 25, 465 and 587, and the block is a blackhole
+// rather than a refusal: a Zoho send does not fail fast, it hangs until it
+// times out, which made the Verify button spin for minutes. Zoho SMTP is kept
+// last for local development and paid Render instances only.
 import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
 
@@ -170,38 +174,7 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
   const subject = 'Verify your email address - Linxova';
   const html = htmlEmailTemplate(username, verificationUrl);
 
-  // Provider 1: Zoho Mail SMTP (your own mailbox on linxova.com — real inbox,
-  // best deliverability; credentials via ZOHO_SMTP_USER / ZOHO_SMTP_PASSWORD).
-  if (process.env.ZOHO_SMTP_USER && process.env.ZOHO_SMTP_PASSWORD) {
-    const host = process.env.ZOHO_SMTP_HOST || 'smtppro.zoho.com';
-    const port = Number(process.env.ZOHO_SMTP_PORT || '465');
-    const fromEmail = process.env.ZOHO_FROM_EMAIL || process.env.ZOHO_SMTP_USER;
-    try {
-      const transport = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: {
-          user: process.env.ZOHO_SMTP_USER,
-          pass: process.env.ZOHO_SMTP_PASSWORD,
-        },
-      });
-      const info = await transport.sendMail({
-        from: fromEmail,
-        to: toEmail,
-        replyTo: 'support@linxova.com',
-        subject,
-        html,
-      });
-      return info;
-    } catch (err: any) {
-      console.error('Zoho SMTP send failed:', err?.message || err);
-      throw new Error('Failed to send verification email (Zoho SMTP)');
-    }
-  }
-
-  // Provider 2: SendGrid (authenticated domain via CNAMEs you add at your
-  // registrar — em4731.linxova.com, domainkeys, dmarc, link branding).
+  // Provider 1: SendGrid (HTTPS API — works on every Render tier).
   const sg = getSendGridCredentials();
   if (sg) {
     const sgMail = await getSgMail();
@@ -225,20 +198,66 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
     }
   }
 
-  // Provider 3: Resend
-  const { client, fromEmail } = await getResendClient();
-  const { data, error } = await client.emails.send({
-    from: fromEmail,
-    to: toEmail,
-    replyTo: 'support@linxova.com',
-    subject,
-    html,
-  });
+  // Provider 2: Resend (HTTPS API — works on every Render tier). Only attempt
+  // it when credentials exist, so a Zoho-only setup still reaches provider 3
+  // instead of throwing a "not connected" error here.
+  const hasResendKey = Boolean(process.env.RESEND_API_KEY);
+  const hasReplitConnector = Boolean(
+    process.env.REPLIT_CONNECTORS_HOSTNAME &&
+    (process.env.REPL_IDENTITY || process.env.WEB_REPL_RENEWAL)
+  );
+  if (hasResendKey || hasReplitConnector) {
+    const { client, fromEmail } = await getResendClient();
+    const { data, error } = await client.emails.send({
+      from: fromEmail,
+      to: toEmail,
+      replyTo: 'support@linxova.com',
+      subject,
+      html,
+    });
 
-  if (error) {
-    console.error('Failed to send verification email:', error);
-    throw new Error('Failed to send verification email');
+    if (error) {
+      console.error('Failed to send verification email:', error);
+      throw new Error('Failed to send verification email');
+    }
+
+    return data;
   }
 
-  return data;
+  // Provider 3: Zoho Mail SMTP. Last resort: unusable on Render free web
+  // services (SMTP ports blocked), kept for local development and paid
+  // instances. The timeouts make a blocked port fail in seconds instead of
+  // hanging the HTTP request until the browser gives up.
+  if (process.env.ZOHO_SMTP_USER && process.env.ZOHO_SMTP_PASSWORD) {
+    const host = process.env.ZOHO_SMTP_HOST || 'smtppro.zoho.com';
+    const port = Number(process.env.ZOHO_SMTP_PORT || '465');
+    const fromEmail = process.env.ZOHO_FROM_EMAIL || process.env.ZOHO_SMTP_USER;
+    try {
+      const transport = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 15_000,
+        auth: {
+          user: process.env.ZOHO_SMTP_USER,
+          pass: process.env.ZOHO_SMTP_PASSWORD,
+        },
+      });
+      const info = await transport.sendMail({
+        from: fromEmail,
+        to: toEmail,
+        replyTo: 'support@linxova.com',
+        subject,
+        html,
+      });
+      return info;
+    } catch (err: any) {
+      console.error('Zoho SMTP send failed:', err?.message || err);
+      throw new Error('Failed to send verification email (Zoho SMTP)');
+    }
+  }
+
+  throw new Error('SENDGRID_API_KEY/RESEND_API_KEY not set and no Replit connector available');
 }

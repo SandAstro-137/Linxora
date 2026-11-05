@@ -238,7 +238,7 @@ export default function CompanyVaultPage() {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mt-3">
-                Freelancers keep 60-97% of each job depending on level; the rest stays with Linxova.
+                Freelancers keep 85-97% of each job depending on level; the rest stays with Linxova.
               </p>
             </div>
           </CardContent>

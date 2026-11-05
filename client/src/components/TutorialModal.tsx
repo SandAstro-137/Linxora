@@ -20,7 +20,7 @@ const levelingSystemSlide: TutorialSlide = {
   description: "Your level sets your rate per job and is based on cumulative lifetime earnings. Each threshold is the total earnings needed to reach that level.",
   icon: Star,
   table: {
-    headers: ["Level", "Rate per Job", "Lifetime Earnings to Unlock"],
+    headers: ["Level", "Freelancer Gets", "Lifetime Earnings to Unlock"],
     rows: Object.entries(LEVEL_PAYOUTS).map(([level, rate]) => [
       `Level ${level}`,
       `${Math.round(rate * 100)}%`,
@@ -28,8 +28,8 @@ const levelingSystemSlide: TutorialSlide = {
     ]),
   },
   tips: [
-    "The rate is your share of the job budget paid to you at that level.",
-    "Earnings thresholds are cumulative: Level 1 starts at $0; Level 2 starts at $20, then $50, $100, $250, $450, $750, and $1,500 for Levels 3–8.",
+    "The percentage is the share of each job budget paid to you at that level; the remainder is the platform fee.",
+    "Lifetime earnings thresholds: Level 1 starts at $0; Levels 2–8 start at $50, $200, $750, $2,000, $5,000, $10,000, and $18,000, respectively.",
     "Your level and rate update automatically as eligible job earnings are recorded.",
   ],
 };
@@ -90,8 +90,8 @@ const freelancerSlides: TutorialSlide[] = [
     description: "Level up as your lifetime earnings grow.",
     icon: Star,
     tips: [
-      "Level 1 is the starting level; levels 2–8 unlock at lifetime earnings of $20, $50, $100, $250, $450, $750, and $1,500",
-      "Your level determines the share of each job budget you receive; higher levels earn a higher rate",
+      "Level 1 starts at $0; Levels 2–8 unlock at lifetime earnings of $50, $200, $750, $2,000, $5,000, $10,000, and $18,000, respectively",
+      "Your level determines your share of each job budget: Levels 1–8 pay 85%, 87%, 89%, 90%, 92%, 94%, 95%, and 97%, respectively",
       "Apply to become a Moderator at level 5"
     ]
   }

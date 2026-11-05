@@ -217,17 +217,23 @@ export default function CreateJobPage() {
   });
 
   const submitForApprovalMutation = useMutation({
-    mutationFn: (jobId: string) => apiRequest("POST", `/api/jobs/${jobId}/submit-for-approval`, {}),
-    onSuccess: (_result, jobId) => {
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/jobs/${jobId}/submit-for-approval`, {});
+      return await response.json() as Job;
+    },
+    onSuccess: (result, jobId) => {
       queryClient.invalidateQueries({ queryKey: [`/api/jobs/${jobId}`], exact: true });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/moderation/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
+      const isPendingReview = result.status === JobStatus.PENDING_APPROVAL;
       toast({
-        title: "Submitted for approval!",
-        description: "Your job has been submitted for moderator review. Funds have been reserved.",
+        title: isPendingReview ? "Submitted for moderator review" : "Job posted!",
+        description: isPendingReview
+          ? `Your job was flagged for review. ${result.moderatorFeedback || "Moderators will check it before publication."} Funds have been reserved.`
+          : "Your job passed the automatic content check and is now open for applications. Funds have been reserved.",
       });
       setLocation("/my-jobs");
     },
@@ -295,7 +301,7 @@ export default function CreateJobPage() {
         <CardHeader>
           <CardTitle>Job Details</CardTitle>
           <CardDescription>
-            All jobs go through a moderation process before being published
+            Job posts are checked automatically. Flagged posts go to moderators; clean posts publish immediately.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -565,14 +571,14 @@ export default function CreateJobPage() {
                     : createJobMutation.isPending && submitAction === "submit"
                       ? "Saving draft..."
                       : submitForApprovalMutation.isPending
-                        ? "Submitting for review..."
+                        ? "Submitting..."
                         : isPendingReviewJob
                           ? "Withdraw for Editing"
                           : hasWithdrawnForEdit
-                            ? "Submit Changes for Review"
+                            ? "Resubmit Job"
                             : isEditMode
                               ? "Update & Submit"
-                              : "Submit for Review"}
+                              : "Post Job"}
                 </Button>
               </div>
             </form>

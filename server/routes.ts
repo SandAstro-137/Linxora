@@ -12,7 +12,7 @@ import { shouldApplyDemoIdentity } from "./lib/demo-auth";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
 import { shouldApplyTabIdentity } from "./lib/tab-auth";
 import { getCurrentFreelancerJobs } from "./lib/current-jobs";
-import { filterContent, sanitizeText, isSpamLike } from "./lib/content-filter";
+import { filterContent, sanitizeText, isSpamLike, reviewJobContent } from "./lib/content-filter";
 import { getJobFundingRequirement, getJobFundingShortfall } from "@shared/job-funding";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -1394,21 +1394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const validated = insertJobSchema.parse(req.body);
       
-      // Content filtering for job posts
-      const contentToCheck = `${validated.title} ${validated.description} ${validated.requirements || ""}`;
-      const filterResult = filterContent(contentToCheck);
-      
-      if (!filterResult.isClean && filterResult.severity === "high") {
-        return res.status(400).json({ 
-          error: "Job posting contains inappropriate content",
-          flags: filterResult.flags
-        });
-      }
-      
-      if (isSpamLike(contentToCheck)) {
-        return res.status(400).json({ error: "Job posting appears to contain spam content" });
-      }
-      
+      // Screen submissions after saving as a draft so flagged posts can be routed to moderators.
       // Sanitize text fields
       validated.title = sanitizeText(validated.title);
       validated.description = sanitizeText(validated.description);
@@ -2665,10 +2651,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ].filter((field): field is string => field !== null);
       if (missingRequiredFields.length > 0) {
         return res.status(400).json({
-          error: `Please add a ${missingRequiredFields.join(", ")} before submitting this job for review.`,
+          error: `Please add a ${missingRequiredFields.join(", ")} before submitting this job.`,
           fields: missingRequiredFields,
         });
       }
+
+      const deadline = job.deadline ? new Date(job.deadline) : null;
+      if (!deadline || Number.isNaN(deadline.getTime())) {
+        return res.status(400).json({ error: "Please enter a valid job deadline.", fields: ["deadline"] });
+      }
+      if (deadline.getTime() <= Date.now()) {
+        return res.status(400).json({ error: "The job deadline must be in the future. Please update it before submitting.", fields: ["deadline"] });
+      }
+
+      // Auto-publish clean jobs; only potentially abusive content is routed to moderation.
+      const contentReview = reviewJobContent(job.title, job.description, job.requirements);
 
       // Validate wallet balance covers budget + premium fee
       const wallet = await storage.getWallet(job.customerId);
@@ -2724,29 +2721,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Update job status to pending approval and record submission time
-      const updatedJob = await storage.updateJob(req.params.id, {
-        status: JobStatus.PENDING_APPROVAL,
-        moderatorFeedback: null,
-        submittedForReviewAt: new Date(),
-      });
-      if (!updatedJob) {
-        return res.status(500).json({ error: "Could not update the submitted job" });
-      }
+      const now = new Date();
+      let updatedJob;
+      if (contentReview.needsReview) {
+        updatedJob = await storage.updateJob(req.params.id, {
+          status: JobStatus.PENDING_APPROVAL,
+          moderatorFeedback: `Automated review flags: ${contentReview.flags.join("; ")}`,
+          submittedForReviewAt: now,
+        });
 
-      // Notify moderators
-      const moderators = await storage.getUsers();
-      const modRoles = ["staff", "moderator", "head_of_moderation", "founder"];
-      for (const mod of moderators.filter(u => modRoles.includes(u.role))) {
+        // Notify moderators only for jobs requiring a human review.
+        const moderators = await storage.getUsers();
+        const modRoles = ["staff", "moderator", "head_of_moderation", "founder"];
+        for (const mod of moderators.filter(u => modRoles.includes(u.role))) {
+          await storage.createNotification({
+            userId: mod.id,
+            type: "moderation",
+            title: "New job pending approval",
+            message: `Job "${job.title}"${parseFloat(job.premiumAmount || "0") > 0 ? ` [PREMIUM $${job.premiumAmount}]` : ""} is waiting for moderation review. Flags: ${contentReview.flags.join("; ")}`,
+            relatedId: job.id,
+            sourceType: "system",
+            sourceId: job.id,
+          });
+        }
+      } else {
+        const expiresAt = new Date(now);
+        expiresAt.setMonth(expiresAt.getMonth() + 2);
+        updatedJob = await storage.updateJob(req.params.id, {
+          status: JobStatus.PENDING_ACCEPTANCE,
+          approvedAt: now,
+          expiresAt,
+          moderatorFeedback: null,
+          submittedForReviewAt: null,
+        });
+        await storage.createScheduledTask({
+          jobId: job.id,
+          taskType: "job_expiration",
+          runAt: expiresAt,
+          status: ScheduledTaskStatus.PENDING,
+        });
         await storage.createNotification({
-          userId: mod.id,
-          type: "moderation",
-          title: "New job pending approval",
-          message: `Job "${job.title}"${parseFloat(job.premiumAmount || "0") > 0 ? ` [PREMIUM $${job.premiumAmount}]` : ""} is waiting for moderation review.`,
+          userId: job.customerId,
+          type: "job_approved",
+          title: "Job posted!",
+          message: `Your job "${job.title}" passed automated content checks and is now open for applications.`,
           relatedId: job.id,
-          sourceType: "system",
+          sourceType: "job",
           sourceId: job.id,
         });
+      }
+
+      if (!updatedJob) {
+        return res.status(500).json({ error: "Could not update the submitted job" });
       }
 
       res.json(updatedJob);
@@ -3147,7 +3173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!freelancer) continue;
 
         const level = freelancer.level || 1;
-        const levelPayout = getLevelPayout(level); // Returns 0.65 to 0.97
+        const levelPayout = getLevelPayout(level); // Returns 0.85 to 0.97
         const payoutAmount = sharePerFreelancer * levelPayout;
         const platformFee = sharePerFreelancer - payoutAmount;
 
@@ -5582,11 +5608,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           disputedJobs,
         },
         feeStructure: {
-          level1: "40% platform fee",
-          level2: "30% platform fee",
-          level3: "20% platform fee",
-          level4: "15% platform fee",
-          level5: "10% platform fee",
+          level1: "15% platform fee",
+          level2: "13% platform fee",
+          level3: "11% platform fee",
+          level4: "10% platform fee",
+          level5: "8% platform fee",
+          level6: "6% platform fee",
+          level7: "5% platform fee",
+          level8: "3% platform fee",
         },
         series,
         updatedAt: new Date().toISOString(),
@@ -7153,7 +7182,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         if (msg.includes('Zoho SMTP')) {
           return res.status(502).json({
-            error: "Zoho could not send the verification email. Check the Render service logs and confirm the Zoho mailbox credentials, account-specific SMTP host, and sender address.",
+            error: "Zoho could not send the verification email. Render free web services block outbound SMTP ports 25, 465 and 587, so Zoho SMTP only works on a paid instance \u2014 configure SENDGRID_API_KEY instead.",
+          });
+        }
+        if (msg.includes('SendGrid')) {
+          return res.status(502).json({
+            error: "SendGrid rejected the verification email. Confirm SENDGRID_FROM_EMAIL matches an authenticated domain or verified sender, then check the server logs for the SendGrid response.",
           });
         }
         return res.status(500).json({ error: "The verification email could not be sent. Check the server logs for the email provider error, then try again." });
@@ -8385,7 +8419,7 @@ Your role is to help users understand how to use Linxova. Here is what you know 
 - USD-based wallet with deposit and withdrawal
 - Escrow system: money is held until job completes
 - Premium listings: minimum $100, premium revenue goes to Linxova
-- Level-based payouts: Level 1=65%, Level 2=75%, Level 3=80%, Level 4=85%, Level 5=90%, Level 6=93%, Level 7=95%, Level 8=97% of budget
+- Level-based payouts: Level 1=85%, Level 2=87%, Level 3=89%, Level 4=90%, Level 5=92%, Level 6=94%, Level 7=95%, Level 8=97% of budget
 
 **Role Upgrades:**
 - Customers can apply to become Freelancers (account must be 3+ days old, no active jobs)
