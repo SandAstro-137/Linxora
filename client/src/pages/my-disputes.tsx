@@ -167,7 +167,19 @@ export default function MyDisputesPage() {
 
   const resolveBudget = parseFloat(selectedDispute?.jobBudget || "0");
   const resolveTotal = parseFloat(freelancerAmount || "0") + parseFloat(customerRefund || "0");
-  const resolveTotalMatches = Math.abs(resolveTotal - resolveBudget) < 0.001;
+
+  // Money is exact to the cent. An epsilon comparison treated $500.004 as
+  // "$500" on a $500 job, which let a moderator distribute more than the job
+  // was worth. Amounts must now be whole cents and must add up exactly.
+  const isWholeCents = (value: string) => {
+    const parsed = parseFloat(value || "0");
+    return Number.isFinite(parsed) && Math.abs(parsed * 100 - Math.round(parsed * 100)) < 1e-6;
+  };
+  const centsOf = (value: string) => Math.round(parseFloat(value || "0") * 100);
+  const resolveTotalMatches =
+    isWholeCents(freelancerAmount) &&
+    isWholeCents(customerRefund) &&
+    centsOf(freelancerAmount) + centsOf(customerRefund) === Math.round(resolveBudget * 100);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -380,6 +392,7 @@ export default function MyDisputesPage() {
                 onChange={(e) => setFreelancerAmount(e.target.value)}
                 step="0.01"
                 min="0"
+                max={selectedDispute?.jobBudget || undefined}
                 data-testid="input-freelancer-amount"
               />
             </div>
@@ -392,6 +405,7 @@ export default function MyDisputesPage() {
                 onChange={(e) => setCustomerRefund(e.target.value)}
                 step="0.01"
                 min="0"
+                max={selectedDispute?.jobBudget || undefined}
                 data-testid="input-customer-refund"
               />
             </div>
@@ -462,7 +476,16 @@ export default function MyDisputesPage() {
                   return;
                 }
                 
-                if (Math.abs(freelancerAmt + customerAmt - budget) > 0.001) {
+                if (!isWholeCents(freelancerAmount) || !isWholeCents(customerRefund)) {
+                  toast({
+                    title: "Amounts must be in whole cents",
+                    description: "Use at most two decimal places — an amount smaller than $0.01 is not allowed.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+
+                if (Math.round(freelancerAmt * 100) + Math.round(customerAmt * 100) !== Math.round(budget * 100)) {
                   toast({
                     title: "Full amount must be distributed",
                     description: `Freelancer amount + customer refund must total exactly $${budget.toFixed(2)}.`,

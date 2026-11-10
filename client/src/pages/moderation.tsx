@@ -198,8 +198,12 @@ export default function ModerationPage() {
     refetchInterval: 10000, // Keep the dispute list current without a manual refresh
   });
 
+  // Role upgrades only appear for leadership: customer→freelancer is granted
+  // automatically, so the only requests left are moderator promotions, which
+  // plain moderators cannot decide.
   const { data: roleUpgradeRequests = [], isLoading: upgradesLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/pending"],
+    enabled: currentUser?.role === "founder" || currentUser?.role === "head_of_moderation",
   });
 
   const isLeadership = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
@@ -739,15 +743,17 @@ export default function ModerationPage() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="upgrades" data-testid="tab-upgrades">
-            <Users className="w-4 h-4 mr-1" />
-            Role Upgrades
-            {roleUpgradeRequests.length > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {roleUpgradeRequests.length}
-              </Badge>
-            )}
-          </TabsTrigger>
+          {isLeadership && (
+            <TabsTrigger value="upgrades" data-testid="tab-upgrades">
+              <Users className="w-4 h-4 mr-1" />
+              Role Upgrades
+              {roleUpgradeRequests.length > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {roleUpgradeRequests.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
           {isLeadership && (
             <TabsTrigger value="forwarded-bugs" data-testid="tab-forwarded-bugs">
               <Forward className="w-4 h-4 mr-1" />

@@ -115,7 +115,6 @@ export function AppSidebar() {
     { title: "Moderation Queue", url: "/moderation", icon: Shield },
     { title: "Calendar", url: "/calendar", icon: Calendar },
     { title: "My Disputes", url: "/my-disputes", icon: Gavel },
-    { title: "Upgrade Requests", url: "/role-upgrade-review", icon: Users },
     { title: "My Meetings", url: "/meetings", icon: CalendarDays },
     { title: "PTO Requests", url: "/pto", icon: Clock },
     { title: "All Jobs", url: "/jobs", icon: Briefcase },

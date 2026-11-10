@@ -9,6 +9,8 @@ import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insert
 import { shouldRestoreGoogleCustomerRole } from "./lib/google-auth-role";
 import { canCreateGoogleAccount, canSwitchToAccount, completeAuthAccountLink, createGoogleOAuthState, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition } from "./lib/auth-account-switch";
 import { shouldApplyDemoIdentity } from "./lib/demo-auth";
+import { DEMO_ACCOUNT_IDS, isDemoAccountId, isDemoModeEnabled } from "./lib/demo-mode";
+import { ensureDemoAccounts } from "./lib/demo-seed";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
 import { shouldApplyTabIdentity } from "./lib/tab-auth";
 import { getCurrentFreelancerJobs } from "./lib/current-jobs";
@@ -358,17 +360,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
-  // Development: Simple login for testing. DISABLED in production — anyone could
-  // otherwise become any account (including founder) with a single request.
+  // Demo sign-in. Works locally, and on a demo deployment while demo mode is
+  // enabled. In production this endpoint only resolves the fixed demo accounts:
+  // it can never sign in to a real account or create one from the request body.
   app.post("/api/auth/dev-login", async (req, res) => {
-    if (process.env.NODE_ENV === 'production') {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const demoMode = isDemoModeEnabled();
+    if (isProduction && !demoMode) {
       return res.status(404).json({ error: "Not found" });
     }
     try {
       const { discordId } = req.body;
+      if (isProduction && !isDemoAccountId(discordId)) {
+        return res.status(403).json({ error: "Demo sign-in is limited to the demo accounts." });
+      }
       let user = await storage.getUserByDiscordId(discordId);
+
+      // A deployment whose database already held data may have skipped the demo
+      // dataset; create the fixed demo accounts instead of inventing a user.
+      if (!user && isProduction) {
+        await ensureDemoAccounts();
+        user = await storage.getUserByDiscordId(discordId);
+      }
       
-      if (!user) {
+      if (!user && !isProduction) {
       // Create demo user
       const getRoleAndName = (id: string) => {
           if (id.includes('founder')) return { role: 'founder', name: 'Demo Founder' };
@@ -460,6 +475,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentAccountIsDemo,
         targetAccountIsDemo,
         process.env.NODE_ENV,
+        isDemoModeEnabled(),
       );
       if (!canSwitch) {
         // Demo identities are only switchable between one another in local
@@ -884,11 +900,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Demo account list for the development login page. Disabled in production:
   // returns 401 so the frontend falls back to real (Discord) sign-in only.
   app.get("/api/auth/demo-accounts", async (_req, res) => {
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(401).json({ error: "Demo accounts are disabled in production" });
+    if (!isDemoModeEnabled()) {
+      return res.status(401).json({ error: "Demo accounts are disabled" });
     }
     try {
-      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-head-mod-1", "demo-founder-1"];
+      await ensureDemoAccounts();
+      const demoIds = DEMO_ACCOUNT_IDS;
       const accounts = [];
       for (const discordId of demoIds) {
         const user = await storage.getUserByDiscordId(discordId);
@@ -903,7 +920,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/switchable-demo-accounts", requireAuth, async (req, res) => {
-    if (process.env.NODE_ENV !== "development") {
+    if (!isDemoModeEnabled()) {
       return res.json([]);
     }
     try {
@@ -912,7 +929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json([]);
       }
 
-      const demoIds = ["demo-freelancer-1", "demo-freelancer-2", "demo-customer-1", "demo-moderator-1", "demo-head-mod-1", "demo-founder-1"];
+      const demoIds = DEMO_ACCOUNT_IDS;
       const accounts = [];
       for (const discordId of demoIds) {
         const user = await storage.getUserByDiscordId(discordId);
@@ -3697,15 +3714,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "This dispute is handled by another moderator" });
       }
 
-      const { freelancerAmount, customerRefund, resolutionNotes } = req.body;
+      let { freelancerAmount, customerRefund, resolutionNotes } = req.body;
 
       if (typeof freelancerAmount !== "number" || typeof customerRefund !== "number") {
         return res.status(400).json({ error: "Please specify freelancer and customer amounts" });
       }
 
+      if (!Number.isFinite(freelancerAmount) || !Number.isFinite(customerRefund)) {
+        return res.status(400).json({ error: "Please specify valid numbers for both amounts" });
+      }
+
       if (freelancerAmount < 0 || customerRefund < 0) {
         return res.status(400).json({ error: "Amounts cannot be negative. Both amounts must be zero or positive." });
       }
+
+      // Money is exact to the cent. A tolerance-based total check let a moderator
+      // overpay the job by any fraction below the tolerance (e.g. $500.004 on a
+      // $500 job), so amounts must now be whole cents and must add up exactly.
+      const freelancerCents = Math.round(freelancerAmount * 100);
+      const customerCents = Math.round(customerRefund * 100);
+      if (
+        Math.abs(freelancerAmount * 100 - freelancerCents) > 1e-6 ||
+        Math.abs(customerRefund * 100 - customerCents) > 1e-6
+      ) {
+        return res.status(400).json({ error: "Amounts cannot be smaller than one cent. Use at most two decimal places." });
+      }
+      // Normalise to exact cents so every downstream payout is precise.
+      freelancerAmount = freelancerCents / 100;
+      customerRefund = customerCents / 100;
 
       if (!resolutionNotes || typeof resolutionNotes !== "string" || resolutionNotes.trim().length < 10) {
         return res.status(400).json({ error: "Please provide resolution notes (at least 10 characters)" });
@@ -3719,10 +3755,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const budget = parseFloat(job.budget);
       const jobPremium = parseFloat(job.premiumAmount || "0");
       const totalCost = budget + jobPremium;
+      const budgetCents = Math.round(budget * 100);
 
       // The full budget must be distributed between the freelancer and the customer,
       // so the moderator cannot keep money out of the dispute. (Premium stays with Linxova.)
-      if (Math.abs(freelancerAmount + customerRefund - budget) > 0.01) {
+      // Compared in integer cents, so no amount can exceed the budget by a fraction.
+      if (freelancerCents + customerCents !== budgetCents) {
         return res.status(400).json({
           error: `The full job budget must be distributed. Freelancer amount + customer refund must total exactly $${budget.toFixed(2)}.`
         });
@@ -8098,10 +8136,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get pending role upgrade requests (moderators only)
-  app.get("/api/role-upgrade-requests/pending", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+  // Get pending role upgrade requests. Customer-to-freelancer upgrades are
+  // granted immediately on submission, so the only thing that can still be pending is a
+  // freelancer asking to become a moderator — a leadership-only decision.
+  app.get("/api/role-upgrade-requests/pending", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
-      const requests = await storage.getPendingRoleUpgradeRequests();
+      const requests = (await storage.getPendingRoleUpgradeRequests()).filter(
+        (request) => request.upgradeType === RoleUpgradeType.FREELANCER_TO_MODERATOR
+      );
       
       // Enrich with user data
       const enrichedRequests = await Promise.all(
@@ -8208,6 +8250,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // A customer who meets the requirements is promoted on the spot — there is
+      // no review queue for this direction, so nothing is left pending.
+      if (validatedData.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER) {
+        const created = await storage.createRoleUpgradeRequest(validatedData);
+        const updated = await storage.updateRoleUpgradeRequest(created.id, {
+          status: RoleUpgradeStatus.APPROVED,
+          reviewNotes:
+            "Automatically approved: customer accounts are promoted to freelancer as soon as the requirements are met.",
+        });
+        await storage.updateUser(user.id, { role: UserRole.FREELANCER });
+        await storage.createNotification({
+          userId: user.id,
+          type: "role_upgrade",
+          title: "You're now a Freelancer",
+          message: "Your account has been upgraded to Freelancer. You can start applying to jobs right away.",
+          relatedId: created.id,
+          sourceType: "user",
+          sourceId: user.id,
+        });
+        return res.status(201).json({ ...(updated || created), autoApproved: true });
+      }
+
       // Check for existing pending request
       const existingRequests = await storage.getRoleUpgradeRequests({ 
         userId: user.id, 
@@ -8219,14 +8283,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const request = await storage.createRoleUpgradeRequest(validatedData);
 
-      // Create notification for moderators
-      const moderators = (await storage.getUsers()).filter(u => u.role === "moderator");
-      for (const mod of moderators) {
+      // Only leadership reviews moderator promotions, so only they are notified.
+      const reviewers = (await storage.getUsers()).filter(
+        (u) => u.role === "head_of_moderation" || u.role === "founder"
+      );
+      for (const reviewer of reviewers) {
         await storage.createNotification({
-          userId: mod.id,
+          userId: reviewer.id,
           type: "role_upgrade",
-          title: "New Role Upgrade Request",
-          message: `${user.username} has requested to become a ${validatedData.upgradeType === RoleUpgradeType.CUSTOMER_TO_FREELANCER ? 'freelancer' : 'moderator'}`,
+          title: "New Moderator Application",
+          message: `${user.username} has requested to become a moderator`,
           relatedId: request.id,
           sourceType: "user",
           sourceId: user.id,
@@ -8243,10 +8309,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Approve or reject a role upgrade request
-  // Moderators can only approve customer-to-freelancer upgrades
-  // Founder/Head of Moderation can approve all upgrades including freelancer-to-moderator
-  app.patch("/api/role-upgrade-requests/:id", requireRole("moderator", "head_of_moderation", "founder"), async (req, res) => {
+  // Approve or reject a role upgrade request.
+  // Customer-to-freelancer upgrades never reach this endpoint because they are
+  // granted on submission, so every request here is a moderator promotion and
+  // can only be decided by the Founder or Head of Moderation.
+  app.patch("/api/role-upgrade-requests/:id", requireRole("head_of_moderation", "founder"), async (req, res) => {
     try {
       const { id } = req.params;
       const { status, reviewNotes } = req.body;
@@ -11919,9 +11986,10 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         name: `Meeting: ${job.title}`.slice(0, 100),
         creatorId: moderatorId,
       });
-      // The moderator must be a member of the chat so it shows in their
-      // Messages and they can manage/delete it from the three-dots menu.
-      await storage.addGroupChatMember({ groupId: group.id, userId: moderatorId });
+      // Every participant, the moderator included, is added exactly once.
+      // participantIds already contains the moderator (they must be a member so
+      // the meeting shows in their Messages and they can manage/delete it), and
+      // adding them a second time listed them twice in the meeting room.
       for (const pid of Array.from(participantIds)) {
         await storage.addGroupChatMember({ groupId: group.id, userId: pid });
       }
@@ -11980,12 +12048,16 @@ Your role is to help users understand how to use Linxova. Here is what you know 
 
       const group = await storage.getGroupChat(meeting.groupChatId);
       const job = await storage.getJob(meeting.jobId);
-      const memberUsers = await Promise.all(
-        members.map(async (m) => {
-          const u = await storage.getUser(m.userId);
-          return u ? { id: u.id, username: u.username, avatar: u.avatar, role: u.role } : null;
-        })
-      );
+      // Dedupe by user id: meetings created before the duplicate-membership fix
+      // still hold a second row for the moderator.
+      const seenParticipants = new Set<string>();
+      const memberUsers: { id: string; username: string; avatar: string | null; role: string }[] = [];
+      for (const m of members) {
+        if (seenParticipants.has(m.userId)) continue;
+        seenParticipants.add(m.userId);
+        const u = await storage.getUser(m.userId);
+        if (u) memberUsers.push({ id: u.id, username: u.username, avatar: u.avatar, role: u.role });
+      }
 
       res.json({
         ...meeting,

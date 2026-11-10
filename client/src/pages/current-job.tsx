@@ -68,7 +68,11 @@ export default function CurrentJobPage() {
   // Get freelancer's assigned jobs (includes claimed, in_progress, completed)
   const { data: freelancerJobs = [], isLoading: isLoadingJobs, isError, error } = useQuery<Job[]>({
     queryKey: ["/api/freelancer/jobs"],
-    refetchInterval: 10000, // Keep the active job + rewards current without a manual refresh
+    // Poll even while the tab is in the background: the query client disables
+    // refetch-on-focus, so a dispute resolved in another window would otherwise
+    // leave a finished job on screen until the freelancer reloaded the page.
+    refetchInterval: 10000,
+    refetchIntervalInBackground: true,
   });
 
 
@@ -86,7 +90,8 @@ export default function CurrentJobPage() {
   const { data: enrichedJob } = useQuery<EnrichedJob>({
     queryKey: ["/api/jobs", currentJob?.id],
     enabled: !!currentJob?.id,
-    refetchInterval: 10000, // Keep the team list current when freelancers leave or are kicked
+    refetchInterval: 10000,
+    refetchIntervalInBackground: true,
   });
 
   // Get chat messages

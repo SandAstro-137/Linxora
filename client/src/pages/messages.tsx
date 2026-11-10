@@ -462,6 +462,23 @@ export default function MessagesPage() {
       (activeGroupDetails as any)?.meetingModeratorId === user?.id ||
       !!user && ["staff", "moderator", "head_of_moderation", "founder"].includes(user.role));
 
+  // Moderator commands from the meeting room, available from the meeting chat
+  // in Messages so the case can be handled without leaving the inbox.
+  const closeMeetingMutation = useMutation({
+    mutationFn: async (meetingId: string) => {
+      const res = await apiRequest("POST", `/api/meetings/${meetingId}/close`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Meeting closed", description: "The meeting is no longer visible to participants." });
+      queryClient.invalidateQueries({ queryKey: ["/api/group-chats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to close meeting", variant: "destructive" });
+    },
+  });
+
   const deleteMeetingMutation = useMutation({
     mutationFn: async (meetingId: string) => {
       const res = await apiRequest("DELETE", `/api/meetings/${meetingId}`, {});
@@ -1072,6 +1089,15 @@ export default function MessagesPage() {
                               Manage Group
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {activeGroupMeetingStatus !== "closed" && (
+                              <DropdownMenuItem
+                                onClick={() => activeGroupMeetingId && closeMeetingMutation.mutate(activeGroupMeetingId)}
+                                data-testid="button-close-meeting"
+                              >
+                                <Gavel className="w-4 h-4 mr-2" />
+                                Close Meeting
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-destructive"
                               onClick={() => activeGroupMeetingId && deleteMeetingMutation.mutate(activeGroupMeetingId)}

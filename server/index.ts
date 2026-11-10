@@ -72,6 +72,8 @@ app.use((req, res, next) => {
 });
 
 import { seedData } from "./lib/seed-data";
+import { ensureDemoAccounts } from "./lib/demo-seed";
+import { isDemoModeEnabled } from "./lib/demo-mode";
 import { MongoStorage } from "./lib/mongo-storage";
 import { setStorage } from "./storage";
 import { startScheduledTaskRunner } from "./lib/scheduled-tasks";
@@ -101,10 +103,19 @@ import { startScheduledTaskRunner } from "./lib/scheduled-tasks";
   
   // Seed initial data (demo content). In production the platform starts clean —
   // demo accounts and sample jobs must never be created on a real deployment.
-  if (process.env.NODE_ENV === 'production') {
-    console.log('Production: skipping demo data seeding');
+  const demoMode = isDemoModeEnabled();
+  console.log(`Demo mode: ${demoMode ? 'enabled' : 'disabled'}`);
+  if (process.env.NODE_ENV === 'production' && !demoMode) {
+    console.log('Production: demo mode disabled — skipping demo data seeding');
   } else {
-    await seedData();
+    try {
+      await seedData();
+    } catch (error: any) {
+      // A database that already holds real data can reject parts of the demo
+      // dataset; the accounts themselves are still repaired below.
+      console.error('Demo seeding skipped:', error?.message ?? error);
+    }
+    await ensureDemoAccounts();
   }
 
   const server = await registerRoutes(app);

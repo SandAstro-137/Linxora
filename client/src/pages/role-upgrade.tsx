@@ -92,7 +92,7 @@ const freelancerToModeratorSchema = z.object({
 });
 
 export default function RoleUpgradePage() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
 
   const { data: myRequests = [], isLoading } = useQuery<RoleUpgradeRequest[]>({
@@ -118,14 +118,25 @@ export default function RoleUpgradePage() {
 
   const submitMutation = useMutation({
     mutationFn: async (data: { upgradeType: string; reason: string; experience?: string; portfolio?: string }) => {
-      return apiRequest("POST", "/api/role-upgrade-requests", data);
+      const res = await apiRequest("POST", "/api/role-upgrade-requests", data);
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/role-upgrade-requests/my"] });
-      toast({
-        title: "Request Submitted",
-        description: "Your role upgrade request has been submitted for review.",
-      });
+      if (result?.autoApproved) {
+        // Customer→freelancer is granted server-side on submission, so pull the
+        // new role so the sidebar and this page switch over without a refresh.
+        await refetchUser();
+        toast({
+          title: "You're now a Freelancer",
+          description: "Your account has been upgraded. You can start applying to jobs right away.",
+        });
+      } else {
+        toast({
+          title: "Request Submitted",
+          description: "Your moderator application has been submitted for review.",
+        });
+      }
       customerForm.reset();
       freelancerForm.reset();
     },
@@ -209,7 +220,7 @@ export default function RoleUpgradePage() {
               <CardTitle>Become a Freelancer</CardTitle>
             </div>
             <CardDescription>
-              Upgrade from Customer to Freelancer to start taking on jobs and earning money.
+              You become a Freelancer immediately once you meet the requirements below — there is no review queue for this upgrade.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -286,7 +297,7 @@ export default function RoleUpgradePage() {
                     )}
                   />
                   <Button type="submit" disabled={submitMutation.isPending} data-testid="button-submit-upgrade">
-                    {submitMutation.isPending ? "Submitting..." : "Submit Request"}
+                    {submitMutation.isPending ? "Submitting..." : "Become a Freelancer"}
                   </Button>
                 </form>
               </Form>

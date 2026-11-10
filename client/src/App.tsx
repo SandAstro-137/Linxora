@@ -209,7 +209,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/role-upgrade-review">
-        <ProtectedRoute allowedRoles={["moderator", "head_of_moderation", "founder"]}>
+        <ProtectedRoute allowedRoles={["head_of_moderation", "founder"]}>
           <RoleUpgradeReviewPage />
         </ProtectedRoute>
       </Route>

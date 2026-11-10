@@ -35,9 +35,10 @@ export function canSwitchToAccount(
   currentAccountIsDemo: boolean,
   targetAccountIsDemo: boolean,
   nodeEnv: string | undefined,
+  demoModeEnabled: boolean = false,
 ): boolean {
   if (currentAccountIsDemo || targetAccountIsDemo) {
-    return nodeEnv === "development" && currentAccountIsDemo && targetAccountIsDemo;
+    return (nodeEnv === "development" || demoModeEnabled) && currentAccountIsDemo && targetAccountIsDemo;
   }
   return canSwitchToLinkedAuthAccount(session, userId);
 }

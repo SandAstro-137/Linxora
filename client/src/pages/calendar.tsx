@@ -31,6 +31,36 @@ interface CalendarEvent {
   createdAt: string;
 }
 
+// `datetime-local` accepts any four-digit year, so a typo like 56784 yields a
+// string that `new Date()` turns into Invalid Date — and toISOString() then
+// throws a RangeError that takes the page down. Validate the parts instead.
+function parseLocalDateTime(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  if (year < 2000 || year > 2100) return null;
+  const date = new Date(year, month - 1, day, hour, minute);
+  if (isNaN(date.getTime())) return null;
+  // Reject rollovers such as 2000-02-31, which Date silently normalises.
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute
+  ) {
+    return null;
+  }
+  return date;
+}
+
+const INVALID_TIME_HINT =
+  "Enter a real date between 2000 and 2100, with the end time after the start time.";
+
 export default function CalendarPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -130,16 +160,28 @@ export default function CalendarPage() {
     setMoveEnd(toLocalInput(new Date(ev.endTime)));
   };
 
+  const toIsoRange = (startValue: string, endValue: string) => {
+    const start = parseLocalDateTime(startValue);
+    const end = parseLocalDateTime(endValue);
+    if (!start || !end || end <= start) return null;
+    return { startTime: start.toISOString(), endTime: end.toISOString() };
+  };
+
   const handleSubmitEvent = () => {
     if (!newEventTitle.trim() || !newEventStart || !newEventEnd) {
       toast({ title: "Missing fields", description: "Please fill in the title, start time, and end time.", variant: "destructive" });
       return;
     }
+    const range = toIsoRange(newEventStart, newEventEnd);
+    if (!range) {
+      toast({ title: "Invalid time value", description: INVALID_TIME_HINT, variant: "destructive" });
+      return;
+    }
     createEventMutation.mutate({
       title: newEventTitle,
       description: newEventDesc,
-      startTime: new Date(newEventStart).toISOString(),
-      endTime: new Date(newEventEnd).toISOString(),
+      startTime: range.startTime,
+      endTime: range.endTime,
     });
   };
 
@@ -561,12 +603,17 @@ export default function CalendarPage() {
                   toast({ title: "Missing fields", description: "Please fill in the title, start time, and end time.", variant: "destructive" });
                   return;
                 }
+                const range = toIsoRange(editStart, editEnd);
+                if (!range) {
+                  toast({ title: "Invalid time value", description: INVALID_TIME_HINT, variant: "destructive" });
+                  return;
+                }
                 updateEventMutation.mutate({
                   id: editingEvent.id,
                   title: editTitle,
                   description: editDesc,
-                  startTime: new Date(editStart).toISOString(),
-                  endTime: new Date(editEnd).toISOString(),
+                  startTime: range.startTime,
+                  endTime: range.endTime,
                 });
               }}
               disabled={updateEventMutation.isPending}
@@ -612,12 +659,17 @@ export default function CalendarPage() {
                   toast({ title: "Missing fields", description: "Please fill in the new start and end times.", variant: "destructive" });
                   return;
                 }
+                const range = toIsoRange(moveStart, moveEnd);
+                if (!range) {
+                  toast({ title: "Invalid time value", description: INVALID_TIME_HINT, variant: "destructive" });
+                  return;
+                }
                 updateEventMutation.mutate({
                   id: movingEvent.id,
                   title: movingEvent.title,
                   description: movingEvent.description || "",
-                  startTime: new Date(moveStart).toISOString(),
-                  endTime: new Date(moveEnd).toISOString(),
+                  startTime: range.startTime,
+                  endTime: range.endTime,
                 });
               }}
               disabled={updateEventMutation.isPending}

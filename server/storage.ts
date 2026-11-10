@@ -2564,6 +2564,13 @@ export class MemStorage implements IStorage {
   }
 
   async addGroupChatMember(member: InsertGroupChatMember): Promise<GroupChatMember> {
+    // Idempotent: a meeting moderator is also a participant, so this is called
+    // twice for them. Without this guard the person appears twice in the meeting
+    // room and the member count is inflated.
+    const existing = Array.from(this.groupChatMembersMap.values()).find(
+      m => m.groupId === member.groupId && m.userId === member.userId
+    );
+    if (existing) return existing;
     const id = randomUUID();
     const newMember: GroupChatMember = {
       id,
