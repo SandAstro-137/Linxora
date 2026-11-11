@@ -147,7 +147,12 @@ const htmlEmailTemplate = (username: string, verificationUrl: string) => `<!DOCT
       <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 40px 20px;">
         <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
           <div style="text-align: center; margin: 0 0 24px;">
-            <img src="https://linxova.com/assets/logo-light-D4s3Nxh7.png" alt="Linxova" width="96" height="96" style="display: block; width: 96px; height: auto; max-width: 100%; margin: 0 auto; border: 0;">
+            <!-- Stable public path: Vite hashes in /assets change on every build,
+                 which would leave already-sent mail pointing at a missing file. -->
+            <img src="https://linxova.com/email-logo.png" alt="Linxova" width="72" height="72" style="display: block; width: 72px; height: 72px; margin: 0 auto 12px; border: 0; outline: none; text-decoration: none;">
+            <!-- Wordmark in text, so the header still reads correctly in clients
+                 that block remote images by default. -->
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 20px; font-weight: 700; letter-spacing: 3px; color: #18181b;">LINXOVA</div>
           </div>
           <h1 style="color: #18181b; font-size: 24px; line-height: 1.3; margin: 0 0 16px;">Verify your email address</h1>
           <p style="color: #52525b; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
