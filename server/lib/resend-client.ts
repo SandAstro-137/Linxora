@@ -2,7 +2,9 @@
 //   1. SENDGRID_API_KEY  (@sendgrid/mail HTTP API — authenticated domain,
 //      e.g. em4731.linxova.com, must be verified via SendGrid Sender Auth)
 //   2. RESEND_API_KEY    (Resend HTTP API, or the Replit connector fallback)
-//   3. ZOHO_SMTP_USER + ZOHO_SMTP_PASSWORD (Zoho Mail SMTP — smtppro.zoho.com)
+//   3. ZEPTOMAIL_TOKEN   (Zoho ZeptoMail HTTP API — keeps the Zoho account in
+//      use without SMTP, so it works on the free Render tier)
+//   4. ZOHO_SMTP_USER + ZOHO_SMTP_PASSWORD (Zoho Mail SMTP — smtppro.zoho.com)
 //
 // HTTPS providers are tried first on purpose. Render *free* web services block
 // outbound traffic to SMTP ports 25, 465 and 587, and the block is a blackhole
@@ -224,7 +226,48 @@ export async function sendVerificationEmail(toEmail: string, verificationToken: 
     return data;
   }
 
-  // Provider 3: Zoho Mail SMTP. Last resort: unusable on Render free web
+  // Provider 3: Zoho ZeptoMail (HTTPS API). This is how the Zoho account can
+  // still deliver mail from a free Render instance: Render blocks SMTP ports,
+  // but the ZeptoMail REST API is plain HTTPS. Requires a reviewed ZeptoMail
+  // account with linxova.com verified and a Send Mail token from its Agent.
+  if (process.env.ZEPTOMAIL_TOKEN) {
+    const host = (process.env.ZEPTOMAIL_API_HOST || 'https://api.zeptomail.com').replace(/\/$/, '');
+    const fromEmail = process.env.ZEPTOMAIL_FROM_EMAIL || process.env.ZOHO_FROM_EMAIL || 'noreply@linxova.com';
+    // The copied token may or may not already carry the scheme prefix.
+    const rawToken = process.env.ZEPTOMAIL_TOKEN.trim();
+    const authorization = /^zoho-enczapikey\s/i.test(rawToken)
+      ? rawToken
+      : `zoho-enczapikey ${rawToken}`;
+    try {
+      const response = await fetch(`${host}/v1.1/email`, {
+        method: 'POST',
+        headers: {
+          Authorization: authorization,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          from: { address: fromEmail, name: 'Linxova' },
+          to: [{ email_address: { address: toEmail } }],
+          reply_to: [{ address: 'support@linxova.com' }],
+          subject,
+          htmlbody: html,
+        }),
+      });
+      const payload = await response.text();
+      if (!response.ok) {
+        console.error('ZeptoMail send failed:', response.status, payload.slice(0, 500));
+        throw new Error('Failed to send verification email (ZeptoMail)');
+      }
+      return payload;
+    } catch (err: any) {
+      if (String(err?.message || '').includes('ZeptoMail')) throw err;
+      console.error('ZeptoMail request error:', err?.message || err);
+      throw new Error('Failed to send verification email (ZeptoMail)');
+    }
+  }
+
+  // Provider 4: Zoho Mail SMTP. Last resort: unusable on Render free web
   // services (SMTP ports blocked), kept for local development and paid
   // instances. The timeouts make a blocked port fail in seconds instead of
   // hanging the HTTP request until the browser gives up.

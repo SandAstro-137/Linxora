@@ -7185,7 +7185,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Dev aid: when no email provider is configured, make the verification
       // link retrievable from the server log so the flow stays testable.
-      if (!process.env.ZOHO_SMTP_USER && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
+      if (!process.env.ZOHO_SMTP_USER && !process.env.ZEPTOMAIL_TOKEN && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.REPLIT_CONNECTORS_HOSTNAME) {
         const localOrigin = `${req.protocol}://${req.get("host")}`;
         console.log(`[email-verification] No email provider configured. Verification link for ${trimmedEmail}: ${localOrigin}/api/profile/email-verify?token=${token}`);
       }
@@ -7218,9 +7218,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             error: "Email sending is not configured on this server. Ask the administrator to check the email provider settings.",
           });
         }
+        if (msg.includes('ZeptoMail')) {
+          return res.status(502).json({
+            error: "Zoho ZeptoMail rejected the verification email. Check that ZEPTOMAIL_TOKEN is valid and that ZEPTOMAIL_FROM_EMAIL belongs to a domain verified in ZeptoMail, then see the server logs for the response.",
+          });
+        }
         if (msg.includes('Zoho SMTP')) {
           return res.status(502).json({
-            error: "Zoho could not send the verification email. Render free web services block outbound SMTP ports 25, 465 and 587, so Zoho SMTP only works on a paid instance \u2014 configure SENDGRID_API_KEY instead.",
+            error: "Zoho could not send the verification email. Render free web services block outbound SMTP ports 25, 465 and 587, so Zoho SMTP only works on a paid instance \u2014 set ZEPTOMAIL_TOKEN (Zoho's HTTPS sending API) instead.",
           });
         }
         if (msg.includes('SendGrid')) {
