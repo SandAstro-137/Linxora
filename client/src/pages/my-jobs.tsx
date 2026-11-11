@@ -27,6 +27,10 @@ export default function MyJobsPage() {
   // Get customer's jobs (all statuses)
   const { data: myJobs = [] } = useQuery<EnrichedJob[]>({
     queryKey: ["/api/my-jobs"],
+    // A moderator can approve a cancellation while this page is open. Poll in the
+    // background too, so the job flips to Cancelled without a manual refresh.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
 
   const cancelJobMutation = useMutation({

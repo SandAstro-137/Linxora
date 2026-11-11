@@ -1218,7 +1218,10 @@ export default function JobDetailPage() {
   const { data: job, isLoading } = useQuery<EnrichedJob>({
     queryKey: ["/api/jobs", jobId],
     enabled: !!jobId,
-    refetchInterval: 5000, // Keep the team list / actions current when freelancers leave or are kicked
+    // Keep the team list / actions current when freelancers leave or are kicked,
+    // and pick up a moderator-approved cancellation even in a background tab.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: abandonRequests = [] } = useQuery<any[]>({

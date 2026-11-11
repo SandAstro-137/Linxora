@@ -65,6 +65,10 @@ export default function MyApplicationsPage() {
 
   const { data, isLoading } = useQuery<MyJobRequestsResponse>({
     queryKey: ["/api/my-job-requests"],
+    // Approval or rejection of an application can happen while this page is
+    // open, so keep it current rather than waiting for a manual refresh.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
   const applications = data?.applications ?? [];
   const stats = data?.stats ?? { totalApplications: applications.length, accepted: 0, pending: 0 };
