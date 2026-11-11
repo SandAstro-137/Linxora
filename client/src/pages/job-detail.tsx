@@ -1201,6 +1201,10 @@ export default function JobDetailPage() {
   const [abandonReasonOpen, setAbandonReasonOpen] = useState(false);
   const [abandonReason, setAbandonReason] = useState("");
   const [abandonProofFile, setAbandonProofFile] = useState<File | null>(null);
+  const [abandonExemptionOpen, setAbandonExemptionOpen] = useState(false);
+  const [abandonRequestExemption, setAbandonRequestExemption] = useState(true);
+  const [abandonAlwaysAsk, setAbandonAlwaysAsk] = useState(false);
+  const [customerExemptionChoice, setCustomerExemptionChoice] = useState<Record<string, boolean>>({});
 
   const cancellationFormSchema = z.object({
     reason: z.string().min(10, "Reason must be at least 10 characters"),
@@ -1228,6 +1232,21 @@ export default function JobDetailPage() {
     queryKey: ["/api/abandon-requests/job", jobId],
     enabled: !!jobId,
     refetchInterval: 5000, // Clear resolved abandon requests without a manual refresh
+  });
+
+  // "Always request protection" preference — when set, the completion-rate
+  // question is skipped and the customer is always asked for the exemption.
+  const { data: jobSettings } = useQuery<{ alwaysRequestAbandonExemption?: boolean }>({
+    queryKey: ["/api/settings"],
+  });
+  const skipAbandonExemptionQuestion = jobSettings?.alwaysRequestAbandonExemption ?? false;
+
+  const saveAbandonPreferenceMutation = useMutation({
+    mutationFn: (alwaysAsk: boolean) =>
+      apiRequest("PUT", "/api/settings", { alwaysRequestAbandonExemption: alwaysAsk }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+    },
   });
 
   // Fetch customer statistics
@@ -1317,7 +1336,7 @@ export default function JobDetailPage() {
   });
 
   const abandonRequestMutation = useMutation({
-    mutationFn: async ({ reason, proofUrl }: { reason: string; proofUrl?: string }) => {
+    mutationFn: async ({ reason, proofUrl, requestExemption }: { reason: string; proofUrl?: string; requestExemption: boolean }) => {
       let uploadedUrl: string | null = null;
       if (abandonProofFile) {
         const reader = new FileReader();
@@ -1335,16 +1354,19 @@ export default function JobDetailPage() {
       return apiRequest("POST", `/api/jobs/${jobId}/abandon-request`, {
         reason,
         proofUrl: uploadedUrl || proofUrl || undefined,
+        requestExemption,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
       setAbandonReasonOpen(false);
       setAbandonReason("");
       setAbandonProofFile(null);
       toast({
         title: "Abandon request sent",
-        description: "The customer has been asked to approve your request. You stay on the job until it is approved.",
+        description: variables.requestExemption
+          ? "The customer has been asked to let you go and to excuse the completion-rate reduction. You stay on the job until they respond."
+          : "The customer has been asked to let you go. You stay on the job until they respond.",
       });
     },
     onError: (error: any) => {
@@ -1357,16 +1379,20 @@ export default function JobDetailPage() {
   });
 
   const customerApproveAbandonMutation = useMutation({
-    mutationFn: (requestId: string) =>
-      apiRequest("POST", `/api/abandon-requests/${requestId}/customer-approve`, {}),
-    onSuccess: () => {
+    mutationFn: async ({ requestId, exempt }: { requestId: string; exempt: boolean }) => {
+      const response = await apiRequest("POST", `/api/abandon-requests/${requestId}/customer-approve`, { exempt });
+      return (await response.json()) as { awaitingFreelancerDecision?: boolean };
+    },
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
       toast({
         title: "Abandon request approved",
-        description: "The freelancer has been excused from the job.",
+        description: result?.awaitingFreelancerDecision
+          ? "The freelancer can leave. They have been asked whether they accept the completion-rate reduction."
+          : "The freelancer has been removed from the job.",
       });
     },
     onError: (error: any) => {
@@ -1518,12 +1544,32 @@ export default function JobDetailPage() {
     },
   });
 
-  const handleAbandonClick = () => {
+  const openAbandonConfirmStep = () => {
     if (localStorage.getItem("linxova-skip-abandon-confirm") === "true") {
       setAbandonReasonOpen(true);
     } else {
       setAbandonConfirmOpen(true);
     }
+  };
+
+  const handleAbandonClick = () => {
+    if (skipAbandonExemptionQuestion) {
+      // They asked to always request protection, so the first question is skipped.
+      setAbandonRequestExemption(true);
+      openAbandonConfirmStep();
+    } else {
+      setAbandonExemptionOpen(true);
+    }
+  };
+
+  const handleAbandonExemptionChoice = (askForExemption: boolean) => {
+    setAbandonRequestExemption(askForExemption);
+    if (askForExemption && abandonAlwaysAsk) {
+      saveAbandonPreferenceMutation.mutate(true);
+    }
+    setAbandonAlwaysAsk(false);
+    setAbandonExemptionOpen(false);
+    openAbandonConfirmStep();
   };
 
   const handleAbandonConfirmYes = () => {
@@ -1534,8 +1580,47 @@ export default function JobDetailPage() {
     setAbandonReasonOpen(true);
   };
 
+  const freelancerAcceptPenaltyMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/freelancer-accept-penalty`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/freelancer/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-jobs"] });
+      toast({ title: "You left the job", description: "Your completion rate was reduced as agreed." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not leave the job",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const freelancerCancelAbandonMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      apiRequest("POST", `/api/abandon-requests/${requestId}/freelancer-cancel`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/abandon-requests/job", jobId] });
+      toast({ title: "You are staying on the job", description: "Your leave request was cancelled." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not cancel the request",
+        description: error?.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSendAbandonRequest = () => {
-    abandonRequestMutation.mutate({ reason: abandonReason.trim() });
+    abandonRequestMutation.mutate({
+      reason: abandonReason.trim(),
+      requestExemption: abandonRequestExemption,
+    });
   };
 
   const acceptWorkMutation = useMutation({
@@ -1859,7 +1944,9 @@ export default function JobDetailPage() {
     false;
 
   const myPendingAbandonRequest = (abandonRequests as any[]).find(
-    (r: any) => r.freelancerId === user?.id && (r.status === "pending_customer" || r.status === "pending_moderator")
+    (r: any) =>
+      r.freelancerId === user?.id &&
+      (r.status === "pending_customer" || r.status === "pending_moderator" || r.status === "pending_freelancer_penalty")
   );
 
   const isTeamMember = 
@@ -2422,9 +2509,9 @@ export default function JobDetailPage() {
                 </Dialog>
               )}
               {/* Abandon requests — customer approval */}
-              {isCustomer && abandonRequests.filter((r: any) => r.status !== "declined").length > 0 && (
+              {isCustomer && abandonRequests.filter((r: any) => !["declined", "cancelled"].includes(r.status)).length > 0 && (
                 <div className="space-y-3">
-                  {abandonRequests.filter((r: any) => r.status !== "declined").map((request: any) => (
+                  {abandonRequests.filter((r: any) => !["declined", "cancelled"].includes(r.status)).map((request: any) => (
                     <div key={request.id} className="border rounded-md p-3 space-y-2" data-testid={`abandon-request-${request.id}`}>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <p className="font-medium text-sm">
@@ -2442,6 +2529,16 @@ export default function JobDetailPage() {
                         <span className="font-medium text-foreground">Reason: </span>
                         {request.reason}
                       </p>
+                      <p className="text-xs text-muted-foreground" data-testid="abandon-exemption-summary">
+                        {request.penaltyExemptionRequested
+                          ? "They asked to be excused from the completion-rate reduction."
+                          : "They accepted that leaving will reduce their completion rate."}
+                      </p>
+                      {request.status === "pending_freelancer_penalty" && (
+                        <p className="text-xs text-muted-foreground">
+                          Waiting for the freelancer to confirm whether they still want to leave.
+                        </p>
+                      )}
                       {request.links && request.links.trim() && (
                         <div className="flex flex-wrap gap-2">
                           {request.links.split(/s+/).filter(Boolean).map((link: string, i: number) => {
@@ -2472,11 +2569,33 @@ export default function JobDetailPage() {
                           View proof file
                         </a>
                       )}
+                      {request.status === "pending_customer" && request.penaltyExemptionRequested && (
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id={`exempt-abandon-${request.id}`}
+                            checked={customerExemptionChoice[request.id] ?? true}
+                            onCheckedChange={(v) =>
+                              setCustomerExemptionChoice((prev) => ({ ...prev, [request.id]: !!v }))
+                            }
+                            data-testid={`checkbox-exempt-abandon-${request.id}`}
+                          />
+                          <Label htmlFor={`exempt-abandon-${request.id}`} className="text-sm cursor-pointer">
+                            Also excuse the completion-rate reduction
+                          </Label>
+                        </div>
+                      )}
                       {request.status === "pending_customer" && (
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
-                            onClick={() => customerApproveAbandonMutation.mutate(request.id)}
+                            onClick={() =>
+                              customerApproveAbandonMutation.mutate({
+                                requestId: request.id,
+                                exempt: request.penaltyExemptionRequested
+                                  ? customerExemptionChoice[request.id] ?? true
+                                  : false,
+                              })
+                            }
                             disabled={customerApproveAbandonMutation.isPending}
                             data-testid={`button-approve-abandon-${request.id}`}
                           >
@@ -2531,13 +2650,44 @@ export default function JobDetailPage() {
 
               {/* Abandon request status for assigned freelancers */}
               {isFreelancerByAssignment && myPendingAbandonRequest && (
-                <div className="text-sm text-muted-foreground border rounded-md p-3 bg-muted/50" data-testid="abandon-request-status">
-                  <p className="font-medium text-foreground mb-1">Abandon request pending</p>
-                  <p>
-                    {myPendingAbandonRequest.status === "pending_customer"
-                      ? "Waiting for the customer to approve your request to leave."
-                      : "The customer declined — a moderator is now reviewing your request."}
-                  </p>
+                <div className="text-sm text-muted-foreground border rounded-md p-3 bg-muted/50 space-y-2" data-testid="abandon-request-status">
+                  {myPendingAbandonRequest.status === "pending_freelancer_penalty" ? (
+                    <>
+                      <p className="font-medium text-foreground">
+                        The customer will let you leave — but will not excuse the completion-rate reduction
+                      </p>
+                      <p>Leave and accept the reduction, or cancel your request and stay on the job.</p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => freelancerAcceptPenaltyMutation.mutate(myPendingAbandonRequest.id)}
+                          disabled={freelancerAcceptPenaltyMutation.isPending}
+                          data-testid="button-accept-abandon-penalty"
+                        >
+                          Leave and accept the reduction
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => freelancerCancelAbandonMutation.mutate(myPendingAbandonRequest.id)}
+                          disabled={freelancerCancelAbandonMutation.isPending}
+                          data-testid="button-cancel-abandon-penalty"
+                        >
+                          Cancel request and stay
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-medium text-foreground mb-1">Abandon request pending</p>
+                      <p>
+                        {myPendingAbandonRequest.status === "pending_customer"
+                          ? "Waiting for the customer to approve your request to leave."
+                          : "The customer declined — a moderator is now reviewing your request."}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -2555,14 +2705,58 @@ export default function JobDetailPage() {
                 </Button>
               )}
 
-              {/* Are-you-sure dialog (skippable) */}
+              {/* Step 1: ask whether to request completion-rate protection */}
+              <Dialog open={abandonExemptionOpen} onOpenChange={setAbandonExemptionOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Protect your completion rate?</DialogTitle>
+                    <DialogDescription>
+                      Leaving a job normally lowers your completion rate. You can ask the customer to
+                      excuse you from that reduction — they decide when they review your request. If
+                      they will not excuse it, you can still choose to stay on the job.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="abandon-always-ask"
+                      checked={abandonAlwaysAsk}
+                      onCheckedChange={(v) => setAbandonAlwaysAsk(!!v)}
+                      data-testid="checkbox-abandon-always-ask"
+                    />
+                    <Label htmlFor="abandon-always-ask" className="text-sm cursor-pointer">
+                      Always request this — don't ask me again (change it in Settings)
+                    </Label>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleAbandonExemptionChoice(false)}
+                      data-testid="button-abandon-no-exemption"
+                    >
+                      No, don't ask
+                    </Button>
+                    <Button
+                      onClick={() => handleAbandonExemptionChoice(true)}
+                      data-testid="button-abandon-request-exemption"
+                    >
+                      Yes, ask the customer
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              {/* Step 2: are-you-sure dialog (skippable) */}
               <Dialog open={abandonConfirmOpen} onOpenChange={setAbandonConfirmOpen}>
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Are you sure you want to leave this job?</DialogTitle>
                     <DialogDescription>
                       Your request will be sent to the customer for approval. You will stay on
-                      the job until they approve it. If they decline, a moderator will review it.
+                      the job until they approve it.{" "}
+                      {abandonRequestExemption
+                        ? "You have asked them to excuse the completion-rate reduction."
+                        : "You accepted that leaving will reduce your completion rate."}{" "}
+                      If they decline, a moderator will review it.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="flex items-center gap-2">
@@ -2603,7 +2797,10 @@ export default function JobDetailPage() {
                     <DialogTitle>Why do you want to leave?</DialogTitle>
                     <DialogDescription>
                       Your reason (and any proof file) will be sent to the customer for approval. You
-                      will stay on the job until they approve your request.
+                      will stay on the job until they approve your request.{" "}
+                      {abandonRequestExemption
+                        ? "They will also see your request to be excused from the completion-rate reduction."
+                        : "You are leaving with a completion-rate reduction."}
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">

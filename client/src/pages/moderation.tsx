@@ -1154,9 +1154,9 @@ export default function ModerationPage() {
                             className={
                               request.status === "pending_moderator"
                                 ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
-                                : request.status === "approved"
+                                : request.status === "approved" || request.status === "approved_with_penalty"
                                 ? "bg-green-500/10 text-green-700 dark:text-green-400"
-                                : request.status === "declined"
+                                : request.status === "declined" || request.status === "cancelled"
                                 ? "bg-red-500/10 text-red-700 dark:text-red-400"
                                 : "bg-blue-500/10 text-blue-700 dark:text-blue-400"
                             }
@@ -1175,6 +1175,17 @@ export default function ModerationPage() {
                       <h4 className="font-semibold mb-2">Reason</h4>
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                         {request.reason}
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold mb-2">Completion Rate</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {request.penaltyExemptionRequested
+                          ? request.penaltyExemptionGranted
+                            ? "Freelancer was excused from the reduction"
+                            : "Freelancer asked to be excused; the reduction was not granted"
+                          : "Freelancer accepted the reduction"}
                       </p>
                     </div>
 

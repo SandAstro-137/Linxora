@@ -427,12 +427,18 @@ export type InsertCancellationRequest = z.infer<typeof insertCancellationRequest
 export type CancellationRequest = typeof cancellationRequests.$inferSelect;
 
 // Abandon Request status — freelancer asks permission to leave a job.
-// Customer decides first; a customer decline forwards the request to moderation.
+// The customer decides whether to release them and whether to excuse the
+// completion-rate reduction. Declining the departure forwards the request to
+// moderation; a customer who allows the departure but refuses the exemption
+// hands the final choice back to the freelancer.
 export const AbandonStatus = {
   PENDING_CUSTOMER: "pending_customer",
+  PENDING_FREELANCER: "pending_freelancer_penalty",
   PENDING_MODERATOR: "pending_moderator",
   APPROVED: "approved",
+  APPROVED_WITH_PENALTY: "approved_with_penalty",
   DECLINED: "declined",
+  CANCELLED: "cancelled",
 } as const;
 
 export type AbandonStatusType = typeof AbandonStatus[keyof typeof AbandonStatus];
@@ -445,6 +451,10 @@ export const abandonRequests = pgTable("abandon_requests", {
   reason: text("reason").notNull(),
   links: text("links"),
   proofUrl: text("proof_url"),
+  // Whether the freelancer asked the customer to excuse the completion-rate hit.
+  penaltyExemptionRequested: boolean("penalty_exemption_requested").default(false),
+  // Customer decision: true = excused, false = reduction applies.
+  penaltyExemptionGranted: boolean("penalty_exemption_granted"),
   status: text("status").notNull().default(AbandonStatus.PENDING_CUSTOMER),
   decidedBy: varchar("decided_by"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -945,6 +955,8 @@ export const userPreferences = pgTable("user_preferences", {
   notificationsEnabled: boolean("notifications_enabled").default(true),
   notificationSoundEnabled: boolean("notification_sound_enabled").default(true),
   deleteConfirmationEnabled: boolean("delete_confirmation_enabled").default(true),
+  // Skip the completion-rate question when requesting to leave a job.
+  alwaysRequestAbandonExemption: boolean("always_request_abandon_exemption").default(false),
   // Privacy settings
   showOnlineStatus: boolean("show_online_status").default(true),
   // Who can DM you: "everyone" | "friends_and_associates" | "friends" | "associates" | "none"

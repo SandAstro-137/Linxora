@@ -978,6 +978,26 @@ export default function SettingsPage() {
               data-testid="switch-delete-confirmation"
             />
           </div>
+          {user?.role === "freelancer" && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="abandon-exemption">Always Request Completion-Rate Protection</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Skip the question when you request to leave a job and always ask the customer to
+                    excuse the completion-rate reduction
+                  </p>
+                </div>
+                <Switch
+                  id="abandon-exemption"
+                  checked={settings?.alwaysRequestAbandonExemption ?? false}
+                  onCheckedChange={(checked) => toggleSetting("alwaysRequestAbandonExemption", checked)}
+                  data-testid="switch-abandon-exemption"
+                />
+              </div>
+            </>
+          )}
           {user?.role === "customer" && (
             <>
               <Separator />

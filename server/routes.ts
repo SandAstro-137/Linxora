@@ -11584,10 +11584,11 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         return res.status(403).json({ error: "You are not assigned to this job" });
       }
 
-      const { reason, links, proofUrl } = z.object({
+      const { reason, links, proofUrl, requestExemption } = z.object({
         reason: z.string().min(10, "Reason must be at least 10 characters"),
         links: z.string().max(4000).optional(),
         proofUrl: z.string().max(4000).optional(),
+        requestExemption: z.boolean().optional(),
       }).parse(req.body);
 
       const existing = await storage.getAbandonRequests({ jobId: job.id, freelancerId: userId });
@@ -11601,6 +11602,8 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         reason,
         links: links || null,
         proofUrl: proofUrl || null,
+        penaltyExemptionRequested: requestExemption !== false,
+        penaltyExemptionGranted: null,
         status: AbandonStatus.PENDING_CUSTOMER,
       });
 
@@ -11608,7 +11611,9 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         userId: job.customerId,
         type: "abandon_request",
         title: "A freelancer wants to abandon your job",
-        message: `${user.username} requested to leave "${job.title}". Reason: ${reason}`,
+        message: requestExemption === false
+          ? `${user.username} requested to leave "${job.title}" and accepted that leaving will lower their completion rate. Reason: ${reason}`
+          : `${user.username} requested to leave "${job.title}" and asked to be excused from the completion-rate reduction. Reason: ${reason}`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,
@@ -11684,14 +11689,45 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         return res.status(400).json({ error: "This request is no longer awaiting customer approval" });
       }
 
-      await removeFreelancerFromJob(job, request.freelancerId, false);
-      await storage.updateAbandonRequest(request.id, { status: AbandonStatus.APPROVED, decidedBy: userId });
+      // The customer can allow the departure and still refuse the exemption; the
+      // freelancer then decides whether to leave with a reduced completion rate.
+      const { exempt } = z.object({ exempt: z.boolean().optional() }).parse(req.body ?? {});
+      const exempted = exempt === true;
+
+      if (request.penaltyExemptionRequested && !exempted) {
+        await storage.updateAbandonRequest(request.id, {
+          status: AbandonStatus.PENDING_FREELANCER,
+          penaltyExemptionGranted: false,
+          decidedBy: userId,
+        });
+
+        await storage.createNotification({
+          userId: request.freelancerId,
+          type: "abandon_penalty_pending",
+          title: "Confirm leaving without completion-rate protection",
+          message: `The customer agreed to let you leave "${job.title}" but will not excuse the completion-rate reduction. Confirm whether you still want to leave — if you decline, you stay on the job.`,
+          relatedId: job.id,
+          sourceType: "job",
+          sourceId: job.id,
+        });
+
+        return res.json({ success: true, awaitingFreelancerDecision: true });
+      }
+
+      await removeFreelancerFromJob(job, request.freelancerId, !exempted);
+      await storage.updateAbandonRequest(request.id, {
+        status: AbandonStatus.APPROVED,
+        penaltyExemptionGranted: exempted,
+        decidedBy: userId,
+      });
 
       await storage.createNotification({
         userId: request.freelancerId,
         type: "abandon_approved",
         title: "Abandon request approved",
-        message: `The customer approved your request to leave "${job.title}". You have been excused without affecting your completion rate.`,
+        message: exempted
+          ? `The customer approved your request to leave "${job.title}". You have been excused without affecting your completion rate.`
+          : `The customer approved your request to leave "${job.title}". Your completion rate was reduced as agreed.`,
         relatedId: job.id,
         sourceType: "job",
         sourceId: job.id,
@@ -11735,6 +11771,85 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       res.json({ success: true });
     } catch (error) {
       console.error("Error declining abandon request:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer accepts leaving with a reduced completion rate.
+  app.post("/api/abandon-requests/:id/freelancer-accept-penalty", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (request.freelancerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the freelancer who made this request can answer it" });
+      }
+      if (request.status !== AbandonStatus.PENDING_FREELANCER) {
+        return res.status(400).json({ error: "This request is not awaiting your decision" });
+      }
+
+      const removed = await removeFreelancerFromJob(job, request.freelancerId, true);
+      if (!removed) return res.status(400).json({ error: "You are no longer assigned to this job" });
+
+      await storage.updateAbandonRequest(request.id, {
+        status: AbandonStatus.APPROVED_WITH_PENALTY,
+        penaltyExemptionGranted: false,
+        decidedBy: request.freelancerId,
+      });
+
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "abandon_approved",
+        title: "Freelancer left your job",
+        message: `${removed.user.username} left "${job.title}" and accepted the completion-rate reduction.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error accepting abandon penalty:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Freelancer refuses the reduction: the leave request is cancelled and they stay.
+  app.post("/api/abandon-requests/:id/freelancer-cancel", requireAuth, async (req, res) => {
+    try {
+      const request = await storage.getAbandonRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Abandon request not found" });
+      const job = await storage.getJob(request.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (request.freelancerId !== req.session.userId) {
+        return res.status(403).json({ error: "Only the freelancer who made this request can cancel it" });
+      }
+      if (request.status !== AbandonStatus.PENDING_FREELANCER) {
+        return res.status(400).json({ error: "This request is not awaiting your decision" });
+      }
+
+      const user = await storage.getUser(request.freelancerId);
+      await storage.updateAbandonRequest(request.id, {
+        status: AbandonStatus.CANCELLED,
+        decidedBy: request.freelancerId,
+      });
+
+      await storage.createNotification({
+        userId: job.customerId,
+        type: "abandon_cancelled",
+        title: "Freelancer is staying on your job",
+        message: `${user?.username || "The freelancer"} decided to stay on "${job.title}". The leave request was cancelled.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error cancelling abandon request:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
