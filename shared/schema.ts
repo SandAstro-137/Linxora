@@ -957,6 +957,8 @@ export const userPreferences = pgTable("user_preferences", {
   deleteConfirmationEnabled: boolean("delete_confirmation_enabled").default(true),
   // Skip the completion-rate question when requesting to leave a job.
   alwaysRequestAbandonExemption: boolean("always_request_abandon_exemption").default(false),
+  // Show the "Are you sure?" prompt before sending a leave request.
+  showAbandonConfirmation: boolean("show_abandon_confirmation").default(true),
   // Privacy settings
   showOnlineStatus: boolean("show_online_status").default(true),
   // Who can DM you: "everyone" | "friends_and_associates" | "friends" | "associates" | "none"

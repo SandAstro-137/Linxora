@@ -1236,14 +1236,17 @@ export default function JobDetailPage() {
 
   // "Always request protection" preference — when set, the completion-rate
   // question is skipped and the customer is always asked for the exemption.
-  const { data: jobSettings } = useQuery<{ alwaysRequestAbandonExemption?: boolean }>({
+  const { data: jobSettings } = useQuery<{ alwaysRequestAbandonExemption?: boolean; showAbandonConfirmation?: boolean }>({
     queryKey: ["/api/settings"],
   });
   const skipAbandonExemptionQuestion = jobSettings?.alwaysRequestAbandonExemption ?? false;
+  const showAbandonConfirmation = jobSettings?.showAbandonConfirmation ?? true;
 
   const saveAbandonPreferenceMutation = useMutation({
-    mutationFn: (alwaysAsk: boolean) =>
-      apiRequest("PUT", "/api/settings", { alwaysRequestAbandonExemption: alwaysAsk }),
+    mutationFn: (updates: {
+      alwaysRequestAbandonExemption?: boolean;
+      showAbandonConfirmation?: boolean;
+    }) => apiRequest("PUT", "/api/settings", updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
     },
@@ -1545,10 +1548,11 @@ export default function JobDetailPage() {
   });
 
   const openAbandonConfirmStep = () => {
-    if (localStorage.getItem("linxova-skip-abandon-confirm") === "true") {
-      setAbandonReasonOpen(true);
-    } else {
+    if (showAbandonConfirmation) {
       setAbandonConfirmOpen(true);
+    } else {
+      // The confirmation was turned off in Settings.
+      setAbandonReasonOpen(true);
     }
   };
 
@@ -1565,7 +1569,7 @@ export default function JobDetailPage() {
   const handleAbandonExemptionChoice = (askForExemption: boolean) => {
     setAbandonRequestExemption(askForExemption);
     if (askForExemption && abandonAlwaysAsk) {
-      saveAbandonPreferenceMutation.mutate(true);
+      saveAbandonPreferenceMutation.mutate({ alwaysRequestAbandonExemption: true });
     }
     setAbandonAlwaysAsk(false);
     setAbandonExemptionOpen(false);
@@ -1574,8 +1578,9 @@ export default function JobDetailPage() {
 
   const handleAbandonConfirmYes = () => {
     if (abandonSkipConfirm) {
-      localStorage.setItem("linxova-skip-abandon-confirm", "true");
+      saveAbandonPreferenceMutation.mutate({ showAbandonConfirmation: false });
     }
+    setAbandonSkipConfirm(false);
     setAbandonConfirmOpen(false);
     setAbandonReasonOpen(true);
   };
@@ -2767,7 +2772,7 @@ export default function JobDetailPage() {
                       data-testid="checkbox-skip-abandon-confirm"
                     />
                     <Label htmlFor="skip-abandon-confirm" className="text-sm cursor-pointer">
-                      Don't show this message in the future
+                      Don't show this message in the future (change it in Settings)
                     </Label>
                   </div>
                   <DialogFooter>

@@ -978,26 +978,6 @@ export default function SettingsPage() {
               data-testid="switch-delete-confirmation"
             />
           </div>
-          {user?.role === "freelancer" && (
-            <>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="abandon-exemption">Always Request Completion-Rate Protection</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Skip the question when you request to leave a job and always ask the customer to
-                    excuse the completion-rate reduction
-                  </p>
-                </div>
-                <Switch
-                  id="abandon-exemption"
-                  checked={settings?.alwaysRequestAbandonExemption ?? false}
-                  onCheckedChange={(checked) => toggleSetting("alwaysRequestAbandonExemption", checked)}
-                  data-testid="switch-abandon-exemption"
-                />
-              </div>
-            </>
-          )}
           {user?.role === "customer" && (
             <>
               <Separator />
@@ -1030,6 +1010,49 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {user?.role === "freelancer" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <LogOut className="h-5 w-5" />
+              Leaving a Job
+            </CardTitle>
+            <CardDescription>Control the prompts shown when you request to leave a job</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="abandon-exemption">Always Ask to Be Excused</Label>
+                <p className="text-sm text-muted-foreground">
+                  Skip the completion-rate question and always ask the customer to excuse the reduction
+                </p>
+              </div>
+              <Switch
+                id="abandon-exemption"
+                checked={settings?.alwaysRequestAbandonExemption ?? false}
+                onCheckedChange={(checked) => toggleSetting("alwaysRequestAbandonExemption", checked)}
+                data-testid="switch-abandon-exemption"
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="abandon-confirm">Show "Are You Sure?" Confirmation</Label>
+                <p className="text-sm text-muted-foreground">
+                  Show the confirmation prompt before your leave request is sent
+                </p>
+              </div>
+              <Switch
+                id="abandon-confirm"
+                checked={settings?.showAbandonConfirmation ?? true}
+                onCheckedChange={(checked) => toggleSetting("showAbandonConfirmation", checked)}
+                data-testid="switch-abandon-confirm"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
