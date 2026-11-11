@@ -92,7 +92,7 @@ const freelancerSlides: TutorialSlide[] = [
     tips: [
       "Level 1 starts at $0; Levels 2–8 unlock at lifetime earnings of $50, $200, $750, $2,000, $5,000, $10,000, and $18,000, respectively",
       "Your level determines your share of each job budget: Levels 1–8 pay 85%, 87%, 89%, 90%, 92%, 94%, 95%, and 97%, respectively",
-      "Apply to become a Moderator at level 5"
+      "At Level 5, with a 65%+ completion rate and an account at least 4 months old, you can apply to become a Moderator"
     ]
   }
 ];
@@ -114,7 +114,7 @@ const customerSlides: TutorialSlide[] = [
     icon: Briefcase,
     tips: [
       "Be specific about requirements",
-      "Jobs require moderator approval before posting",
+      "Clean jobs go live immediately — only posts flagged by the automatic content check wait for moderator review",
       "Respond to 'Changes Requested' feedback promptly"
     ]
   },
@@ -125,7 +125,8 @@ const customerSlides: TutorialSlide[] = [
     tips: [
       "Use the team chat for project updates",
       "View My Jobs page for all your listings",
-      "Rate freelancers after job completion"
+      "Rate freelancers after job completion",
+      "Cancelling a job nobody has taken happens immediately; cancelling one already in progress needs moderator approval"
     ]
   },
   {
@@ -140,12 +141,12 @@ const customerSlides: TutorialSlide[] = [
   },
   {
     title: "Becoming a Freelancer",
-    description: "Ready to offer your own services? Apply to become a freelancer.",
+    description: "Ready to offer your own services? Switch your account to a freelancer.",
     icon: Star,
     tips: [
-      "Use Role Upgrade to apply",
-      "Share your experience and portfolio",
-      "Moderators will review your application"
+      "Use Role Upgrade to switch — it is applied instantly, with no review queue",
+      "Your account must be at least 24 hours old and have no active jobs",
+      "The switch is permanent: your Customer role and its progress are not kept, so finish your customer work first"
     ]
   }
 ];
@@ -163,9 +164,10 @@ const moderatorSlides: TutorialSlide[] = [
   },
   {
     title: "Moderation Queue",
-    description: "Review and approve job listings from customers.",
+    description: "Review only the job posts that the automatic content check flagged.",
     icon: Briefcase,
     tips: [
+      "Clean job posts publish automatically — only flagged posts reach this queue",
       "Approve well-written, legitimate jobs",
       "Request changes for incomplete listings",
       "Reject inappropriate or fraudulent posts"
@@ -183,13 +185,13 @@ const moderatorSlides: TutorialSlide[] = [
     ]
   },
   {
-    title: "Role Upgrade Reviews",
-    description: "Review applications from users wanting to upgrade their roles.",
+    title: "Role Upgrades",
+    description: "Role upgrade requests are not part of your moderator queue.",
     icon: Users,
     tips: [
-      "Review customer-to-freelancer applications",
-      "Review freelancer-to-moderator applications",
-      "Check qualifications and experience"
+      "Customer to Freelancer is granted instantly once the account is 24 hours old and has no active jobs",
+      "Freelancer to Moderator applications are reviewed by the Head of Moderation and Founder only",
+      "You will not see upgrade requests in your moderation tabs"
     ]
   },
   {
@@ -197,8 +199,8 @@ const moderatorSlides: TutorialSlide[] = [
     description: "Stay updated on platform activities.",
     icon: Bell,
     tips: [
-      "New job submissions need your attention",
-      "Upgrade requests await your review",
+      "Flagged job posts need your attention",
+      "Cancellation and dispute requests wait in your queue",
       "System alerts for important updates"
     ]
   }

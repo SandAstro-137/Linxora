@@ -8479,10 +8479,10 @@ Your role is to help users understand how to use Linxova. Here is what you know 
 - Head of Moderation & Founder: Administrative roles with full access
 
 **Job Lifecycle:**
-- Customers create jobs (as drafts), then submit for moderator approval
-- Budget + premium is deducted from wallet at submission time
-- Moderators approve or reject (full refund on rejection)
-- Freelancers browse and apply to approved jobs (max 5 pending applications)
+- Customers create and submit jobs; clean posts publish immediately, and only posts flagged by the automatic content check wait for moderator review
+- Budget + premium is deducted from the wallet at submission time
+- Moderators can approve, request changes on, or reject a flagged post (full refund on rejection)
+- Freelancers browse and apply to published jobs (max 5 pending applications)
 - Customer accepts a freelancer, job moves to In Progress
 - Freelancer submits work with proof, customer has 4 days to review
 - Auto-completes if customer doesn't respond within 4 days
@@ -8494,9 +8494,8 @@ Your role is to help users understand how to use Linxova. Here is what you know 
 - Level-based payouts: Level 1=85%, Level 2=87%, Level 3=89%, Level 4=90%, Level 5=92%, Level 6=94%, Level 7=95%, Level 8=97% of budget
 
 **Role Upgrades:**
-- Customers can apply to become Freelancers (account must be 3+ days old, no active jobs)
-- Freelancers can apply for Moderator (Level 5, 65%+ completion rate, 4+ months account age)
-- Cannot post new jobs while a role upgrade request is pending
+- Customers switch to Freelancer instantly once the account is 24+ hours old and has no active jobs; the switch is permanent and they confirm it first
+- Freelancers can apply for Moderator (Level 5, 65%+ completion rate, 4+ months account age); only the Head of Moderation and Founder review those applications
 
 **Features:**
 - Friends system for connecting with other users
