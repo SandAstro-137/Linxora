@@ -6,6 +6,15 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -94,6 +103,10 @@ const freelancerToModeratorSchema = z.object({
 export default function RoleUpgradePage() {
   const { user, refetchUser } = useAuth();
   const { toast } = useToast();
+  // Customer→freelancer happens the moment the form is submitted and cannot be
+  // undone, so the entered details are held here until the person confirms the
+  // consequences in the dialog.
+  const [pendingPromotion, setPendingPromotion] = useState<z.infer<typeof customerToFreelancerSchema> | null>(null);
 
   const { data: myRequests = [], isLoading } = useQuery<RoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/my"],
@@ -150,6 +163,15 @@ export default function RoleUpgradePage() {
   });
 
   const onCustomerSubmit = (data: z.infer<typeof customerToFreelancerSchema>) => {
+    // Ask before promoting: the role change is applied server-side immediately
+    // and there is no route back to a customer account.
+    setPendingPromotion(data);
+  };
+
+  const confirmPromotion = () => {
+    if (!pendingPromotion) return;
+    const data = pendingPromotion;
+    setPendingPromotion(null);
     submitMutation.mutate({
       upgradeType: "customer_to_freelancer",
       ...data,
@@ -302,6 +324,46 @@ export default function RoleUpgradePage() {
                 </form>
               </Form>
             )}
+            <AlertDialog
+              open={pendingPromotion !== null}
+              onOpenChange={(open) => {
+                if (!open) setPendingPromotion(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Promote this account to Freelancer?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="block font-medium text-destructive">
+                      This is an irreversible action.
+                    </span>
+                    <span className="mt-2 block">
+                      Promoting takes effect immediately and cannot be undone or reversed. Once you
+                      are a Freelancer you cannot change back to a Customer account.
+                    </span>
+                    <span className="mt-2 block">
+                      You lose everything tied to your Customer role: the ability to post and manage
+                      jobs as a customer, and your Customer progress — level, completion rating and
+                      customer-side job history — does not carry over into the Freelancer role.
+                    </span>
+                    <span className="mt-2 block">
+                      Only continue if you are finished using this account as a Customer.
+                    </span>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="button-cancel-promotion">Cancel</AlertDialogCancel>
+                  <Button
+                    variant="destructive"
+                    onClick={confirmPromotion}
+                    disabled={submitMutation.isPending}
+                    data-testid="button-confirm-promotion"
+                  >
+                    {submitMutation.isPending ? "Promoting..." : "Yes, promote me"}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </CardContent>
         </Card>
       )}
