@@ -8205,14 +8205,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Customer to Freelancer: Account must be at least 3 days old
+        // Customer to Freelancer: Account must be at least 24 hours old
         if (user.createdAt) {
           const accountAge = Date.now() - new Date(user.createdAt).getTime();
-          const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-          if (accountAge < threeDaysMs) {
-            const daysRemaining = Math.ceil((threeDaysMs - accountAge) / (24 * 60 * 60 * 1000));
+          const oneDayMs = 24 * 60 * 60 * 1000;
+          if (accountAge < oneDayMs) {
+            const hoursRemaining = Math.ceil((oneDayMs - accountAge) / (60 * 60 * 1000));
             return res.status(400).json({ 
-              error: `Your account must be at least 3 days old to become a freelancer. ${daysRemaining} day(s) remaining.` 
+              error: `Your account must be at least 24 hours old to become a freelancer. ${hoursRemaining} hour(s) remaining.` 
             });
           }
         }

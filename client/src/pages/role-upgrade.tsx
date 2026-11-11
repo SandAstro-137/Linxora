@@ -203,13 +203,13 @@ export default function RoleUpgradePage() {
   // Calculate account age requirements
   const accountCreatedAt = user?.createdAt ? new Date(user.createdAt) : new Date();
   const accountAgeMs = Date.now() - accountCreatedAt.getTime();
-  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+  const oneDayMs = 24 * 60 * 60 * 1000;
   const fourMonthsMs = 120 * 24 * 60 * 60 * 1000;
   
-  const customerAccountOldEnough = accountAgeMs >= threeDaysMs;
+  const customerAccountOldEnough = accountAgeMs >= oneDayMs;
   const freelancerAccountOldEnough = accountAgeMs >= fourMonthsMs;
   
-  const daysUntilFreelancerEligible = Math.max(0, Math.ceil((threeDaysMs - accountAgeMs) / (24 * 60 * 60 * 1000)));
+  const hoursUntilFreelancerEligible = Math.max(0, Math.ceil((oneDayMs - accountAgeMs) / (60 * 60 * 1000)));
   const daysUntilModeratorEligible = Math.max(0, Math.ceil((fourMonthsMs - accountAgeMs) / (24 * 60 * 60 * 1000)));
   
   // Freelancer to Moderator requirements
@@ -251,8 +251,8 @@ export default function RoleUpgradePage() {
               <ul className="space-y-1 text-sm">
                 <li className={`flex items-center gap-2 ${customerAccountOldEnough ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
                   {customerAccountOldEnough ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
-                  Account must be at least 3 days old
-                  {!customerAccountOldEnough && <span className="text-xs">({daysUntilFreelancerEligible} days remaining)</span>}
+                  Account must be at least 24 hours old
+                  {!customerAccountOldEnough && <span className="text-xs">({hoursUntilFreelancerEligible} hours remaining)</span>}
                 </li>
               </ul>
             </div>
@@ -260,7 +260,7 @@ export default function RoleUpgradePage() {
               <RolePreviewDialog targetRole="freelancer" />
             </div>
             {customerNeedsTime ? (
-              <p className="text-muted-foreground">Your account needs to be at least 3 days old before you can apply to become a freelancer.</p>
+              <p className="text-muted-foreground">Your account needs to be at least 24 hours old before you can apply to become a freelancer.</p>
             ) : hasPendingRequest ? (
               <p className="text-muted-foreground">You have a pending upgrade request. Please wait for it to be reviewed.</p>
             ) : (
