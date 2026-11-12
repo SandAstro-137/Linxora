@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { TeamRoomCallProvider } from "@/lib/team-room-call-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserNav } from "@/components/user-nav";
 import { OnboardingModal } from "@/components/OnboardingModal";
@@ -507,7 +508,9 @@ function AppContent() {
               </div>
             </header>
             <main className="flex-1 overflow-y-auto p-6">
-              <Router />
+              <TeamRoomCallProvider>
+                <Router />
+              </TeamRoomCallProvider>
             </main>
           </div>
         </div>

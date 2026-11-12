@@ -33,6 +33,7 @@ import {
   VolumeX,
   X
 } from "lucide-react";
+import { useTeamRoomCall } from "@/lib/team-room-call-context";
 
 interface VoiceCallParticipant {
   id: string;
@@ -102,531 +103,59 @@ function getRoleDisplay(role: string): string {
 }
 
 export default function TeamRoomPage() {
-  const { toast } = useToast();
   const { user } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [inputMessage, setInputMessage] = useState("");
-  const [isConnected, setIsConnected] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
-  const [inCall, setInCall] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isDeafened, setIsDeafened] = useState(false);
-  const [calls, setCalls] = useState<VoiceCall[]>([]);
-  const [activeCallId, setActiveCallId] = useState<string | null>(null);
   const [showCallOptionsDialog, setShowCallOptionsDialog] = useState(false);
-  const inCallRef = useRef(false);
-  const myCallIdRef = useRef<string | null>(null);
-  // Set while we're waiting for our own voice_call_start/join to appear in the
-  // broadcast list, so a transient list without us doesn't kill the local call.
-  const pendingJoinRef = useRef(false);
-  const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peersRef = useRef<Map<string, WebRTCPeer>>(new Map());
-  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { data: initialMessages = [], isLoading } = useQuery<ChatMessage[]>({
-    queryKey: ["/api/team-room/messages"],
-    enabled: !!user && ["moderator", "head_of_moderation", "founder"].includes(user.role),
-  });
-
-  useEffect(() => {
-    if (initialMessages.length > 0 && messages.length === 0) {
-      setMessages(initialMessages);
-    }
-  }, [initialMessages, messages.length]);
+  // The socket and the voice call live in TeamRoomCallProvider, above the
+  // router, so staying in a call no longer depends on this page being mounted.
+  const {
+    isConnected,
+    isLoading,
+    messages,
+    onlineUsers,
+    typingUsers,
+    calls,
+    inCall,
+    isMuted,
+    isDeafened,
+    sendMessage,
+    sendTyping,
+    startCall,
+    joinCall,
+    endCall,
+    closeCall,
+    toggleMute,
+    toggleDeafen,
+  } = useTeamRoomCall();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const connectWebSocket = useCallback(async () => {
-    if (!user || wsRef.current?.readyState === WebSocket.OPEN) return;
-
-    try {
-      // First, get a secure one-time token from the authenticated API
-      const tokenResponse = await fetch("/api/team-room/ws-token", {
-        credentials: "include"
-      });
-      
-      if (!tokenResponse.ok) {
-        console.error("[TeamRoom] Failed to get WebSocket token");
-        toast({
-          title: "Connection Failed",
-          description: "Unable to authenticate for team room",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      const { token } = await tokenResponse.json();
-
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws/team-room?token=${token}`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnected(true);
-        console.log("[TeamRoom] Connected to WebSocket");
-      };
-
-    ws.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-
-      switch (data.type) {
-        case "online_users":
-          setOnlineUsers(data.users);
-          break;
-        case "user_joined":
-          setOnlineUsers(prev => {
-            if (prev.find(u => u.id === data.user.id)) return prev;
-            return [...prev, data.user];
-          });
-          break;
-        case "user_left":
-          setOnlineUsers(prev => prev.filter(u => u.id !== data.user.id));
-          cleanupPeer(data.user.id);
-          break;
-        case "chat_message":
-          setMessages(prev => [...prev, data.message]);
-          setTypingUsers(prev => {
-            const next = new Set(prev);
-            next.delete(data.message.sender?.username || "");
-            return next;
-          });
-          break;
-        case "typing":
-          setTypingUsers(prev => {
-            const next = new Set(prev);
-            next.add(data.user.username);
-            setTimeout(() => {
-              setTypingUsers(curr => {
-                const updated = new Set(curr);
-                updated.delete(data.user.username);
-                return updated;
-              });
-            }, 2000);
-            return next;
-          });
-          break;
-        case "voice_call_start":
-          if (data.initiator.id !== user.id) {
-            toast({
-              title: "Voice Call Started",
-              description: `${data.initiator.username} started a voice call`,
-            });
-          }
-          break;
-        case "voice_calls_list":
-          setCalls(data.calls ?? []);
-          reconcileCalls(data.calls ?? []);
-          break;
-        case "voice_call_user_joined":
-          if (data.user.id !== user.id && inCallRef.current && data.callId === myCallIdRef.current) {
-            offerToUser(data.user.id, data.user.username);
-          }
-          break;
-        case "voice_call_user_left":
-          cleanupPeer(data.user.id);
-          break;
-        case "voice_call_ended":
-          if (data.callId === myCallIdRef.current && inCallRef.current) {
-            stopLocalCall();
-            setInCall(false);
-            inCallRef.current = false;
-            pendingJoinRef.current = false;
-            myCallIdRef.current = null;
-            setActiveCallId(null);
-          }
-          if (data.closedBy) {
-            toast({
-              title: "Voice Call Closed",
-              description: `${data.closedBy.username} closed the voice call`,
-            });
-          }
-          break;
-        case "webrtc_signal":
-          handleWebRTCSignal(data);
-          break;
-        case "error":
-          toast({
-            title: "Error",
-            description: data.message,
-            variant: "destructive",
-          });
-          break;
-      }
-    };
-
-    ws.onclose = () => {
-      setIsConnected(false);
-      console.log("[TeamRoom] Disconnected from WebSocket");
-      setTimeout(connectWebSocket, 3000);
-    };
-
-    ws.onerror = (error) => {
-      console.error("[TeamRoom] WebSocket error:", error);
-    };
-    } catch (error) {
-      console.error("[TeamRoom] Connection error:", error);
-      toast({
-        title: "Connection Error",
-        description: "Failed to connect to team room",
-        variant: "destructive",
-      });
-    }
-  }, [user, toast]);
-
-  useEffect(() => {
-    if (user && ["moderator", "head_of_moderation", "founder"].includes(user.role)) {
-      connectWebSocket();
-    }
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      peersRef.current.forEach((peer) => {
-        peer.connection.close();
-      });
-    };
-  }, [user, connectWebSocket]);
-
-  const sendMessage = () => {
-    if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    wsRef.current.send(JSON.stringify({
-      type: "chat_message",
-      content: inputMessage.trim()
-    }));
-
+  const handleSendMessage = () => {
+    if (!inputMessage.trim()) return;
+    sendMessage(inputMessage.trim());
     setInputMessage("");
-  };
-
-  const sendTypingIndicator = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    wsRef.current.send(JSON.stringify({ type: "typing" }));
-
-    typingTimeoutRef.current = setTimeout(() => {
-      typingTimeoutRef.current = null;
-    }, 1000);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  const createPeerConnection = (targetUserId: string, targetUsername: string): RTCPeerConnection => {
-    const config: RTCConfiguration = {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ]
-    };
-
-    const pc = new RTCPeerConnection(config);
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "webrtc_signal",
-          targetUserId,
-          signalType: "ice-candidate",
-          signal: event.candidate
-        }));
-      }
-    };
-
-    pc.ontrack = (event) => {
-      const stream = event.streams[0];
-      if (stream) {
-        let audio = audioElementsRef.current.get(targetUserId);
-        if (!audio) {
-          audio = new Audio();
-          audio.autoplay = true;
-          audioElementsRef.current.set(targetUserId, audio);
-        }
-        audio.srcObject = stream;
-        audio.muted = isDeafened;
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] Connection state with ${targetUsername}: ${pc.connectionState}`);
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-        cleanupPeer(targetUserId);
-      }
-    };
-
-    peersRef.current.set(targetUserId, {
-      userId: targetUserId,
-      username: targetUsername,
-      connection: pc
-    });
-
-    return pc;
-  };
-
-  const cleanupPeer = (userId: string) => {
-    const peer = peersRef.current.get(userId);
-    if (peer) {
-      peer.connection.close();
-      peersRef.current.delete(userId);
-    }
-    const audio = audioElementsRef.current.get(userId);
-    if (audio) {
-      audio.srcObject = null;
-      audioElementsRef.current.delete(userId);
-    }
-  };
-
-  // Adds the local microphone tracks to a peer connection, but only once -
-  // adding the same track twice throws "sender already exists for the track"
-  // when both sides send offers to each other at the same time.
-  const addLocalTracksTo = (pc: RTCPeerConnection) => {
-    if (!localStreamRef.current) return;
-    localStreamRef.current.getTracks().forEach(track => {
-      if (!pc.getSenders().some(s => s.track === track)) {
-        pc.addTrack(track, localStreamRef.current!);
-      }
-    });
-  };
-
-  const handleWebRTCSignal = async (data: { fromUserId: string; fromUsername: string; signalType: string; signal: RTCSessionDescriptionInit | RTCIceCandidateInit }) => {
-    try {
-      const peer = peersRef.current.get(data.fromUserId);
-
-      if (data.signalType === "offer") {
-        if (!inCallRef.current) return;
-        if (!peer) {
-          createPeerConnection(data.fromUserId, data.fromUsername);
-        }
-        const pc = peersRef.current.get(data.fromUserId)!.connection;
-
-        // Glare: both sides may send offers at the same time (the joiner offers
-        // via reconcileCalls while the existing participant offers via
-        // voice_call_user_joined). If we already sent our own offer, roll it
-        // back so we can accept theirs instead of throwing.
-        if (pc.signalingState === "have-local-offer") {
-          await pc.setLocalDescription({ type: "rollback" });
-        }
-
-        await pc.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
-
-        addLocalTracksTo(pc);
-
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: "webrtc_signal",
-            targetUserId: data.fromUserId,
-            signalType: "answer",
-            signal: answer
-          }));
-        }
-      } else if (data.signalType === "answer") {
-        // Only accept an answer if we actually sent an offer and are waiting
-        // for one; after a glare rollback we already answered, so a stray
-        // answer must be ignored instead of throwing.
-        if (peer && peer.connection.signalingState === "have-remote-offer") {
-          await peer.connection.setRemoteDescription(new RTCSessionDescription(data.signal as RTCSessionDescriptionInit));
-        }
-      } else if (data.signalType === "ice-candidate") {
-        if (peer) {
-          await peer.connection.addIceCandidate(new RTCIceCandidate(data.signal as RTCIceCandidateInit));
-        }
-      }
-    } catch (error) {
-      // Transient negotiation races (stale offers/answers after a rejoin) must
-      // not crash the page - log and let the next signal retry.
-      console.error("[TeamRoom] WebRTC signal error:", error);
-    }
-  };
-
-  const startCall = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-      setInCall(true);
-      inCallRef.current = true;
-      pendingJoinRef.current = true;
-      setShowCallOptionsDialog(false);
-
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "voice_call_start" }));
-      }
-
-      toast({
-        title: "Voice Call Started",
-        description: "You are now in a voice call with the team",
-      });
-    } catch (error) {
-      console.error("[TeamRoom] Failed to start call:", error);
-      toast({
-        title: "Microphone Access Required",
-        description: "Please allow microphone access to join voice calls",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const stopLocalCall = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    peersRef.current.forEach((peer) => {
-      peer.connection.close();
-    });
-    peersRef.current.clear();
-    audioElementsRef.current.forEach((audio) => {
-      audio.srcObject = null;
-    });
-    audioElementsRef.current.clear();
-  };
-
-  const endCall = () => {
-    const callId = myCallIdRef.current;
-    stopLocalCall();
-    setInCall(false);
-    inCallRef.current = false;
-    pendingJoinRef.current = false;
-    myCallIdRef.current = null;
-    setActiveCallId(null);
-
-    if (wsRef.current?.readyState === WebSocket.OPEN && callId) {
-      wsRef.current.send(JSON.stringify({ type: "voice_call_leave", callId }));
-    }
-
-    toast({
-      title: "Voice Call Ended",
-      description: "You have left the voice call",
-    });
-  };
-
-  const joinCall = async (callId: string) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-      setInCall(true);
-      inCallRef.current = true;
-      pendingJoinRef.current = true;
-      setShowCallOptionsDialog(false);
-
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "voice_call_join", callId }));
-      }
-
-      toast({
-        title: "Joined Voice Call",
-        description: "You are now in the voice call",
-      });
-    } catch (error) {
-      console.error("[TeamRoom] Failed to join call:", error);
-      toast({
-        title: "Microphone Access Required",
-        description: "Please allow microphone access to join voice calls",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const offerToUser = async (targetUserId: string, targetUsername: string) => {
-    if (!localStreamRef.current || peersRef.current.has(targetUserId)) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    try {
-      const pc = createPeerConnection(targetUserId, targetUsername);
-      addLocalTracksTo(pc);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      wsRef.current.send(JSON.stringify({
-        type: "webrtc_signal",
-        targetUserId,
-        signalType: "offer",
-        signal: offer
-      }));
-    } catch (error) {
-      console.error("[TeamRoom] Failed to offer to", targetUsername, error);
-    }
-  };
-
-  // Server-authoritative reconciliation: keeps myCallIdRef, local call state and
-  // WebRTC peers in sync with the broadcast list of all active calls.
-  const reconcileCalls = (nextCalls: VoiceCall[]) => {
-    const myId = user?.id ?? "";
-    const myCall = nextCalls.find(c => c.participants.some(p => p.id === myId)) ?? null;
-    myCallIdRef.current = myCall ? myCall.id : null;
-    if (myCall) pendingJoinRef.current = false;
-
-    if (!myCall) {
-      if (inCallRef.current && !pendingJoinRef.current) {
-        stopLocalCall();
-        setInCall(false);
-        inCallRef.current = false;
-      }
-      setActiveCallId(null);
-      return;
-    }
-
-    setActiveCallId(myCall.id);
-    if (!inCallRef.current) return;
-
-    for (const p of myCall.participants) {
-      if (p.id !== myId && !peersRef.current.has(p.id)) {
-        offerToUser(p.id, p.username);
-      }
+      handleSendMessage();
     }
   };
 
   const handleStartCallClick = () => {
     // If there are calls we're not in, let the user choose between joining
     // one or starting a brand-new call alongside it. Otherwise start one.
-    const joinable = calls.filter(c => !c.participants.some(p => p.id === user?.id));
+    const joinable = calls.filter((call) => !call.participants.some((p) => p.id === user?.id));
     if (joinable.length > 0) {
       setShowCallOptionsDialog(true);
     } else {
       startCall();
     }
-  };
-
-  const closeCall = (callId: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "voice_call_close", callId }));
-    }
-  };
-
-  const toggleMute = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach(track => {
-        track.enabled = isMuted;
-      });
-      setIsMuted(!isMuted);
-    }
-  };
-
-  const toggleDeafen = () => {
-    const newDeafened = !isDeafened;
-    audioElementsRef.current.forEach((audio) => {
-      audio.muted = newDeafened;
-    });
-    setIsDeafened(newDeafened);
   };
 
   if (!user || !["moderator", "head_of_moderation", "founder"].includes(user.role)) {
@@ -792,7 +321,7 @@ export default function TeamRoomPage() {
                   value={inputMessage}
                   onChange={(e) => {
                     setInputMessage(e.target.value);
-                    sendTypingIndicator();
+                    sendTyping();
                   }}
                   onKeyDown={handleKeyDown}
                   placeholder="Type a message..."
@@ -800,7 +329,7 @@ export default function TeamRoomPage() {
                   data-testid="input-chat-message"
                 />
                 <Button
-                  onClick={sendMessage}
+                  onClick={handleSendMessage}
                   disabled={!isConnected || !inputMessage.trim()}
                   data-testid="button-send-message"
                 >
@@ -924,7 +453,10 @@ export default function TeamRoomPage() {
                         size="sm"
                         variant="outline"
                         className="w-full mt-2"
-                        onClick={() => joinCall(call.id)}
+                        onClick={() => {
+                    setShowCallOptionsDialog(false);
+                    joinCall(call.id);
+                  }}
                         data-testid={`button-join-call-${call.id}`}
                       >
                         <Phone className="w-3 h-3 mr-1" /> Join Call
@@ -963,7 +495,10 @@ export default function TeamRoomPage() {
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => joinCall(call.id)}
+                  onClick={() => {
+                    setShowCallOptionsDialog(false);
+                    joinCall(call.id);
+                  }}
                   data-testid={`button-dialog-join-${call.id}`}
                 >
                   <Phone className="w-3 h-3 mr-1" /> Join
@@ -975,7 +510,13 @@ export default function TeamRoomPage() {
             <Button variant="outline" onClick={() => setShowCallOptionsDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={startCall} data-testid="button-start-new-call">
+            <Button
+              onClick={() => {
+                setShowCallOptionsDialog(false);
+                startCall();
+              }}
+              data-testid="button-start-new-call"
+            >
               <Phone className="w-4 h-4 mr-2" /> Start New Call
             </Button>
           </div>
