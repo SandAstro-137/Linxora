@@ -373,7 +373,7 @@ export function NotificationCenter() {
       onClick={() => handleNotificationClick(notification)}
       data-testid={`notification-item-${notification.id}`}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2 min-w-0">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium truncate" data-testid="text-notification-title">
@@ -385,7 +385,10 @@ export function NotificationCenter() {
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground mt-1" data-testid="text-notification-message">
+          <p
+            className="text-sm text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] whitespace-pre-wrap"
+            data-testid="text-notification-message"
+          >
             {notification.message}
           </p>
           <p className="text-xs text-muted-foreground mt-1" data-testid="text-notification-time">
@@ -437,7 +440,11 @@ export function NotificationCenter() {
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-96 p-0" align="end" data-testid="panel-notifications">
+        <PopoverContent
+          className="w-[min(24rem,calc(100vw-1.5rem))] p-0 overflow-hidden"
+          align="end"
+          data-testid="panel-notifications"
+        >
           <div className="p-4 border-b">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-lg font-semibold" data-testid="text-notifications-title">
