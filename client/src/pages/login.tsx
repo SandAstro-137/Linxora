@@ -47,7 +47,7 @@ export default function LoginPage() {
 
   return (
     <div
-      className="min-h-screen text-neutral-900 flex items-center justify-center p-4"
+      className="theme-light min-h-screen text-foreground flex items-center justify-center p-4"
       // Inline style so the light gradient can't be overridden by site dark mode.
       style={{ background: "linear-gradient(to bottom right, #eff6ff, #ffffff, #f5f3ff)" }}
     >
@@ -63,7 +63,7 @@ export default function LoginPage() {
               Linxova
             </h1>
           </div>
-          <p className="text-xl text-neutral-600">
+          <p className="text-xl text-muted-foreground">
             Professional Freelancer Marketplace
           </p>
         </div>
@@ -71,8 +71,8 @@ export default function LoginPage() {
         <div className="grid md:grid-cols-2 gap-8 items-start">
           <Card className="bg-card border-2 border-border shadow-sm">
             <CardHeader className="text-center">
-              <CardTitle className="text-2xl text-neutral-900">Welcome</CardTitle>
-              <CardDescription className="text-neutral-600">
+              <CardTitle className="text-2xl text-foreground">Welcome</CardTitle>
+              <CardDescription className="text-muted-foreground">
                 Sign in to access your account
               </CardDescription>
               {authError === "email_already_in_use" && (
@@ -106,7 +106,7 @@ export default function LoginPage() {
 
               {showDemo && (
                 <>
-                  <p className="text-sm text-neutral-500 text-center uppercase tracking-wide">
+                  <p className="text-sm text-muted-foreground text-center uppercase tracking-wide">
                     Or choose a demo account
                   </p>
                   <div className="space-y-2">
@@ -120,12 +120,12 @@ export default function LoginPage() {
                       >
                         <div className="flex flex-col items-start">
                           <div className="font-medium">{account.label}</div>
-                          <div className="text-xs text-neutral-500">{account.description}</div>
+                          <div className="text-xs text-muted-foreground">{account.description}</div>
                         </div>
                       </Button>
                     ))}
                   </div>
-                  <p className="text-xs text-center text-neutral-500">
+                  <p className="text-xs text-center text-muted-foreground">
                     Demo accounts are for testing purposes only
                   </p>
                 </>
@@ -163,8 +163,8 @@ export default function LoginPage() {
                     <feature.icon className="w-6 h-6 text-blue-600" />
                   </div>
                   <div>
-                    <h4 className="font-semibold mb-1 text-neutral-900">{feature.title}</h4>
-                    <p className="text-sm text-neutral-600">{feature.text}</p>
+                    <h4 className="font-semibold mb-1 text-foreground">{feature.title}</h4>
+                    <p className="text-sm text-muted-foreground">{feature.text}</p>
                   </div>
                 </CardContent>
               </Card>
