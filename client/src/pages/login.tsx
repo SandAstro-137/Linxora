@@ -153,8 +153,8 @@ export default function LoginPage() {
               },
               {
                 icon: Shield,
-                title: "Secure & Moderated",
-                text: "All jobs reviewed before publication for quality",
+                title: "Secure & Filtered",
+                text: "All jobs are filtered for quality, not reviewed individually",
               },
             ].map((feature) => (
               <Card key={feature.title} className="bg-card border border-border shadow-sm">
