@@ -7,14 +7,20 @@ interface SuspensionInfo {
   reason: string | null;
 }
 
+interface BannedInfo {
+  reason: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   suspensionInfo: SuspensionInfo | null;
+  bannedInfo: BannedInfo | null;
   login: (demoId: string) => Promise<void>;
   logout: () => void;
   refetchUser: () => Promise<void>;
   clearSuspension: () => void;
+  clearBanned: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [suspensionInfo, setSuspensionInfo] = useState<SuspensionInfo | null>(null);
+  const [bannedInfo, setBannedInfo] = useState<BannedInfo | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -107,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
           setUser(null);
         } else if (data.accountStatus === "banned") {
+          setBannedInfo({ reason: data.reason || null });
           setSuspensionInfo(null);
           setUser(null);
         } else {
@@ -162,6 +170,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               reason: data.reason || null,
             });
             setUser(null);
+          } else if (data.accountStatus === "banned") {
+            setBannedInfo({ reason: data.reason || null });
+            setSuspensionInfo(null);
+            setUser(null);
           }
         }
       } catch (error) {
@@ -193,8 +205,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSuspensionInfo(null);
   };
 
+  const clearBanned = () => {
+    setBannedInfo(null);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, login, logout, refetchUser: checkAuth, clearSuspension }}>
+    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, bannedInfo, login, logout, refetchUser: checkAuth, clearSuspension, clearBanned }}>
       {children}
     </AuthContext.Provider>
   );

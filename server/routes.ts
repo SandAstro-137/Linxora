@@ -397,7 +397,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (user.accountStatus === 'banned') {
         return res.status(403).json({ 
           error: 'Your account has been permanently banned.',
-          accountStatus: 'banned'
+          accountStatus: 'banned',
+          reason: user?.suspendedReason ?? null
         });
       }
       if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
@@ -8936,6 +8937,153 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Account status lookup and control for the moderation team.
+  app.get(
+    "/api/moderation/users",
+    requireRole("moderator", "head_of_moderation", "founder"),
+    async (req, res) => {
+      try {
+        const query = String(req.query.search || "").trim().toLowerCase();
+        if (!query) {
+          return res.json([]);
+        }
+        const users = await storage.getUsers();
+        const matches = users
+          .filter(
+            (user) =>
+              user.username?.toLowerCase().includes(query) ||
+              user.email?.toLowerCase() === query ||
+              String(user.userId) === query ||
+              user.id === query
+          )
+          .slice(0, 10);
+
+        res.json(
+          matches.map((user) => ({
+            id: user.id,
+            userId: user.userId,
+            username: user.username,
+            role: user.role,
+            accountStatus: user.accountStatus,
+            suspendedUntil: user.suspendedUntil ?? null,
+            suspendedReason: user.suspendedReason ?? null,
+          }))
+        );
+      } catch (error) {
+        console.error("User status search error:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  );
+
+  const accountRank: Record<string, number> = {
+    customer: 0,
+    freelancer: 1,
+    moderator: 2,
+    head_of_moderation: 3,
+    founder: 4,
+  };
+
+  app.post(
+    "/api/moderation/users/:id/status",
+    requireRole("moderator", "head_of_moderation", "founder"),
+    async (req, res) => {
+      try {
+        const { action, reason, duration } = req.body ?? {};
+        if (!["restore", "suspend", "ban"].includes(action)) {
+          return res.status(400).json({ error: "Invalid action" });
+        }
+
+        const targetUser = await storage.getUser(req.params.id);
+        if (!targetUser) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        const actingUser = await storage.getUser(req.session.userId!);
+        if (!actingUser) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        if ((accountRank[targetUser.role] ?? 0) >= (accountRank[actingUser.role] ?? 0)) {
+          return res.status(403).json({
+            error: "You cannot change the account status of this user",
+          });
+        }
+
+        const sanitizedReason =
+          typeof reason === "string" ? reason.trim().slice(0, 1000) : "";
+
+        if (action === "restore") {
+          await storage.updateUser(targetUser.id, {
+            accountStatus: "active",
+            suspendedUntil: null,
+            suspendedReason: null,
+          });
+          await storage.deleteUserBan(targetUser.id);
+          await storage.createNotification({
+            userId: targetUser.id,
+            type: "system",
+            title: "Account Restored",
+            message:
+              "The moderation team has lifted the restrictions on your account. You can use Linxova normally again.",
+          });
+          return res.json({ success: true, accountStatus: "active" });
+        }
+
+        if (sanitizedReason.length < 5) {
+          return res.status(400).json({ error: "A reason of at least 5 characters is required" });
+        }
+
+        if (action === "suspend") {
+          const days = Number(duration);
+          if (!Number.isFinite(days) || days <= 0 || days > 365) {
+            return res.status(400).json({ error: "Invalid suspension length" });
+          }
+          const suspendedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+          await storage.updateUser(targetUser.id, {
+            accountStatus: "suspended",
+            suspendedUntil,
+            suspendedReason: sanitizedReason,
+          });
+          await storage.createNotification({
+            userId: targetUser.id,
+            type: "system",
+            title: "Account Suspended",
+            message:
+              "Your account has been suspended until " +
+              suspendedUntil.toLocaleDateString() +
+              ". Reason: " +
+              sanitizedReason,
+          });
+          return res.json({ success: true, accountStatus: "suspended", suspendedUntil });
+        }
+
+        await storage.updateUser(targetUser.id, {
+          accountStatus: "banned",
+          suspendedUntil: null,
+          suspendedReason: sanitizedReason,
+        });
+        const existingBan = await storage.getUserBan(targetUser.id);
+        if (!existingBan) {
+          await storage.createUserBan({
+            userId: targetUser.id,
+            reason: sanitizedReason,
+            bannedById: actingUser.id,
+          });
+        }
+        await storage.createNotification({
+          userId: targetUser.id,
+          type: "system",
+          title: "Account Banned",
+          message: "Your account has been banned. Reason: " + sanitizedReason,
+        });
+        res.json({ success: true, accountStatus: "banned" });
+      } catch (error) {
+        console.error("Account status update error:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  );
 
   // Get forwarded bug reports (for founder/head of moderation)
   // Moderator Task routes

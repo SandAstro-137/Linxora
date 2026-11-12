@@ -878,6 +878,10 @@ export class MongoStorage implements IStorage {
     await this.jobs.deleteOne({ _id: new ObjectId(id) });
   }
 
+  async deleteUserBan(userId: string): Promise<void> {
+    await this.db.collection("userBans").deleteMany({ userId });
+  }
+
   async createJob(insertJob: InsertJob): Promise<Job> {
     const now = new Date();
     const doc = {

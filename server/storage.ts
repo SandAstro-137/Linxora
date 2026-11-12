@@ -408,6 +408,7 @@ export interface IStorage {
   getUserBan(userId: string): Promise<UserBan | undefined>;
   getUserBans(): Promise<UserBan[]>;
   createUserBan(ban: InsertUserBan): Promise<UserBan>;
+  deleteUserBan(userId: string): Promise<void>;
 
   // Customer Review operations
   getCustomerReview(id: string): Promise<CustomerReview | undefined>;
@@ -2476,6 +2477,14 @@ export class MemStorage implements IStorage {
     };
     this.userBansMap.set(id, ban);
     return ban;
+  }
+
+  async deleteUserBan(userId: string): Promise<void> {
+    for (const [id, ban] of Array.from(this.userBansMap.entries())) {
+      if (ban.userId === userId) {
+        this.userBansMap.delete(id);
+      }
+    }
   }
 
   // Customer Review operations

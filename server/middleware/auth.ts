@@ -46,7 +46,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     }
     if (user.accountStatus === 'banned') {
       req.session.destroy(() => {});
-      return res.status(403).json({ error: 'Your account has been banned', accountStatus: 'banned' });
+      return res.status(403).json({
+        error: 'Your account has been banned',
+        accountStatus: 'banned',
+        reason: user.suspendedReason ?? null,
+      });
     }
     if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
       return res.status(403).json({ 

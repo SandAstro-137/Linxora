@@ -12,6 +12,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AccountStatusManager } from "@/components/AccountStatusManager";
 import { formatDistanceToNow, format } from "date-fns";
 import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import {
@@ -727,6 +728,10 @@ export default function ModerationPage() {
                 {pendingReportsCount}
               </Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="user-status" data-testid="tab-user-status">
+            <ShieldAlert className="w-4 h-4 mr-1" />
+            User Status
           </TabsTrigger>
           {(currentUser?.role === "head_of_moderation" || currentUser?.role === "founder") && (
             <TabsTrigger value="pto" data-testid="tab-pto">
@@ -1913,6 +1918,10 @@ export default function ModerationPage() {
             )}
           </TabsContent>
         )}
+
+        <TabsContent value="user-status">
+          <AccountStatusManager />
+        </TabsContent>
 
         <TabsContent value="history">
           <div className="space-y-6">

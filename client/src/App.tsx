@@ -17,7 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { TutorialModal } from "@/components/TutorialModal";
-import { HelpCircle, AlertTriangle, ShieldAlert, LogOut, UserPlus, Clock } from "lucide-react";
+import { HelpCircle, AlertTriangle, ShieldAlert, LogOut, UserPlus, Clock, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -409,7 +409,77 @@ function SuspendedScreen() {
           </div>
 
           <p className="text-xs text-center text-muted-foreground">
-            If you believe this was a mistake, please contact support after your suspension is lifted.
+            If you believe this was a mistake, please contact support at support@linxova.com.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function BannedScreen() {
+  const { bannedInfo, logout, clearBanned } = useAuth();
+
+  if (!bannedInfo) return null;
+
+  const handleSwitchAccount = async () => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    clearBanned();
+    window.location.href = "/";
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background p-4">
+      <Card className="max-w-md w-full" data-testid="card-banned">
+        <CardHeader className="text-center space-y-4">
+          <div className="mx-auto p-4 rounded-full bg-destructive/10 w-fit">
+            <Ban className="h-10 w-10 text-destructive" />
+          </div>
+          <CardTitle className="text-xl" data-testid="text-banned-title">
+            Account Banned
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <p className="text-sm text-muted-foreground text-center">
+            Your account has been permanently banned from Linxova. You cannot use your account, your
+            jobs or your messages while this ban is in place.
+          </p>
+
+          {bannedInfo.reason && (
+            <div className="p-4 bg-muted/50 rounded-md">
+              <p className="text-sm font-medium mb-1">Reason</p>
+              <p className="text-sm text-muted-foreground" data-testid="text-banned-reason">
+                {bannedInfo.reason}
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Button
+              variant="outline"
+              className="w-full gap-2"
+              onClick={handleSwitchAccount}
+              data-testid="button-banned-switch-account"
+            >
+              <UserPlus className="h-4 w-4" />
+              Switch Account
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full gap-2 text-muted-foreground"
+              onClick={async () => {
+                await logout();
+                clearBanned();
+              }}
+              data-testid="button-banned-log-off"
+            >
+              <LogOut className="h-4 w-4" />
+              Log Off
+            </Button>
+          </div>
+
+          <p className="text-xs text-center text-muted-foreground" data-testid="text-banned-support">
+            If you believe this was a mistake, please contact support at support@linxova.com.
           </p>
         </CardContent>
       </Card>
@@ -418,7 +488,7 @@ function SuspendedScreen() {
 }
 
 function AppContent() {
-  const { user, refetchUser, suspensionInfo } = useAuth();
+  const { user, refetchUser, suspensionInfo, bannedInfo } = useAuth();
   const { toast } = useToast();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -451,6 +521,10 @@ function AppContent() {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
   };
+
+  if (bannedInfo) {
+    return <BannedScreen />;
+  }
 
   if (suspensionInfo) {
     return <SuspendedScreen />;
