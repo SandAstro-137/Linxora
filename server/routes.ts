@@ -9634,7 +9634,12 @@ Your role is to help users understand how to use Linxova. Here is what you know 
   // Get public profile of any user
   app.get("/api/users/:id/profile", requireAuth, async (req, res) => {
     try {
-      const user = await storage.getUser(req.params.id);
+      // Reports created before ids were stored as UUIDs still point at the
+      // numeric user id, so a moderator opening one of those must not 404.
+      let user = await storage.getUser(req.params.id);
+      if (!user && /^[0-9]+$/.test(req.params.id)) {
+        user = await storage.getUserByUserId(parseInt(req.params.id, 10));
+      }
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
