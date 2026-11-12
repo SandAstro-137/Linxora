@@ -169,10 +169,12 @@ export default function MessagesPage() {
 
   const { data: conversations = [], isLoading: conversationsLoading } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
+    refetchInterval: 5000, // A new conversation should appear without leaving the page
   });
 
   const { data: groupChats = [], isLoading: groupChatsLoading } = useQuery<GroupChat[]>({
     queryKey: ["/api/group-chats"],
+    refetchInterval: 5000,
   });
 
   const dmPartnerId = activeChat?.type === "dm" ? activeChat.partnerId : null;
@@ -181,7 +183,7 @@ export default function MessagesPage() {
   const { data: dmMessages = [], isLoading: dmLoading } = useQuery<DirectMessage[]>({
     queryKey: ["/api/messages", dmPartnerId],
     enabled: !!dmPartnerId,
-    refetchInterval: 3000,
+    refetchInterval: 2000, // Incoming messages show up within a couple of seconds
   });
 
   const { data: groupMessages = [], isLoading: groupMessagesLoading } = useQuery<GroupChatMessage[]>({
@@ -193,7 +195,7 @@ export default function MessagesPage() {
       return res.json();
     },
     enabled: !!groupId,
-    refetchInterval: 3000,
+    refetchInterval: 2000,
   });
 
   const { data: activeGroupDetails } = useQuery<GroupChat & { members: GroupChatMemberInfo[] }>({

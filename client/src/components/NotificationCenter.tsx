@@ -93,6 +93,9 @@ export function NotificationCenter() {
   useEffect(() => {
     const currentCount = unreadData?.count;
     if (prevUnreadCount.current !== undefined && currentCount !== undefined && currentCount > prevUnreadCount.current) {
+      // Pull the list in the same tick as the number, so the red count never
+      // changes before the notification it is counting is actually visible.
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/transactions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });

@@ -158,7 +158,10 @@ export default function UserProfilePage() {
       return res.json();
     },
     enabled: !!userId,
-    refetchInterval: 5000, // Online status / profile state stays current without a manual refresh
+    // A missing profile will never appear on retry, so fail fast instead of
+    // cycling through the skeleton and flickering the error state.
+    retry: false,
+    refetchInterval: (query) => (query.state.status === "error" ? false : 5000),
   });
 
   const { data: availableJobs = [] } = useQuery<AvailableJob[]>({
