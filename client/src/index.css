@@ -4,28 +4,28 @@
 
 /* LIGHT MODE */
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
+  --button-outline: rgba(0,0,0, .20);
+  --badge-outline: rgba(0,0,0, .09);
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 0 0% 100%;
+  --background: 0 0% 97%;
   --foreground: 0 0% 9%;
-  --border: 0 0% 91%;
-  --card: 0 0% 95%;
+  --border: 0 0% 82%;
+  --card: 0 0% 94%;
   --card-foreground: 0 0% 9%;
-  --card-border: 0 0% 87%;
-  --sidebar: 0 0% 96%;
+  --card-border: 0 0% 79%;
+  --sidebar: 0 0% 95%;
   --sidebar-foreground: 0 0% 9%;
-  --sidebar-border: 0 0% 92%;
+  --sidebar-border: 0 0% 83%;
   --sidebar-primary: 262 83% 58%;
   --sidebar-primary-foreground: 0 0% 98%;
   --sidebar-accent: 0 0% 90%;
   --sidebar-accent-foreground: 0 0% 9%;
   --sidebar-ring: 262 83% 58%;
-  --popover: 0 0% 94%;
+  --popover: 0 0% 93%;
   --popover-foreground: 0 0% 9%;
-  --popover-border: 0 0% 89%;
+  --popover-border: 0 0% 81%;
   --primary: 262 83% 58%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 88%;
@@ -36,7 +36,7 @@
   --accent-foreground: 0 0% 9%;
   --destructive: 0 84% 45%;
   --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 75%;
+  --input: 0 0% 70%;
   --ring: 262 83% 58%;
   --chart-1: 262 83% 45%;
   --chart-2: 220 70% 50%;

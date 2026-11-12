@@ -69,7 +69,7 @@ export default function LoginPage() {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8 items-start">
-          <Card className="bg-white border-2 border-neutral-200 shadow-sm">
+          <Card className="bg-card border-2 border-border shadow-sm">
             <CardHeader className="text-center">
               <CardTitle className="text-2xl text-neutral-900">Welcome</CardTitle>
               <CardDescription className="text-neutral-600">
@@ -91,7 +91,7 @@ export default function LoginPage() {
                 }
               }}>
                 <Button
-                  className="w-full h-12 text-base gap-3 bg-white text-neutral-800 border border-neutral-300 hover:bg-neutral-100 shadow-sm"
+                  className="w-full h-12 text-base gap-3 bg-background text-foreground border border-input hover:bg-muted shadow-sm"
                   data-testid="button-google-login"
                 >
                   <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
@@ -115,7 +115,7 @@ export default function LoginPage() {
                         key={account.id}
                         onClick={() => login(account.id)}
                         variant="outline"
-                        className="w-full justify-start gap-3 h-auto py-3 bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100"
+                        className="w-full justify-start gap-3 h-auto py-3 bg-background text-foreground border-input hover:bg-muted"
                         data-testid={`button-demo-${account.id}`}
                       >
                         <div className="flex flex-col items-start">
@@ -157,7 +157,7 @@ export default function LoginPage() {
                 text: "All jobs reviewed before publication for quality",
               },
             ].map((feature) => (
-              <Card key={feature.title} className="bg-white border border-neutral-200 shadow-sm">
+              <Card key={feature.title} className="bg-card border border-border shadow-sm">
                 <CardContent className="p-4 flex gap-4">
                   <div className="bg-blue-100 p-3 rounded-lg">
                     <feature.icon className="w-6 h-6 text-blue-600" />
