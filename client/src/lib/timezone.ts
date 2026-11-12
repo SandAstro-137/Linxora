@@ -20,6 +20,18 @@ export function formatEasternDate(date: Date | string): string {
   });
 }
 
+// PTO and other calendar dates are stored as date-only values at UTC midnight.
+// Formatting those in Eastern time shows the day before, so they are formatted in UTC.
+export function formatCalendarDate(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export function formatEasternTimeOnly(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   return d.toLocaleTimeString('en-US', { 

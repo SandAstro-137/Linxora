@@ -14,7 +14,7 @@ import { Calendar, Clock } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
-import { TIMEZONE_LABEL, formatEasternDate, formatEasternDateTime } from "@/lib/timezone";
+import { TIMEZONE_LABEL, formatCalendarDate, formatEasternDateTime } from "@/lib/timezone";
 
 const MAX_PTO_DAYS = 21; // 3 weeks
 const MAX_FUTURE_YEARS = 3;
@@ -214,8 +214,8 @@ export default function PTOPage() {
                       <div className="flex items-center gap-2">
                         <Clock className="w-4 h-4 text-muted-foreground" />
                         <span className="font-medium">
-                          {formatEasternDate(request.startDate)} -{" "}
-                          {formatEasternDate(request.endDate)}
+                          {formatCalendarDate(request.startDate)} -{" "}
+                          {formatCalendarDate(request.endDate)}
                         </span>
                       </div>
                       <Badge className={getStatusColor(request.status)} variant="secondary">

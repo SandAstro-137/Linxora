@@ -13,8 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AccountStatusManager } from "@/components/AccountStatusManager";
-import { formatDistanceToNow, format } from "date-fns";
-import { formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
+import { formatDistanceToNow } from "date-fns";
+import { formatCalendarDate, formatEasternDateTime, TIMEZONE_LABEL } from "@/lib/timezone";
 import {
   Dialog,
   DialogContent,
@@ -1509,11 +1509,11 @@ export default function ModerationPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
                         <p className="text-sm font-medium text-muted-foreground">Start Date</p>
-                        <p className="text-sm">{format(new Date(request.startDate), "PPP")}</p>
+                        <p className="text-sm">{formatCalendarDate(request.startDate)}</p>
                       </div>
                       <div>
                         <p className="text-sm font-medium text-muted-foreground">End Date</p>
-                        <p className="text-sm">{format(new Date(request.endDate), "PPP")}</p>
+                        <p className="text-sm">{formatCalendarDate(request.endDate)}</p>
                       </div>
                       {request.reason && (
                         <div className="sm:col-span-2">
