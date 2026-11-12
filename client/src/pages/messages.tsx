@@ -184,6 +184,10 @@ export default function MessagesPage() {
     queryKey: ["/api/messages", dmPartnerId],
     enabled: !!dmPartnerId,
     refetchInterval: 2000, // Incoming messages show up within a couple of seconds
+    // The app-wide default is staleTime: Infinity, so opening a conversation
+    // that was already visited would show its cached history and leave a new
+    // message invisible until the next poll. A thread is always fetched fresh.
+    staleTime: 0,
   });
 
   const { data: groupMessages = [], isLoading: groupMessagesLoading } = useQuery<GroupChatMessage[]>({
@@ -196,6 +200,7 @@ export default function MessagesPage() {
     },
     enabled: !!groupId,
     refetchInterval: 2000,
+    staleTime: 0,
   });
 
   const { data: activeGroupDetails } = useQuery<GroupChat & { members: GroupChatMemberInfo[] }>({
@@ -208,6 +213,16 @@ export default function MessagesPage() {
     },
     enabled: !!groupId,
   });
+
+  // Opening a conversation always pulls its messages, including one that was
+  // removed from the list and has just reappeared because of a new message.
+  useEffect(() => {
+    if (activeChat?.type === "dm" && activeChat.partnerId) {
+      queryClient.invalidateQueries({ queryKey: ["/api/messages", activeChat.partnerId] });
+    } else if (activeChat?.type === "group" && activeChat.groupId) {
+      queryClient.invalidateQueries({ queryKey: ["/api/group-chats", activeChat.groupId, "messages"] });
+    }
+  }, [activeChat]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
