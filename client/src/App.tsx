@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ModerationWarningOverlay } from "@/components/ModerationWarningOverlay";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { TeamRoomCallProvider } from "@/lib/team-room-call-context";
@@ -520,6 +521,7 @@ function AppContent() {
         open={showOnboarding}
         onComplete={handleCompleteOnboarding}
       />
+      <ModerationWarningOverlay />
       <TutorialModal
         open={showTutorial}
         onOpenChange={setShowTutorial}

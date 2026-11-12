@@ -7781,7 +7781,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const includeAll = req.query.all === "true";
       const notifications = await storage.getNotifications(req.session.userId!, includeAll);
-      res.json(notifications);
+      // Official warnings are acknowledged on a blocking screen, never listed here.
+      res.json(notifications.filter(n => n.type !== "moderation_warning"));
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -7789,7 +7790,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/notifications/unread-count", requireAuth, async (req, res) => {
     try {
-      const count = await storage.getUnreadNotificationCount(req.session.userId!);
+      const notifications = await storage.getNotifications(req.session.userId!, true);
+      const count = notifications.filter(
+        n => !n.read && !n.dismissed && n.type !== "moderation_warning"
+      ).length;
       res.json({ count });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -8820,13 +8824,15 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       const sanitizedReason = sanitizeText(reason);
 
       if (action === "warn") {
+        // Deliberately not a normal notification: the target sees a blocking
+        // screen with the report and this message until they acknowledge it.
         await storage.createNotification({
           userId: targetUser.id,
-          type: "system",
+          type: "moderation_warning",
           title: "Official Warning",
-          message: `You have received an official warning from the moderation team. Reason: ${sanitizedReason}. Please review the platform rules to avoid further action.`,
+          message: sanitizedReason,
           relatedId: report.id,
-          sourceType: "system",
+          sourceType: "report",
           sourceId: report.id,
         });
       } else if (action === "suspend") {
@@ -8886,6 +8892,47 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       res.json({ success: true, action: actionLabel });
     } catch (error) {
       console.error("Disciplinary action error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Official warnings waiting to be acknowledged by the signed-in user.
+  app.get("/api/moderation/warnings/pending", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const notifications = await storage.getNotifications(userId, true);
+      const warnings = notifications.filter(n => n.type === "moderation_warning" && !n.read);
+
+      const pending = await Promise.all(warnings.map(async (warning) => {
+        const report = warning.relatedId ? await storage.getReport(warning.relatedId) : undefined;
+        const moderator = report?.reviewerId ? await storage.getUser(report.reviewerId) : undefined;
+        return {
+          id: warning.id,
+          issuedAt: warning.createdAt,
+          moderatorMessage: warning.message,
+          reportReason: report?.reason ?? null,
+          reportText: report?.description ?? null,
+          moderator: moderator ? { username: moderator.username } : null,
+        };
+      }));
+
+      res.json(pending);
+    } catch (error) {
+      console.error("Pending warnings error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/moderation/warnings/:id/acknowledge", requireAuth, async (req, res) => {
+    try {
+      const notifications = await storage.getNotifications(req.session.userId!, true);
+      const warning = notifications.find(n => n.id === req.params.id && n.type === "moderation_warning");
+      if (!warning) {
+        return res.status(404).json({ error: "Warning not found" });
+      }
+      await storage.markNotificationAsRead(warning.id);
+      res.json({ success: true });
+    } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
