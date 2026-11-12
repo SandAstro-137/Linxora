@@ -43,7 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const scheduleAuthRetry = () => {
     authRetriesRef.current += 1;
-    if (authRetriesRef.current > 6) return;
+    if (authRetriesRef.current > 6) {
+      // Give up quietly rather than spinning forever.
+      setIsLoading(false);
+      return;
+    }
     const delay = Math.min(1000 * authRetriesRef.current, 8000);
     setTimeout(() => {
       void checkAuth();
@@ -61,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (response.ok) {
         authRetriesRef.current = 0;
+        setIsLoading(false);
         const userData = await response.json();
         setUser(userData);
         const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
@@ -78,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: true }));
         }
       } else if (response.status === 403) {
+        setIsLoading(false);
         const data = await response.json();
         if (data.accountStatus === "suspended") {
           setSuspensionInfo({
@@ -94,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (response.status === 401) {
         // Only an explicit "no session" response ends the session.
         authRetriesRef.current = 0;
+        setIsLoading(false);
         setUser(null);
       } else {
         // A deploy restart, 502 or other server error must never look like a
@@ -103,8 +110,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Auth check failed:", error);
       scheduleAuthRetry();
-    } finally {
-      setIsLoading(false);
     }
   };
 
