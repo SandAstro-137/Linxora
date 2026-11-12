@@ -28,6 +28,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
+  // Coming back to this tab (for example after confirming an email in the tab
+  // the link opened) should show server-side profile changes immediately.
+  useEffect(() => {
+    if (!user) return;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") void checkAuth();
+    };
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    window.addEventListener("focus", refreshOnReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+      window.removeEventListener("focus", refreshOnReturn);
+    };
+  }, [user]);
+
   // Keep presence fresh while a tab is open: heartbeat every minute.
   useEffect(() => {
     if (!user) return;

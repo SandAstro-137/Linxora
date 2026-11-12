@@ -4,9 +4,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { CheckCircle, XCircle, Loader2, Mail } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth-context";
 
 export default function VerifyEmailPage() {
   const [, setLocation] = useLocation();
+  const { refetchUser } = useAuth();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("");
   const [email, setEmail] = useState("");
@@ -36,6 +38,10 @@ export default function VerifyEmailPage() {
           setEmail(data.email || "");
           queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
           queryClient.invalidateQueries({ queryKey: ["/api/profile"] });
+          // The signed-in user lives in the auth context, not in a query, so
+          // refresh it directly; otherwise Settings keeps showing the old,
+          // unverified email until the page is reloaded.
+          await refetchUser();
         } else {
           setStatus("error");
           setMessage(data.error || "Failed to verify email. The link may be expired or already used.");
