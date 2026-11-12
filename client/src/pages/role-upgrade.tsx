@@ -107,6 +107,10 @@ export default function RoleUpgradePage() {
   // undone, so the entered details are held here until the person confirms the
   // consequences in the dialog.
   const [pendingPromotion, setPendingPromotion] = useState<z.infer<typeof customerToFreelancerSchema> | null>(null);
+  // The moderator application also changes the account role permanently once
+  // approved, so the entered details wait for a confirmation warning first.
+  const [pendingModeratorApplication, setPendingModeratorApplication] =
+    useState<z.infer<typeof freelancerToModeratorSchema> | null>(null);
 
   const { data: myRequests = [], isLoading } = useQuery<RoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/my"],
@@ -179,6 +183,13 @@ export default function RoleUpgradePage() {
   };
 
   const onFreelancerSubmit = (data: z.infer<typeof freelancerToModeratorSchema>) => {
+    setPendingModeratorApplication(data);
+  };
+
+  const confirmModeratorApplication = () => {
+    if (!pendingModeratorApplication) return;
+    const data = pendingModeratorApplication;
+    setPendingModeratorApplication(null);
     submitMutation.mutate({
       upgradeType: "freelancer_to_moderator",
       ...data,
@@ -450,6 +461,48 @@ export default function RoleUpgradePage() {
                 </form>
               </Form>
             )}
+            <AlertDialog
+              open={pendingModeratorApplication !== null}
+              onOpenChange={(open) => {
+                if (!open) setPendingModeratorApplication(null);
+              }}
+            >
+              <AlertDialogContent data-testid="dialog-moderator-warning">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Apply to become a Moderator?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="block font-medium text-destructive">
+                      Read this before you apply.
+                    </span>
+                    <span className="mt-2 block">
+                      Moderators are staff, not clients. Once approved you can review reports, issue
+                      warnings, suspend or ban accounts, and enter the staff team room. Those powers
+                      are not reversible: a moderator account cannot be changed back to a freelancer
+                      account, and losing the role is decided by leadership.
+                    </span>
+                    <span className="mt-2 block">
+                      Moderators are held to the platform rules more strictly than other accounts.
+                      Misuse of moderation powers can end your account.
+                    </span>
+                    <span className="mt-2 block">
+                      Your application is reviewed by the Founder or Head of Moderation and is not
+                      granted automatically.
+                    </span>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="button-cancel-mod-application">Cancel</AlertDialogCancel>
+                  <Button
+                    variant="destructive"
+                    onClick={confirmModeratorApplication}
+                    disabled={submitMutation.isPending}
+                    data-testid="button-confirm-mod-application"
+                  >
+                    {submitMutation.isPending ? "Submitting..." : "Yes, submit my application"}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </CardContent>
         </Card>
       )}
