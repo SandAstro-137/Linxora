@@ -187,6 +187,7 @@ export default function ModerationPage() {
 
   const { data: pendingReports, isLoading: reportsLoading } = useQuery<Report[]>({
     queryKey: ["/api/reports/pending"],
+    refetchInterval: 10000, // New reports appear in the queue without a refresh
   });
 
   const { data: pendingPTORequests, isLoading: ptoLoading } = useQuery<EnrichedPTORequest[]>({
@@ -204,6 +205,7 @@ export default function ModerationPage() {
   const { data: roleUpgradeRequests = [], isLoading: upgradesLoading } = useQuery<EnrichedRoleUpgradeRequest[]>({
     queryKey: ["/api/role-upgrade-requests/pending"],
     enabled: currentUser?.role === "founder" || currentUser?.role === "head_of_moderation",
+    refetchInterval: 10000,
   });
 
   const isLeadership = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
@@ -283,6 +285,9 @@ export default function ModerationPage() {
   };
 
   const [upgradeReviewNotes, setUpgradeReviewNotes] = useState<Record<string, string>>({});
+  // Approving a moderator promotion hands over staff powers, so it goes through
+  // a warning step instead of applying on a single click.
+  const [moderatorPromotionTarget, setModeratorPromotionTarget] = useState<EnrichedRoleUpgradeRequest | null>(null);
   const canApproveModeratorPromotion = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
 
   const reviewUpgradeMutation = useMutation({
@@ -1789,11 +1794,17 @@ export default function ModerationPage() {
                     ) : (
                       <div className="flex gap-2 pt-2">
                         <Button
-                          onClick={() => reviewUpgradeMutation.mutate({ 
-                            id: request.id, 
-                            status: "approved",
-                            notes: upgradeReviewNotes[request.id]
-                          })}
+                          onClick={() => {
+                            if (request.upgradeType === "freelancer_to_moderator") {
+                              setModeratorPromotionTarget(request);
+                              return;
+                            }
+                            reviewUpgradeMutation.mutate({
+                              id: request.id,
+                              status: "approved",
+                              notes: upgradeReviewNotes[request.id]
+                            });
+                          }}
                           disabled={reviewUpgradeMutation.isPending}
                           className="flex-1"
                           data-testid={`button-approve-upgrade-${request.id}`}
@@ -2382,6 +2393,50 @@ export default function ModerationPage() {
               data-testid="button-submit-changes"
             >
               Submit Feedback
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={moderatorPromotionTarget !== null}
+        onOpenChange={(open) => { if (!open) setModeratorPromotionTarget(null); }}
+      >
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-moderator-promotion-warning">
+          <DialogHeader>
+            <DialogTitle>Give this account moderator access?</DialogTitle>
+            <DialogDescription>
+              {moderatorPromotionTarget?.user?.username || "This user"} will be able to review reports,
+              issue warnings, suspend or ban users, and join the staff team room.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            This is a staff role, not a client role. Make sure the application was reviewed, and note that
+            only a Founder or Head of Moderation can undo it.
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setModeratorPromotionTarget(null)}
+              data-testid="button-cancel-moderator-promotion"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!moderatorPromotionTarget) return;
+                reviewUpgradeMutation.mutate({
+                  id: moderatorPromotionTarget.id,
+                  status: "approved",
+                  notes: upgradeReviewNotes[moderatorPromotionTarget.id],
+                });
+                setModeratorPromotionTarget(null);
+              }}
+              disabled={reviewUpgradeMutation.isPending}
+              data-testid="button-confirm-moderator-promotion"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              Promote to moderator
             </Button>
           </DialogFooter>
         </DialogContent>
