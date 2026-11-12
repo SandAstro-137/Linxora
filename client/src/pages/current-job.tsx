@@ -73,6 +73,9 @@ export default function CurrentJobPage() {
     // leave a finished job on screen until the freelancer reloaded the page.
     refetchInterval: 10000,
     refetchIntervalInBackground: true,
+    // A brief 502 during a deploy should not turn into an error screen.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
 
@@ -92,6 +95,8 @@ export default function CurrentJobPage() {
     enabled: !!currentJob?.id,
     refetchInterval: 10000,
     refetchIntervalInBackground: true,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
   // Get chat messages

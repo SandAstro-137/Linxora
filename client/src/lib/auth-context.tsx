@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { User } from "@shared/schema";
 import { linkSavedAccounts, saveAccountProfileIfRequested } from "./saved-accounts";
 
@@ -39,6 +39,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [user]);
 
+  const authRetriesRef = useRef(0);
+
+  const scheduleAuthRetry = () => {
+    authRetriesRef.current += 1;
+    if (authRetriesRef.current > 6) return;
+    const delay = Math.min(1000 * authRetriesRef.current, 8000);
+    setTimeout(() => {
+      void checkAuth();
+    }, delay);
+  };
+
   const checkAuth = async () => {
     try {
       // no-store: profile edits (e.g. specialization) call refetchUser() right
@@ -49,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         cache: "no-store",
       });
       if (response.ok) {
+        authRetriesRef.current = 0;
         const userData = await response.json();
         setUser(userData);
         const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
@@ -79,11 +91,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           setUser(null);
         }
-      } else {
+      } else if (response.status === 401) {
+        // Only an explicit "no session" response ends the session.
+        authRetriesRef.current = 0;
         setUser(null);
+      } else {
+        // A deploy restart, 502 or other server error must never look like a
+        // sign-out: keep the current user and retry shortly.
+        scheduleAuthRetry();
       }
     } catch (error) {
       console.error("Auth check failed:", error);
+      scheduleAuthRetry();
     } finally {
       setIsLoading(false);
     }

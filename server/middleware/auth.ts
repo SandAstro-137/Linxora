@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
+import { resolveSessionUser } from '../lib/session-identity';
 
 // Track last activity update timestamps to avoid excessive database writes
 const lastActivityUpdates = new Map<string, number>();
@@ -38,8 +39,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     }).catch(() => {});
   }
 
-  storage.getUser(userId).then(user => {
+  resolveSessionUser(req).then(user => {
     if (!user) {
+      req.session.destroy(() => {});
       return res.status(401).json({ error: 'User not found' });
     }
     if (user.accountStatus === 'banned') {

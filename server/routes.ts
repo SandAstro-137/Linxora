@@ -9,6 +9,7 @@ import { insertJobSchema, insertPTORequestSchema, insertInvitationSchema, insert
 import { shouldRestoreGoogleCustomerRole } from "./lib/google-auth-role";
 import { canCreateGoogleAccount, canSwitchToAccount, completeAuthAccountLink, createGoogleOAuthState, isGoogleAddAccountState, matchesGoogleOAuthState, matchesRequestedAuthAccount, prepareAuthAccountAddition } from "./lib/auth-account-switch";
 import { shouldApplyDemoIdentity } from "./lib/demo-auth";
+import { resolveSessionUser } from "./lib/session-identity";
 import { DEMO_ACCOUNT_IDS, isDemoAccountId, isDemoModeEnabled } from "./lib/demo-mode";
 import { ensureDemoAccounts } from "./lib/demo-seed";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
@@ -284,24 +285,6 @@ async function performUsdtTransfer(fromUserId: string, toUserId: string, amount:
   return {};
 }
 
-declare module "express-session" {
-  interface SessionData {
-    userId?: string;
-    userRole?: string;
-    oauthState?: string;
-    accountDeletionUserId?: string;
-    accountDeletionConfirmUntil?: number;
-    accountDeletionIssues?: string[];
-    isDemoSession?: boolean;
-    linkedAccountIds?: string[];
-    addAccountUserId?: string;
-    addAccountFlow?: boolean;
-    authFlow?: "add-account";
-    addAccountTargetUserId?: string;
-    addAccountLinkedIds?: string[];
-  }
-}
-
 export async function registerRoutes(app: Express): Promise<Server> {
   // In development only, restore each browser tab's selected account before
   // auth middleware runs. Express cookies are shared by tabs; the tab-local
@@ -333,6 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // routes. Restore it before express-session serializes the shared
           // browser cookie, so another tab cannot overwrite the login.
           req.session.userId = tabUser.id;
+          req.session.discordId = tabUser.discordId;
           req.session.userRole = tabUser.role;
           if (tabUser.discordId?.startsWith("demo-")) req.session.isDemoSession = true;
           else delete req.session.isDemoSession;
@@ -351,6 +335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const demoUser = await storage.getUserByDiscordId(demoId);
         if (demoUser) {
           req.session.userId = demoUser.id;
+          req.session.discordId = demoUser.discordId;
           req.session.userRole = demoUser.role;
         }
       } catch {
@@ -433,6 +418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       req.session.userId = user.id;
+      req.session.discordId = user?.discordId;
       req.session.userRole = user.role;
       req.session.isDemoSession = true;
       res.json(user);
@@ -498,6 +484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "This account cannot be selected right now." });
       }
       req.session.userId = targetUser.id;
+      req.session.discordId = targetUser.discordId;
       req.session.userRole = targetUser.role;
       if (targetAccountIsDemo) req.session.isDemoSession = true;
       else delete req.session.isDemoSession;
@@ -864,6 +851,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete req.session.addAccountUserId;
       delete req.session.addAccountLinkedIds;
       req.session.userId = user.id;
+      req.session.discordId = user.discordId;
       req.session.userRole = user.role;
       delete req.session.isDemoSession;
       req.session.linkedAccountIds = Array.from(new Set([...previousLinkedAccountIds, previousAccountId, user.id].filter((id): id is string => typeof id === "string")));
@@ -878,7 +866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/me", requireAuth, async (req, res) => {
     try {
-      const user = await storage.getUser(req.session.userId!);
+      const user = await resolveSessionUser(req);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -953,7 +941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy(() => {
-      res.clearCookie("connect.sid", { path: "/" });
+      res.clearCookie("linxova.sid", { path: "/" });
       res.json({ success: true });
     });
   });
@@ -7955,7 +7943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteAccount(userId);
       req.session.destroy(error => {
         if (error) return res.status(500).json({ error: "Account deleted, but sign-out failed. Please sign in again." });
-        res.clearCookie("connect.sid");
+        res.clearCookie("linxova.sid");
         res.json({ success: true });
       });
     } catch (error) {

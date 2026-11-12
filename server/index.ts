@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
+import { statelessSession } from "./lib/stateless-session";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -13,17 +13,13 @@ declare module 'http' {
   }
 }
 
-// Session configuration
-app.use(session({
+// Session configuration — encrypted into the cookie so a deploy or restart
+// cannot sign everyone out the way the in-memory store did.
+app.use(statelessSession({
   secret: process.env.SESSION_SECRET || 'freelancehub-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production', // HTTPS-only in production
-    httpOnly: true,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    sameSite: 'lax',
-  },
+  cookieName: 'linxova.sid',
+  maxAgeMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+  secure: process.env.NODE_ENV === 'production', // HTTPS-only in production
 }));
 
 // Fail fast in production if no strong session secret is set — the fallback
