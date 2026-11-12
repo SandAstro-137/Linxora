@@ -143,8 +143,8 @@ export default function LoginPage() {
               },
               {
                 icon: Wallet,
-                title: "USDT Wallet",
-                text: "Manage USDT deposits, withdrawals, and job payments",
+                title: "USD Wallet",
+                text: "Manage USD deposits, withdrawals, and job payments",
               },
               {
                 icon: Users,
