@@ -2081,12 +2081,18 @@ export class MemStorage implements IStorage {
       }
     }
 
-    const existingMessages = Array.from(this.directMessages.values())
-      .some(msg => 
+    // A direct conversation only counts once BOTH people have spoken in it. A
+    // single one-sided message (typically spam) must not make the sender
+    // "known", otherwise their next message would bypass the spam filter just
+    // because the first one exists.
+    const directConversation = Array.from(this.directMessages.values())
+      .filter(msg =>
         (msg.senderId === userId1 && msg.receiverId === userId2) ||
         (msg.senderId === userId2 && msg.receiverId === userId1)
       );
-    if (existingMessages) {
+    const user1SpokeDirectly = directConversation.some(msg => msg.senderId === userId1);
+    const user2SpokeDirectly = directConversation.some(msg => msg.senderId === userId2);
+    if (user1SpokeDirectly && user2SpokeDirectly) {
       return true;
     }
 

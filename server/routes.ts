@@ -10653,7 +10653,7 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       // switch is a delivery preference handled client-side (badge suppression
       // + sound), not an inbox filter, so the notification is always created.
       const receiverPrefs = await storage.getUserPreferences(receiverId);
-      const spamFilterOn = receiverPrefs?.spamFilterEnabled ?? false;
+      const spamFilterOn = receiverPrefs?.spamFilterEnabled ?? true;
       const isSpamNotification = spamFilterOn && !isKnownSender;
       await storage.createNotification({
         userId: receiverId,
