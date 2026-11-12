@@ -387,16 +387,71 @@ export default function SettingsPage() {
     queryKey: ["/api/settings"],
   });
 
-  const updateSettingsMutation = useMutation({
-    mutationFn: (updates: Partial<UserPreferences>) => apiRequest("PUT", "/api/settings", updates),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+  // Preference switches move the moment they are clicked instead of waiting for
+  // the save to come back. Rapid clicks used to fire one request each, all
+  // computed from the same stale server value, and the replies arrived in any
+  // order — so the switch could end up in the wrong position. Changes are now
+  // applied locally, batched into one debounced request, and saves are
+  // serialised so a later burst can never be overwritten by an earlier one.
+  const [optimisticSettings, setOptimisticSettings] = useState<Partial<UserPreferences>>({});
+  const pendingSettingsRef = useRef<Partial<UserPreferences>>({});
+  const saveSettingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingSettingsRef = useRef(false);
+
+  const prefs: Partial<UserPreferences> = { ...(settings ?? {}), ...optimisticSettings };
+
+  const persistPendingSettings = async () => {
+    if (savingSettingsRef.current) return;
+    const updates = pendingSettingsRef.current;
+    const keys = Object.keys(updates) as (keyof UserPreferences)[];
+    if (keys.length === 0) return;
+
+    pendingSettingsRef.current = {};
+    savingSettingsRef.current = true;
+    try {
+      const response = await apiRequest("PUT", "/api/settings", updates);
+      const saved = await response.json();
+      queryClient.setQueryData(["/api/settings"], saved);
+      setOptimisticSettings(prev => {
+        const next = { ...prev };
+        for (const key of keys) {
+          // Keep anything the user changed while this save was in flight.
+          if (!(key in pendingSettingsRef.current)) delete next[key];
+        }
+        return next;
+      });
       toast({ title: "Settings saved", description: "Your preferences have been updated." });
-    },
-    onError: () => {
+    } catch {
+      pendingSettingsRef.current = {};
+      setOptimisticSettings({});
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Error", description: "Failed to save settings.", variant: "destructive" });
-    },
-  });
+    } finally {
+      savingSettingsRef.current = false;
+      if (Object.keys(pendingSettingsRef.current).length > 0) {
+        void persistPendingSettings();
+      }
+    }
+  };
+
+  const queueSettingChange = (key: keyof UserPreferences, value: string | boolean | number) => {
+    setOptimisticSettings(prev => ({ ...prev, [key]: value }));
+    pendingSettingsRef.current = { ...pendingSettingsRef.current, [key]: value };
+    if (saveSettingsTimerRef.current) clearTimeout(saveSettingsTimerRef.current);
+    saveSettingsTimerRef.current = setTimeout(() => {
+      saveSettingsTimerRef.current = null;
+      void persistPendingSettings();
+    }, 350);
+  };
+
+  // Do not lose a change that was still inside the debounce window on leave.
+  useEffect(() => () => {
+    if (saveSettingsTimerRef.current) {
+      clearTimeout(saveSettingsTimerRef.current);
+      saveSettingsTimerRef.current = null;
+      void persistPendingSettings();
+    }
+  }, []);
 
   const updateProfileMutation = useMutation({
     mutationFn: (data: { username?: string }) => apiRequest("PUT", "/api/profile", data),
@@ -705,11 +760,11 @@ export default function SettingsPage() {
   };
 
   const toggleSetting = (key: keyof UserPreferences, value: boolean) => {
-    updateSettingsMutation.mutate({ [key]: value });
+    queueSettingChange(key, value);
   };
 
   const updateSetting = (key: keyof UserPreferences, value: string | boolean | number) => {
-    updateSettingsMutation.mutate({ [key]: value });
+    queueSettingChange(key, value);
   };
 
   const handleEmailChange = () => {
@@ -947,7 +1002,7 @@ export default function SettingsPage() {
             </div>
             <Switch
               id="notifications-enabled"
-              checked={settings?.notificationsEnabled ?? true}
+              checked={prefs.notificationsEnabled ?? true}
               onCheckedChange={(checked) => toggleSetting("notificationsEnabled", checked)}
               data-testid="switch-notifications-enabled"
             />
@@ -960,7 +1015,7 @@ export default function SettingsPage() {
             </div>
             <Switch
               id="notification-sound"
-              checked={settings?.notificationSoundEnabled ?? true}
+              checked={prefs.notificationSoundEnabled ?? true}
               onCheckedChange={(checked) => toggleSetting("notificationSoundEnabled", checked)}
               data-testid="switch-notification-sound"
             />
@@ -973,7 +1028,7 @@ export default function SettingsPage() {
             </div>
             <Switch
               id="delete-confirmation"
-              checked={settings?.deleteConfirmationEnabled ?? true}
+              checked={prefs.deleteConfirmationEnabled ?? true}
               onCheckedChange={(checked) => toggleSetting("deleteConfirmationEnabled", checked)}
               data-testid="switch-delete-confirmation"
             />
@@ -988,7 +1043,7 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   id="team-request-notifications"
-                  checked={settings?.teamRequestNotificationsEnabled ?? true}
+                  checked={prefs.teamRequestNotificationsEnabled ?? true}
                   onCheckedChange={(checked) => toggleSetting("teamRequestNotificationsEnabled", checked)}
                   data-testid="switch-team-request-notifications"
                 />
@@ -1003,7 +1058,7 @@ export default function SettingsPage() {
             </div>
             <Switch
               id="spam-filter"
-              checked={settings?.spamFilterEnabled ?? false}
+              checked={prefs.spamFilterEnabled ?? false}
               onCheckedChange={(checked) => toggleSetting("spamFilterEnabled", checked)}
               data-testid="switch-spam-filter"
             />
@@ -1030,7 +1085,7 @@ export default function SettingsPage() {
               </div>
               <Switch
                 id="abandon-exemption"
-                checked={settings?.alwaysRequestAbandonExemption ?? false}
+                checked={prefs.alwaysRequestAbandonExemption ?? false}
                 onCheckedChange={(checked) => toggleSetting("alwaysRequestAbandonExemption", checked)}
                 data-testid="switch-abandon-exemption"
               />
@@ -1045,7 +1100,7 @@ export default function SettingsPage() {
               </div>
               <Switch
                 id="abandon-confirm"
-                checked={settings?.showAbandonConfirmation ?? true}
+                checked={prefs.showAbandonConfirmation ?? true}
                 onCheckedChange={(checked) => toggleSetting("showAbandonConfirmation", checked)}
                 data-testid="switch-abandon-confirm"
               />
@@ -1070,7 +1125,7 @@ export default function SettingsPage() {
             </div>
             <Switch
               id="show-online-status"
-              checked={settings?.showOnlineStatus ?? true}
+              checked={prefs.showOnlineStatus ?? true}
               onCheckedChange={(checked) => toggleSetting("showOnlineStatus", checked)}
               data-testid="switch-show-online-status"
             />
@@ -1082,7 +1137,7 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">Control who is allowed to start a direct message conversation with you</p>
             </div>
             <Select
-              value={(settings?.allowDirectMessages as string) ?? "everyone"}
+              value={(prefs.allowDirectMessages as string) ?? "everyone"}
               onValueChange={(value) => updateSetting("allowDirectMessages" as keyof UserPreferences, value)}
               data-testid="select-allow-dms"
             >
