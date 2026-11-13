@@ -6,10 +6,11 @@ import { resolveSessionUser } from '../lib/session-identity';
 const lastActivityUpdates = new Map<string, number>();
 const ACTIVITY_UPDATE_INTERVAL = 60000; // Only update every 60 seconds
 
-// A banned account is signed out of the app, but may reopen a stripped-down
-// view of its own wallet and settings. These paths are the only ones it can use.
-const BANNED_ALWAYS_ALLOWED = ["/api/auth/logout", "/api/auth/banned-view"];
-const BANNED_VIEW_ALLOWED_PREFIXES = [
+// A banned or suspended account is signed out of the app, but may reopen a
+// stripped-down view of its own wallet and settings. These paths are the only
+// ones it can use.
+const LIMITED_ALWAYS_ALLOWED = ["/api/auth/logout", "/api/auth/limited-view"];
+const LIMITED_VIEW_ALLOWED_PREFIXES = [
   "/api/auth/",
   "/api/wallet",
   "/api/settings",
@@ -17,9 +18,9 @@ const BANNED_VIEW_ALLOWED_PREFIXES = [
   "/api/blacklist",
 ];
 
-function isAllowedForBannedView(pathname: string, bannedView: boolean) {
-  if (BANNED_ALWAYS_ALLOWED.includes(pathname)) return true;
-  return bannedView && BANNED_VIEW_ALLOWED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+function isAllowedForLimitedView(pathname: string, limitedView: boolean) {
+  if (LIMITED_ALWAYS_ALLOWED.includes(pathname)) return true;
+  return limitedView && LIMITED_VIEW_ALLOWED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -59,8 +60,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
       req.session.destroy(() => {});
       return res.status(401).json({ error: 'User not found' });
     }
+    const limitedView = req.session.limitedView === true;
+
     if (user.accountStatus === 'banned') {
-      if (isAllowedForBannedView(req.path, req.session.bannedView === true)) {
+      if (isAllowedForLimitedView(req.path, limitedView)) {
         return next();
       }
       return res.status(403).json({
@@ -70,16 +73,22 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
         canViewWallet: true,
       });
     }
-    if (req.session.bannedView) {
-      delete req.session.bannedView;
-    }
+
     if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
+      if (isAllowedForLimitedView(req.path, limitedView)) {
+        return next();
+      }
       return res.status(403).json({ 
         error: `Your account is suspended until ${new Date(user.suspendedUntil).toLocaleDateString()}`,
         accountStatus: 'suspended',
         suspendedUntil: user.suspendedUntil,
-        reason: user.suspendedReason
+        reason: user.suspendedReason,
+        canViewWallet: true,
       });
+    }
+
+    if (req.session.limitedView) {
+      delete req.session.limitedView;
     }
     next();
   }).catch(() => {

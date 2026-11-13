@@ -408,6 +408,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       if (user.accountStatus === 'suspended' && user.suspendedUntil && new Date(user.suspendedUntil) > new Date()) {
+        // Keep a session so the suspension screen can open the wallet/settings
+        // only view; every normal endpoint stays refused for it.
+        req.session.userId = user!.id;
+        req.session.userRole = user!.role;
+        req.session.isDemoSession = true;
         return res.status(403).json({ 
           error: `Your account is suspended until ${new Date(user.suspendedUntil).toLocaleDateString()}`,
           accountStatus: 'suspended',
@@ -880,31 +885,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Never let the browser cache this: profile edits refetch it and must
       // see the freshly saved values immediately.
       res.set("Cache-Control", "no-store");
-      res.json({ ...user, bannedView: req.session.bannedView === true });
+      res.json({ ...user, limitedView: req.session.limitedView === true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // A banned account cannot use the app, but it may reopen a wallet-and-settings
-  // only view of its own account. The middleware only lets banned sessions reach
-  // those endpoints once this flag is set.
-  app.post("/api/auth/banned-view", requireAuth, async (req, res) => {
+  // A banned or suspended account cannot use the app, but it may reopen a
+  // wallet-and-settings-only view of its own account. The middleware only lets
+  // those sessions reach the other endpoints once this flag is set.
+  app.post("/api/auth/limited-view", requireAuth, async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
       if (!user) {
         return res.status(401).json({ error: "Unauthorized" });
       }
-      if (user.accountStatus !== "banned") {
-        delete req.session.bannedView;
-        return res.status(400).json({ error: "This account is not banned" });
+      const isSuspended =
+        user.accountStatus === "suspended" &&
+        !!user.suspendedUntil &&
+        new Date(user.suspendedUntil) > new Date();
+      if (user.accountStatus !== "banned" && !isSuspended) {
+        delete req.session.limitedView;
+        return res.status(400).json({ error: "This account is not restricted" });
       }
-      req.session.bannedView = req.body?.enabled !== false;
+      req.session.limitedView = req.body?.enabled !== false;
       req.session.save(() => {
-        res.json({ enabled: req.session.bannedView === true });
+        res.json({ enabled: req.session.limitedView === true });
       });
     } catch (error) {
-      console.error("Banned view error:", error);
+      console.error("Limited view error:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

@@ -16,7 +16,7 @@ interface AuthContextType {
   isLoading: boolean;
   suspensionInfo: SuspensionInfo | null;
   bannedInfo: BannedInfo | null;
-  bannedView: boolean;
+  limitedView: boolean;
   login: (demoId: string) => Promise<void>;
   logout: () => void;
   refetchUser: () => Promise<void>;
@@ -31,8 +31,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [suspensionInfo, setSuspensionInfo] = useState<SuspensionInfo | null>(null);
   const [bannedInfo, setBannedInfo] = useState<BannedInfo | null>(null);
-  // True once a banned account has opened its wallet/settings-only view.
-  const [bannedView, setBannedView] = useState(false);
+  // True once a banned or suspended account has opened its
+  // wallet/settings-only view.
+  const [limitedView, setLimitedView] = useState(false);
 
   useEffect(() => {
     checkAuth();
@@ -95,10 +96,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(userData);
         if (userData.accountStatus === "banned") {
           setBannedInfo({ reason: userData.suspendedReason || null });
-          setBannedView(true);
+          setSuspensionInfo(null);
+          setLimitedView(userData.limitedView === true);
+        } else if (userData.accountStatus === "suspended" && userData.suspendedUntil) {
+          setSuspensionInfo({
+            suspendedUntil: userData.suspendedUntil,
+            reason: userData.suspendedReason || null,
+          });
+          setBannedInfo(null);
+          setLimitedView(userData.limitedView === true);
         } else {
           setBannedInfo(null);
-          setBannedView(false);
+          setSuspensionInfo(null);
+          setLimitedView(false);
         }
         const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
         saveAccountProfileIfRequested(userData, addAccountPending);
@@ -108,7 +118,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         sessionStorage.removeItem("addAccountPending");
         sessionStorage.removeItem("addAccountSourceUserId");
-        setSuspensionInfo(null);
         if (import.meta.env.DEV && sessionStorage.getItem("oauthTabAuthPending") === "true") {
           sessionStorage.setItem("tabUserId", userData.id);
           sessionStorage.removeItem("oauthTabAuthPending");
@@ -123,10 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             reason: data.reason || null,
           });
           setUser(null);
+          setLimitedView(false);
         } else if (data.accountStatus === "banned") {
           setBannedInfo({ reason: data.reason || null });
           setSuspensionInfo(null);
-          setBannedView(false);
+          setLimitedView(false);
           setUser(null);
         } else {
           setUser(null);
@@ -184,7 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else if (data.accountStatus === "banned") {
             setBannedInfo({ reason: data.reason || null });
             setSuspensionInfo(null);
-            setBannedView(false);
+            setLimitedView(false);
             setUser(null);
           }
         }
@@ -208,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setSuspensionInfo(null);
       setBannedInfo(null);
-      setBannedView(false);
+      setLimitedView(false);
       window.location.href = "/";
     } catch (error) {
       console.error("Logout failed:", error);
@@ -221,11 +231,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearBanned = () => {
     setBannedInfo(null);
-    setBannedView(false);
+    setLimitedView(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, bannedInfo, bannedView, login, logout, refetchUser: checkAuth, clearSuspension, clearBanned }}>
+    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, bannedInfo, limitedView, login, logout, refetchUser: checkAuth, clearSuspension, clearBanned }}>
       {children}
     </AuthContext.Provider>
   );

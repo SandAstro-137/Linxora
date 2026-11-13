@@ -390,6 +390,22 @@ function SuspendedScreen() {
               </Button>
             )}
             <Button
+              className="w-full gap-2"
+              onClick={async () => {
+                await fetch("/api/auth/limited-view", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ enabled: true }),
+                });
+                window.location.href = "/wallet";
+              }}
+              data-testid="button-suspension-view-wallet"
+            >
+              <Wallet className="h-4 w-4" />
+              View Settings &amp; Wallet
+            </Button>
+            <Button
               variant="outline"
               className="w-full gap-2"
               onClick={handleSwitchAccount}
@@ -459,7 +475,7 @@ function BannedScreen() {
             <Button
               className="w-full gap-2"
               onClick={async () => {
-                await fetch("/api/auth/banned-view", {
+                await fetch("/api/auth/limited-view", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   credentials: "include",
@@ -504,8 +520,25 @@ function BannedScreen() {
   );
 }
 
-function BannedView() {
-  const { bannedInfo, logout } = useAuth();
+function LimitedView() {
+  const { bannedInfo, suspensionInfo, logout, refetchUser } = useAuth();
+  const isSuspended = !!suspensionInfo && !bannedInfo;
+  const restrictionReason = bannedInfo?.reason || suspensionInfo?.reason || null;
+
+  // A suspension is temporary: pick up the lift without needing a manual reload.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refetchUser();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [refetchUser]);
+
+  const liftsOn = suspensionInfo
+    ? new Date(suspensionInfo.suspendedUntil).toLocaleString("en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -513,7 +546,7 @@ function BannedView() {
         <div className="flex items-center gap-3">
           <span className="font-semibold">Linxova</span>
           <Badge variant="destructive" data-testid="badge-banned-mode">
-            Banned
+            {isSuspended ? "Suspended" : "Banned"}
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -540,19 +573,20 @@ function BannedView() {
         <Card className="border-destructive/40">
           <CardHeader>
             <CardTitle className="text-base" data-testid="text-banned-mode-title">
-              Your account is banned
+              {isSuspended ? "Your account is suspended" : "Your account is banned"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              You can only open your wallet and settings. All other parts of Linxova are
-              unavailable while the ban is in place.
+              {isSuspended
+                ? `You can only open your wallet and settings until your suspension ends on ${liftsOn}. After that your account works normally again.`
+                : "You can only open your wallet and settings. All other parts of Linxova are unavailable while the ban is in place."}
             </p>
-            {bannedInfo?.reason && (
+            {restrictionReason && (
               <div className="rounded-md bg-muted/50 p-3">
                 <p className="text-sm font-medium mb-1">Reason</p>
                 <p className="text-sm text-muted-foreground" data-testid="text-banned-mode-reason">
-                  {bannedInfo.reason}
+                  {restrictionReason}
                 </p>
               </div>
             )}
@@ -575,7 +609,7 @@ function BannedView() {
 }
 
 function AppContent() {
-  const { user, refetchUser, suspensionInfo, bannedInfo, bannedView } = useAuth();
+  const { user, refetchUser, suspensionInfo, bannedInfo, limitedView } = useAuth();
   const { toast } = useToast();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -609,8 +643,8 @@ function AppContent() {
     "--sidebar-width-icon": "3rem",
   };
 
-  if (bannedInfo && bannedView) {
-    return <BannedView />;
+  if ((bannedInfo || suspensionInfo) && limitedView) {
+    return <LimitedView />;
   }
 
   if (bannedInfo) {
