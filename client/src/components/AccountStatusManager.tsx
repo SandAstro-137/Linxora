@@ -102,6 +102,16 @@ export function AccountStatusManager() {
       setSuspendTarget(null);
       setBanTarget(null);
       setReason("");
+      const data = _data as {
+        cancelledJobRequests?: number;
+        removedFromJobs?: number;
+        cancelledFriendRequests?: number;
+      } | undefined;
+      const parts: string[] = [];
+      if (data?.removedFromJobs) parts.push(`removed from ${data.removedFromJobs} job(s)`);
+      if (data?.cancelledJobRequests) parts.push(`${data.cancelledJobRequests} job request(s) cancelled`);
+      if (data?.cancelledFriendRequests) parts.push(`${data.cancelledFriendRequests} friend request(s) cancelled`);
+
       toast({
         title:
           variables.action === "restore"
@@ -109,7 +119,9 @@ export function AccountStatusManager() {
             : variables.action === "suspend"
             ? "Account suspended"
             : "Account banned",
-        description: "The account status has been updated.",
+        description: parts.length
+          ? `The account status has been updated: ${parts.join(", ")}.`
+          : "The account status has been updated.",
       });
     },
     onError: (error: Error) => {

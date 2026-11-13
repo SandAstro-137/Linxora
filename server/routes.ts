@@ -13,6 +13,7 @@ import { resolveSessionUser } from "./lib/session-identity";
 import { DEMO_ACCOUNT_IDS, isDemoAccountId, isDemoModeEnabled } from "./lib/demo-mode";
 import { ensureDemoAccounts } from "./lib/demo-seed";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
+import { applyAccountRestrictions, isBannedAccount } from "./lib/account-restrictions";
 import { shouldApplyTabIdentity } from "./lib/tab-auth";
 import { getCurrentFreelancerJobs } from "./lib/current-jobs";
 import { filterContent, sanitizeText, isSpamLike, reviewJobContent } from "./lib/content-filter";
@@ -6042,6 +6043,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!targetUser) {
         return res.status(404).json({ error: "User not found" });
       }
+
+      if (isBannedAccount(targetUser)) {
+        return res.status(403).json({ error: "This account has been banned and cannot receive requests." });
+      }
       
       // Check if already friends
       const alreadyFriends = await storage.areFriends(req.session.userId!, toUserId);
@@ -6740,6 +6745,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Not authorized" });
       }
 
+      const invitee = await storage.getUser(userId);
+      if (isBannedAccount(invitee)) {
+        return res.status(403).json({ error: "This account has been banned and cannot join jobs." });
+      }
+
       const invitation = await storage.createInvitation({
         jobId,
         fromUserId: req.session.userId!,
@@ -6794,6 +6804,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (invited.role !== "freelancer") {
         return res.status(400).json({ error: "You can only invite freelancers" });
+      }
+      if (isBannedAccount(invited)) {
+        return res.status(403).json({ error: "This account has been banned and cannot join jobs." });
       }
 
       // Can't invite someone already on the job
@@ -8850,6 +8863,8 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           suspendedReason: sanitizedReason,
         });
 
+        await applyAccountRestrictions(storage, targetUser.id, "suspend");
+
         await storage.createNotification({
           userId: targetUser.id,
           type: "system",
@@ -8870,6 +8885,8 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           reason: sanitizedReason,
           bannedById: req.session.userId!,
         });
+
+        await applyAccountRestrictions(storage, targetUser.id, "ban");
 
         await storage.createNotification({
           userId: targetUser.id,
@@ -9045,6 +9062,7 @@ Your role is to help users understand how to use Linxova. Here is what you know 
             suspendedUntil,
             suspendedReason: sanitizedReason,
           });
+          const suspensionPenalties = await applyAccountRestrictions(storage, targetUser.id, "suspend");
           await storage.createNotification({
             userId: targetUser.id,
             type: "system",
@@ -9055,7 +9073,13 @@ Your role is to help users understand how to use Linxova. Here is what you know 
               ". Reason: " +
               sanitizedReason,
           });
-          return res.json({ success: true, accountStatus: "suspended", suspendedUntil });
+          return res.json({
+            success: true,
+            accountStatus: "suspended",
+            suspendedUntil,
+            cancelledJobRequests: suspensionPenalties.cancelledRequests,
+            removedFromJobs: suspensionPenalties.removedFromJobs.length,
+          });
         }
 
         await storage.updateUser(targetUser.id, {
@@ -9063,6 +9087,7 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           suspendedUntil: null,
           suspendedReason: sanitizedReason,
         });
+        const banPenalties = await applyAccountRestrictions(storage, targetUser.id, "ban");
         const existingBan = await storage.getUserBan(targetUser.id);
         if (!existingBan) {
           await storage.createUserBan({
@@ -9077,7 +9102,13 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           title: "Account Banned",
           message: "Your account has been banned. Reason: " + sanitizedReason,
         });
-        res.json({ success: true, accountStatus: "banned" });
+        res.json({
+          success: true,
+          accountStatus: "banned",
+          cancelledJobRequests: banPenalties.cancelledRequests,
+          removedFromJobs: banPenalties.removedFromJobs.length,
+          cancelledFriendRequests: banPenalties.cancelledFriendRequests,
+        });
       } catch (error) {
         console.error("Account status update error:", error);
         res.status(500).json({ error: "Internal server error" });
@@ -10767,6 +10798,12 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       const receiver = await storage.getUser(receiverId);
       if (!receiver) {
         return res.status(404).json({ error: "Recipient not found" });
+      }
+
+      if (isBannedAccount(receiver)) {
+        return res.status(403).json({
+          error: `You can't message ${receiver.username} because this account has been banned.`,
+        });
       }
 
       // Check if sender is blocked by receiver
