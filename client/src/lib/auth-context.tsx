@@ -16,6 +16,7 @@ interface AuthContextType {
   isLoading: boolean;
   suspensionInfo: SuspensionInfo | null;
   bannedInfo: BannedInfo | null;
+  bannedView: boolean;
   login: (demoId: string) => Promise<void>;
   logout: () => void;
   refetchUser: () => Promise<void>;
@@ -30,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [suspensionInfo, setSuspensionInfo] = useState<SuspensionInfo | null>(null);
   const [bannedInfo, setBannedInfo] = useState<BannedInfo | null>(null);
+  // True once a banned account has opened its wallet/settings-only view.
+  const [bannedView, setBannedView] = useState(false);
 
   useEffect(() => {
     checkAuth();
@@ -90,6 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
         const userData = await response.json();
         setUser(userData);
+        if (userData.accountStatus === "banned") {
+          setBannedInfo({ reason: userData.suspendedReason || null });
+          setBannedView(true);
+        } else {
+          setBannedInfo(null);
+          setBannedView(false);
+        }
         const addAccountPending = sessionStorage.getItem("addAccountPending") === "true";
         saveAccountProfileIfRequested(userData, addAccountPending);
         const previousAccountId = sessionStorage.getItem("addAccountSourceUserId");
@@ -116,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else if (data.accountStatus === "banned") {
           setBannedInfo({ reason: data.reason || null });
           setSuspensionInfo(null);
+          setBannedView(false);
           setUser(null);
         } else {
           setUser(null);
@@ -173,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else if (data.accountStatus === "banned") {
             setBannedInfo({ reason: data.reason || null });
             setSuspensionInfo(null);
+            setBannedView(false);
             setUser(null);
           }
         }
@@ -195,6 +207,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.dispatchEvent(new CustomEvent("demo-session-changed", { detail: false }));
       setUser(null);
       setSuspensionInfo(null);
+      setBannedInfo(null);
+      setBannedView(false);
       window.location.href = "/";
     } catch (error) {
       console.error("Logout failed:", error);
@@ -207,10 +221,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearBanned = () => {
     setBannedInfo(null);
+    setBannedView(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, bannedInfo, login, logout, refetchUser: checkAuth, clearSuspension, clearBanned }}>
+    <AuthContext.Provider value={{ user, isLoading, suspensionInfo, bannedInfo, bannedView, login, logout, refetchUser: checkAuth, clearSuspension, clearBanned }}>
       {children}
     </AuthContext.Provider>
   );

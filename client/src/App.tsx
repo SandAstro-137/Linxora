@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect } from "wouter";
+import { Switch, Route, Redirect, Link } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -17,10 +17,11 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { TutorialModal } from "@/components/TutorialModal";
-import { HelpCircle, AlertTriangle, ShieldAlert, LogOut, UserPlus, Clock, Ban } from "lucide-react";
+import { HelpCircle, AlertTriangle, ShieldAlert, LogOut, UserPlus, Clock, Ban, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 
 interface ErrorBoundaryState {
@@ -456,6 +457,22 @@ function BannedScreen() {
 
           <div className="space-y-2">
             <Button
+              className="w-full gap-2"
+              onClick={async () => {
+                await fetch("/api/auth/banned-view", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ enabled: true }),
+                });
+                window.location.href = "/wallet";
+              }}
+              data-testid="button-banned-view-wallet"
+            >
+              <Wallet className="h-4 w-4" />
+              View Settings &amp; Wallet
+            </Button>
+            <Button
               variant="outline"
               className="w-full gap-2"
               onClick={handleSwitchAccount}
@@ -487,8 +504,78 @@ function BannedScreen() {
   );
 }
 
+function BannedView() {
+  const { bannedInfo, logout } = useAuth();
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold">Linxova</span>
+          <Badge variant="destructive" data-testid="badge-banned-mode">
+            Banned
+          </Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/wallet">
+            <Button variant="outline" size="sm" className="gap-2" data-testid="button-banned-nav-wallet">
+              <Wallet className="h-4 w-4" />
+              Wallet
+            </Button>
+          </Link>
+          <Link href="/settings">
+            <Button variant="outline" size="sm" className="gap-2" data-testid="button-banned-nav-settings">
+              <ShieldAlert className="h-4 w-4" />
+              Settings
+            </Button>
+          </Link>
+          <Button variant="ghost" size="sm" className="gap-2" onClick={logout} data-testid="button-banned-mode-log-off">
+            <LogOut className="h-4 w-4" />
+            Log Off
+          </Button>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-5xl space-y-4 p-4 sm:p-6">
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <CardTitle className="text-base" data-testid="text-banned-mode-title">
+              Your account is banned
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              You can only open your wallet and settings. All other parts of Linxova are
+              unavailable while the ban is in place.
+            </p>
+            {bannedInfo?.reason && (
+              <div className="rounded-md bg-muted/50 p-3">
+                <p className="text-sm font-medium mb-1">Reason</p>
+                <p className="text-sm text-muted-foreground" data-testid="text-banned-mode-reason">
+                  {bannedInfo.reason}
+                </p>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              If you believe this was a mistake, please contact support at support@linxova.com.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Switch>
+          <Route path="/wallet" component={WalletPage} />
+          <Route path="/settings" component={SettingsPage} />
+          <Route>
+            <Redirect to="/wallet" />
+          </Route>
+        </Switch>
+      </main>
+    </div>
+  );
+}
+
 function AppContent() {
-  const { user, refetchUser, suspensionInfo, bannedInfo } = useAuth();
+  const { user, refetchUser, suspensionInfo, bannedInfo, bannedView } = useAuth();
   const { toast } = useToast();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -521,6 +608,10 @@ function AppContent() {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
   };
+
+  if (bannedInfo && bannedView) {
+    return <BannedView />;
+  }
 
   if (bannedInfo) {
     return <BannedScreen />;
