@@ -106,12 +106,131 @@ export async function applyContactRestrictions(storage: IStorage, userId: string
   return { cancelledFriendRequests };
 }
 
+// Jobs already finished, cancelled or never funded keep their money history.
+const CLOSED_CUSTOMER_JOB_STATUSES = new Set(["completed", "cancelled", "expired", "draft", "rejected"]);
+
+/**
+ * Ban only: a banned customer cannot run their jobs any more, so every open job
+ * they own is cancelled and its escrow is refunded into their wallet.
+ */
+export async function cancelCustomerJobsAndRefund(storage: IStorage, userId: string) {
+  const jobs = await storage.getJobs();
+  const cancelledJobs: string[] = [];
+  let refundedTotal = 0;
+
+  for (const job of jobs) {
+    if (job.customerId !== userId) continue;
+    if (CLOSED_CUSTOMER_JOB_STATUSES.has(job.status)) continue;
+
+    const escrow = await storage.getEscrowByJob(job.id);
+    let refundAmount = 0;
+    if (escrow && escrow.status === "held") {
+      refundAmount = parseFloat(escrow.totalAmount || "0");
+    } else if (!escrow || escrow.status === "refunded") {
+      refundAmount =
+        parseFloat(job.budget || "0") +
+        (job.isPremium ? parseFloat(job.premiumAmount || "0") : 0);
+    }
+
+    if (escrow && escrow.status === "held") {
+      await storage.updateEscrow(escrow.id, { status: "refunded" });
+    }
+
+    if (refundAmount > 0) {
+      const wallet = await storage.getWallet(userId);
+      if (wallet) {
+        await storage.updateWallet(userId, {
+          usdtBalance: (parseFloat(wallet.usdtBalance || "0") + refundAmount).toFixed(8),
+        });
+        await storage.createTransaction({
+          walletId: wallet.id,
+          type: "refund",
+          currency: "USDT",
+          amount: refundAmount.toFixed(8),
+          usdAmount: refundAmount.toFixed(2),
+          status: "completed",
+          transactionHash: `ban-refund-${job.id}-${Date.now()}`,
+        });
+      }
+      refundedTotal += refundAmount;
+    }
+
+    await storage.updateJob(job.id, { status: "cancelled" } as any);
+    cancelledJobs.push(job.id);
+
+    const assigned = await assignedFreelancerIds(storage, job);
+    for (const freelancerId of Array.from(assigned)) {
+      await storage.createNotification({
+        userId: freelancerId,
+        type: "system",
+        title: "Job cancelled",
+        message: `"${job.title}" has been cancelled by the customer's account and is no longer active.`,
+        relatedId: job.id,
+        sourceType: "job",
+        sourceId: job.id,
+      });
+    }
+  }
+
+  return { cancelledJobs, refundedTotal };
+}
+
+/**
+ * Ban only: the wallet balance is sent back out the way the account was paid.
+ * The platform pays out to the saved wallet address; without one the balance
+ * stays on the wallet for support to settle.
+ */
+export async function payoutWalletBalance(storage: IStorage, userId: string) {
+  const wallet = await storage.getWallet(userId);
+  const balance = parseFloat(wallet?.usdtBalance || "0");
+  if (!wallet || !(balance > 0)) return { paidOut: 0, destination: null as string | null };
+
+  const destination = wallet.walletAddress?.trim();
+  if (!destination) {
+    return { paidOut: 0, destination: null, remainingBalance: balance };
+  }
+
+  await storage.updateWallet(userId, { usdtBalance: "0.00000000" });
+  await storage.createTransaction({
+    walletId: wallet.id,
+    type: "withdrawal",
+    currency: "USDT",
+    amount: balance.toFixed(8),
+    usdAmount: balance.toFixed(2),
+    status: "completed",
+    transactionHash: `ban-payout-${Date.now()}`,
+  });
+
+  return { paidOut: balance, destination };
+}
+
 export async function applyAccountRestrictions(
   storage: IStorage,
   userId: string,
   action: "suspend" | "ban"
 ) {
   const work = await applyWorkRestrictions(storage, userId);
-  const contact = action === "ban" ? await applyContactRestrictions(storage, userId) : { cancelledFriendRequests: 0 };
-  return { ...work, ...contact };
+
+  if (action === "suspend") {
+    return {
+      ...work,
+      cancelledFriendRequests: 0,
+      cancelledJobs: [] as string[],
+      refundedTotal: 0,
+      paidOut: 0,
+      remainingBalance: 0,
+    };
+  }
+
+  const contact = await applyContactRestrictions(storage, userId);
+  const finances = await cancelCustomerJobsAndRefund(storage, userId);
+  const payout = await payoutWalletBalance(storage, userId);
+
+  return {
+    ...work,
+    ...contact,
+    ...finances,
+    paidOut: payout.paidOut,
+    remainingBalance: (payout as { remainingBalance?: number }).remainingBalance ?? 0,
+  };
 }

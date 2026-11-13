@@ -106,11 +106,19 @@ export function AccountStatusManager() {
         cancelledJobRequests?: number;
         removedFromJobs?: number;
         cancelledFriendRequests?: number;
+        cancelledCustomerJobs?: number;
+        refundedTotal?: number;
+        paidOut?: number;
+        remainingBalance?: number;
       } | undefined;
       const parts: string[] = [];
       if (data?.removedFromJobs) parts.push(`removed from ${data.removedFromJobs} job(s)`);
       if (data?.cancelledJobRequests) parts.push(`${data.cancelledJobRequests} job request(s) cancelled`);
       if (data?.cancelledFriendRequests) parts.push(`${data.cancelledFriendRequests} friend request(s) cancelled`);
+      if (data?.cancelledCustomerJobs) parts.push(`${data.cancelledCustomerJobs} owned job(s) cancelled`);
+      if (data?.refundedTotal) parts.push(`$${data.refundedTotal.toLocaleString()} escrow refunded`);
+      if (data?.paidOut) parts.push(`$${data.paidOut.toLocaleString()} paid out to their wallet address`);
+      if (data?.remainingBalance) parts.push(`$${data.remainingBalance.toLocaleString()} left on their wallet (no payout address)`);
 
       toast({
         title:

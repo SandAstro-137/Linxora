@@ -31,6 +31,7 @@ interface PublicProfile {
   username: string;
   avatar: string | null;
   role: string;
+  accountStatus?: string;
   level: number;
   rating: string;
   ratingCount: number;
@@ -283,6 +284,7 @@ export default function UserProfilePage() {
   };
 
   const isOwnProfile = currentUser?.id === profile?.id;
+  const isBanned = profile?.accountStatus === "banned";
 
   if (isLoading) {
     return (
@@ -317,6 +319,7 @@ export default function UserProfilePage() {
 
   const renderFriendButton = () => {
     if (isOwnProfile) return null;
+    if (isBanned && !profile.areFriends) return null;
     if (profile.areFriends) {
       return (
         <Button
@@ -395,8 +398,8 @@ export default function UserProfilePage() {
                 </AvatarFallback>
               </Avatar>
               <div 
-                className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-background ${getOnlineStatusColor(profile.status?.onlineStatus || "offline")}`}
-                title={profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
+                className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-background ${isBanned ? "bg-destructive" : getOnlineStatusColor(profile.status?.onlineStatus || "offline")}`}
+                title={isBanned ? "Banned" : profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
                 data-testid="indicator-online-status"
               />
             </div>
@@ -408,21 +411,28 @@ export default function UserProfilePage() {
                 <Badge variant={getRoleBadgeVariant(profile.role)} data-testid="badge-role">
                   {getRoleDisplay(profile.role)}
                 </Badge>
-                {profile.status?.workStatus && getWorkStatusBadge(profile.status.workStatus) && (
-                  <Badge 
-                    variant={getWorkStatusBadge(profile.status.workStatus)!.variant} 
-                    data-testid="badge-work-status"
-                  >
-                    {getWorkStatusBadge(profile.status.workStatus)!.text}
+                {isBanned ? (
+                  <Badge variant="secondary" data-testid="badge-work-status">
+                    Inactive
                   </Badge>
+                ) : (
+                  profile.status?.workStatus &&
+                  getWorkStatusBadge(profile.status.workStatus) && (
+                    <Badge
+                      variant={getWorkStatusBadge(profile.status.workStatus)!.variant}
+                      data-testid="badge-work-status"
+                    >
+                      {getWorkStatusBadge(profile.status.workStatus)!.text}
+                    </Badge>
+                  )
                 )}
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <span 
-                  className={`text-sm ${profile.status?.onlineStatus === "online" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}
+                <span
+                  className={`text-sm ${isBanned ? "text-destructive font-medium" : profile.status?.onlineStatus === "online" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}
                   data-testid="text-online-status"
                 >
-                  {profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
+                  {isBanned ? "Banned" : profile.status?.onlineStatus === "online" ? "Online" : "Offline"}
                 </span>
                 <span className="text-muted-foreground">|</span>
                 <CardDescription>
@@ -452,16 +462,18 @@ export default function UserProfilePage() {
         <CardContent className="space-y-4">
           {/* Action buttons */}
           <div className="flex flex-wrap gap-2">
-            <Link href={`/messages/${profile.id}`}>
-              <Button size="sm" data-testid="button-send-message">
-                <MessageSquare className="w-4 h-4 mr-2" />
-                Send Message
-              </Button>
-            </Link>
+            {!isBanned && (
+              <Link href={`/messages/${profile.id}`}>
+                <Button size="sm" data-testid="button-send-message">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Send Message
+                </Button>
+              </Link>
+            )}
 
             {!isOwnProfile && renderFriendButton()}
 
-            {!isOwnProfile && (
+            {!isOwnProfile && (!isBanned || profile.isFollowing) && (
               <Button
                 size="sm"
                 variant={profile.isFollowing ? "secondary" : "outline"}
@@ -483,7 +495,7 @@ export default function UserProfilePage() {
               </Button>
             )}
 
-            {currentUser?.role === "freelancer" && profile.role === "freelancer" && !isOwnProfile && (
+            {!isBanned && currentUser?.role === "freelancer" && profile.role === "freelancer" && !isOwnProfile && (
               <Dialog open={recommendDialogOpen} onOpenChange={setRecommendDialogOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm" variant="outline" data-testid="button-recommend">
@@ -556,7 +568,7 @@ export default function UserProfilePage() {
               </Dialog>
             )}
 
-            {!isOwnProfile && (
+            {!isOwnProfile && (!isBanned || profile.hasBlocked) && (
               <>
                 <Button
                   size="sm"
@@ -577,10 +589,12 @@ export default function UserProfilePage() {
                     </>
                   )}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setReportDialogOpen(true)} data-testid="button-report-user">
-                  <Flag className="w-4 h-4 mr-2" />
-                  Report
-                </Button>
+                {!isBanned && (
+                  <Button size="sm" variant="outline" onClick={() => setReportDialogOpen(true)} data-testid="button-report-user">
+                    <Flag className="w-4 h-4 mr-2" />
+                    Report
+                  </Button>
+                )}
               </>
             )}
           </div>

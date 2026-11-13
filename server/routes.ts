@@ -6238,6 +6238,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (followerId === followingId) return res.status(400).json({ error: "Cannot follow yourself" });
       const target = await storage.getUser(followingId);
       if (!target) return res.status(404).json({ error: "User not found" });
+      if (isBannedAccount(target)) {
+        return res.status(403).json({ error: "You can't follow an account that has been banned." });
+      }
       const follow = await storage.followUser(followerId, followingId);
       res.json(follow);
     } catch (error) {
@@ -6295,6 +6298,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (blockerId === blockedId) return res.status(400).json({ error: "Cannot block yourself" });
       const target = await storage.getUser(blockedId);
       if (!target) return res.status(404).json({ error: "User not found" });
+      if (isBannedAccount(target)) {
+        return res.status(403).json({ error: "You can't block an account that has been banned." });
+      }
       const block = await storage.blockUser(blockerId, blockedId);
       // Also unfollow each other when blocking
       await storage.unfollowUser(blockerId, blockedId);
@@ -8619,6 +8625,13 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         }
       }
 
+      if (validatedData.reportType === "user" && validatedData.targetId !== "platform") {
+        const reportedUser = await storage.getUser(validatedData.targetId);
+        if (isBannedAccount(reportedUser)) {
+          return res.status(403).json({ error: "This account has been banned and cannot be reported." });
+        }
+      }
+
       // Prevent duplicate: can't report same target with same type while one is pending
       const duplicateReport = pendingReports.find(
         r => r.targetId === validatedData.targetId && r.reportType === validatedData.reportType
@@ -9108,6 +9121,10 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           cancelledJobRequests: banPenalties.cancelledRequests,
           removedFromJobs: banPenalties.removedFromJobs.length,
           cancelledFriendRequests: banPenalties.cancelledFriendRequests,
+          cancelledCustomerJobs: banPenalties.cancelledJobs.length,
+          refundedTotal: banPenalties.refundedTotal,
+          paidOut: banPenalties.paidOut,
+          remainingBalance: banPenalties.remainingBalance,
         });
       } catch (error) {
         console.error("Account status update error:", error);
@@ -9877,8 +9894,12 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       const profilePrefs = await storage.getUserPreferences(user.id);
       const showOnline = profilePrefs?.showOnlineStatus !== false;
 
+      const isBanned = user.accountStatus === "banned";
+
       let status;
-      if (showOnline) {
+      if (isBanned) {
+        status = { onlineStatus: "offline", workStatus: "inactive", displayStatus: "Banned" };
+      } else if (showOnline) {
         status = await calculateUserStatus(user);
       } else {
         status = { onlineStatus: "offline", workStatus: null, displayStatus: "Offline" };
@@ -9925,6 +9946,7 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         username: user.username,
         avatar: user.avatar || null,
         role: user.role,
+        accountStatus: user.accountStatus || "active",
         level: user.level || 1,
         rating: safeRating > 0 ? safeRating.toFixed(1) : "N/A",
         ratingCount: user.totalRatings || 0,
@@ -10142,6 +10164,10 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       const recommendedFreelancer = await storage.getUser(recommendedFreelancerId);
       if (!recommendedFreelancer || recommendedFreelancer.role !== "freelancer") {
         return res.status(404).json({ error: "Freelancer not found" });
+      }
+
+      if (isBannedAccount(recommendedFreelancer)) {
+        return res.status(403).json({ error: "This account has been banned and cannot be recommended for jobs." });
       }
 
       // Can't recommend yourself
