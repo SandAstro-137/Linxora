@@ -619,13 +619,17 @@ export default function ModerationPage() {
   const pendingAbandonCount = abandonRequests.filter(r => r.status === "pending_moderator").length || 0;
   const pendingReportsCount = pendingReports?.length || 0;
 
-  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(null);
   const [reportReviewNotes, setReportReviewNotes] = useState("");
   const [reportReviewDialogOpen, setReportReviewDialogOpen] = useState(false);
   const [disciplinaryDialogOpen, setDisciplinaryDialogOpen] = useState(false);
   const [disciplinaryAction, setDisciplinaryAction] = useState<string>("");
   const [disciplinaryReason, setDisciplinaryReason] = useState("");
   const [disciplinaryDuration, setDisciplinaryDuration] = useState<string>("");
+  // Heads of Moderation and Founders can only be warned; the server refuses a
+  // suspension or ban against them outright.
+  const protectedTarget =
+    !!selectedReport && ["head_of_moderation", "founder"].includes(selectedReport.targetRole ?? "");
 
   const updateReportMutation = useMutation({
     mutationFn: ({ reportId, status, reviewNotes }: { reportId: string; status: string; reviewNotes?: string }) =>
@@ -2592,6 +2596,13 @@ export default function ModerationPage() {
               </div>
             )}
 
+            {protectedTarget && (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                This account is a Head of Moderation or Founder. It can be warned, but it cannot be
+                suspended or banned.
+              </p>
+            )}
+
             <div className="space-y-2">
               <Label>Action</Label>
               <Select value={disciplinaryAction} onValueChange={setDisciplinaryAction}>
@@ -2605,13 +2616,13 @@ export default function ModerationPage() {
                       Issue Warning
                     </span>
                   </SelectItem>
-                  <SelectItem value="suspend">
+                  <SelectItem value="suspend" disabled={protectedTarget}>
                     <span className="flex items-center gap-2">
                       <Lock className="w-4 h-4 text-orange-500" />
                       Suspend Account
                     </span>
                   </SelectItem>
-                  <SelectItem value="ban">
+                  <SelectItem value="ban" disabled={protectedTarget}>
                     <span className="flex items-center gap-2">
                       <Ban className="w-4 h-4 text-red-500" />
                       Ban Account
@@ -2688,7 +2699,9 @@ export default function ModerationPage() {
                 disciplinaryMutation.isPending ||
                 !disciplinaryAction ||
                 disciplinaryReason.trim().length < 5 ||
-                (disciplinaryAction === "suspend" && !disciplinaryDuration)
+                (disciplinaryAction === "suspend" && !disciplinaryDuration) ||
+                (protectedTarget &&
+                  (disciplinaryAction === "suspend" || disciplinaryAction === "ban"))
               }
               data-testid="button-confirm-disciplinary"
             >

@@ -13,7 +13,11 @@ import { resolveSessionUser } from "./lib/session-identity";
 import { DEMO_ACCOUNT_IDS, isDemoAccountId, isDemoModeEnabled } from "./lib/demo-mode";
 import { ensureDemoAccounts } from "./lib/demo-seed";
 import { getRemainingWalletBalance, hasSufficientWalletBalance, isFullWalletWithdrawal } from "./lib/wallet-amounts";
-import { applyAccountRestrictions, isBannedAccount } from "./lib/account-restrictions";
+import {
+  applyAccountRestrictions,
+  isBannedAccount,
+  isProtectedFromRestriction,
+} from "./lib/account-restrictions";
 import { shouldApplyTabIdentity } from "./lib/tab-auth";
 import { getCurrentFreelancerJobs } from "./lib/current-jobs";
 import { filterContent, sanitizeText, isSpamLike, reviewJobContent } from "./lib/content-filter";
@@ -8899,6 +8903,14 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         return res.status(401).json({ error: "Moderator not found." });
       }
 
+      // Leadership accounts cannot be locked out of their own platform, so a
+      // suspension or ban against them is refused outright.
+      if (["suspend", "ban"].includes(action) && isProtectedFromRestriction(targetUser.role)) {
+        return res.status(403).json({
+          error: "Heads of Moderation and Founders cannot be suspended or banned.",
+        });
+      }
+
       // Prevent moderators from taking action against equal or higher roles
       const roleHierarchy: Record<string, number> = { 
         freelancer: 1, customer: 1, moderator: 2, head_of_moderation: 3, founder: 4 
@@ -9092,6 +9104,14 @@ Your role is to help users understand how to use Linxova. Here is what you know 
         const actingUser = await storage.getUser(req.session.userId!);
         if (!actingUser) {
           return res.status(401).json({ error: "Not authenticated" });
+        }
+
+        // Restoring stays available so a restricted leadership account can be
+        // fixed, but no new suspension or ban can land on one.
+        if (action !== "restore" && isProtectedFromRestriction(targetUser.role)) {
+          return res.status(403).json({
+            error: "Heads of Moderation and Founders cannot be suspended or banned.",
+          });
         }
         if ((accountRank[targetUser.role] ?? 0) >= (accountRank[actingUser.role] ?? 0)) {
           return res.status(403).json({

@@ -15,6 +15,17 @@ export function isBannedAccount(user: { accountStatus?: string | null } | null |
   return user?.accountStatus === "banned";
 }
 
+/**
+ * The people who run moderation are never suspended or banned, by anyone -
+ * including each other. Removing one of them means changing their role (or
+ * deleting the account), never locking them out of it.
+ */
+export const PROTECTED_ROLES = new Set(["head_of_moderation", "founder"]);
+
+export function isProtectedFromRestriction(role?: string | null) {
+  return !!role && PROTECTED_ROLES.has(role);
+}
+
 async function assignedFreelancerIds(storage: IStorage, job: any): Promise<Set<string>> {
   const ids = new Set<string>();
   if (job.freelancerId) ids.add(job.freelancerId);

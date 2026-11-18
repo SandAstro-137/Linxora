@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,18 @@ interface ManagedUser {
   suspendedReason: string | null;
 }
 
+// Mirrors the server rule: leadership is never suspended or banned, and nobody
+// can restrict an account at or above their own role (so moderators cannot
+// suspend or ban each other).
+const protectedRoles = new Set(["head_of_moderation", "founder"]);
+const roleRank: Record<string, number> = {
+  customer: 0,
+  freelancer: 1,
+  moderator: 2,
+  head_of_moderation: 3,
+  founder: 4,
+};
+
 const roleLabels: Record<string, string> = {
   customer: "Customer",
   freelancer: "Freelancer",
@@ -62,6 +75,7 @@ function statusLabel(user: ManagedUser) {
 
 export function AccountStatusManager() {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [suspendTarget, setSuspendTarget] = useState<ManagedUser | null>(null);
@@ -189,6 +203,9 @@ export function AccountStatusManager() {
 
           {results.map((user) => {
             const restricted = statusLabel(user) !== "Active";
+            const canRestrict =
+              !protectedRoles.has(user.role) &&
+              (roleRank[user.role] ?? 0) < (roleRank[currentUser?.role ?? ""] ?? -1);
             return (
               <div
                 key={user.id}
@@ -234,31 +251,44 @@ export function AccountStatusManager() {
                       Lift restriction
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSuspendTarget(user);
-                      setReason("");
-                      setDuration("7");
-                    }}
-                    data-testid={`button-suspend-${user.userId}`}
-                  >
-                    Suspend
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    className="gap-1"
-                    onClick={() => {
-                      setBanTarget(user);
-                      setReason("");
-                    }}
-                    data-testid={`button-ban-${user.userId}`}
-                  >
-                    <Ban className="w-4 h-4" />
-                    Ban
-                  </Button>
+                  {canRestrict ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSuspendTarget(user);
+                          setReason("");
+                          setDuration("7");
+                        }}
+                        data-testid={`button-suspend-${user.userId}`}
+                      >
+                        Suspend
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="gap-1"
+                        onClick={() => {
+                          setBanTarget(user);
+                          setReason("");
+                        }}
+                        data-testid={`button-ban-${user.userId}`}
+                      >
+                        <Ban className="w-4 h-4" />
+                        Ban
+                      </Button>
+                    </>
+                  ) : (
+                    <p
+                      className="self-center text-xs text-muted-foreground"
+                      data-testid={`text-status-locked-${user.userId}`}
+                    >
+                      {protectedRoles.has(user.role)
+                        ? "Heads of Moderation and Founders cannot be suspended or banned."
+                        : "You can only suspend or ban accounts below your own role."}
+                    </p>
+                  )}
                 </div>
               </div>
             );
