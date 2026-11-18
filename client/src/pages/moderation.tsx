@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Check, X, AlertCircle, FileText, ExternalLink, Flag, MessageSquare, User, Briefcase, Calendar, Gavel, Users, Star, Lock, CheckCircle, XCircle, AlertTriangle, Ban, Forward, ShieldAlert, Bug, Search, History, DollarSign, Wallet, ChevronDown, LogOut } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,6 +38,12 @@ interface EnrichedAbandonRequest extends AbandonRequest {
   jobTitle?: string;
   jobBudget?: string;
   freelancerUsername?: string;
+}
+
+// Pending reports carry the target's role so reports against moderators can be
+// flagged as leadership-only (the server enforces the same rule).
+interface ModerationReport extends Report {
+  targetRole?: string | null;
 }
 
 interface EnrichedPTORequest extends PTORequest {
@@ -186,7 +192,7 @@ export default function ModerationPage() {
     refetchInterval: 10000, // Keep the abandon queue current without a manual refresh
   });
 
-  const { data: pendingReports, isLoading: reportsLoading } = useQuery<Report[]>({
+  const { data: pendingReports, isLoading: reportsLoading } = useQuery<ModerationReport[]>({
     queryKey: ["/api/reports/pending"],
     refetchInterval: 10000, // New reports appear in the queue without a refresh
   });
@@ -210,6 +216,9 @@ export default function ModerationPage() {
   });
 
   const isLeadership = currentUser?.role === "founder" || currentUser?.role === "head_of_moderation";
+  // A moderator must never resolve a report about themselves or another moderator.
+  const canResolveReport = (report: ModerationReport) =>
+    isLeadership || !["moderator", "head_of_moderation", "founder"].includes(report.targetRole || "");
   const { data: forwardedBugs = [], isLoading: forwardedBugsLoading } = useQuery<Report[]>({
     queryKey: ["/api/reports/forwarded-bugs"],
     enabled: isLeadership,
@@ -631,10 +640,10 @@ export default function ModerationPage() {
         description: "The report status has been updated.",
       });
     },
-    onError: () => {
+    onError: (error: unknown) => {
       toast({
         title: "Failed to update report",
-        description: "Please try again later.",
+        description: getApiErrorMessage(error, "Please try again later."),
         variant: "destructive",
       });
     },
@@ -1314,6 +1323,13 @@ export default function ModerationPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
+                      <h4 className="font-semibold mb-2">Report ID</h4>
+                      <p className="text-sm text-muted-foreground font-mono break-all" data-testid={`text-report-id-${report.id}`}>
+                        {report.id}
+                      </p>
+                    </div>
+
+                    <div>
                       <h4 className="font-semibold mb-2">Reason</h4>
                       <p className="text-sm text-muted-foreground">{report.reason}</p>
                     </div>
@@ -1362,6 +1378,13 @@ export default function ModerationPage() {
                       )}
                     </div>
 
+                    {!canResolveReport(report) && (
+                      <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                        This report is about a moderator. Only the Head of Moderation or the Founder
+                        can resolve it.
+                      </p>
+                    )}
+                    {canResolveReport(report) && (
                     <div className="flex gap-2 pt-4 border-t flex-wrap">
                       {report.reportType === "user" && (
                         <Button
@@ -1439,6 +1462,7 @@ export default function ModerationPage() {
                         Dismiss
                       </Button>
                     </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}

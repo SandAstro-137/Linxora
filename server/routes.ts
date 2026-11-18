@@ -8744,7 +8744,16 @@ Your role is to help users understand how to use Linxova. Here is what you know 
   app.get("/api/reports/pending", requireRole("moderator", "head_of_moderation", "founder", "staff"), async (req, res) => {
     try {
       const reports = await storage.getPendingReports();
-      res.json(reports);
+      // Attach the target's role so the queue can flag reports against moderators
+      // as leadership-only. The PATCH handler enforces the same rule.
+      const enriched = await Promise.all(
+        reports.map(async (report) => {
+          if (report.reportType !== "user") return { ...report, targetRole: null };
+          const target = await storage.getUser(report.targetId);
+          return { ...report, targetRole: target?.role ?? null };
+        })
+      );
+      res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -8792,6 +8801,19 @@ Your role is to help users understand how to use Linxova. Here is what you know 
       const report = await storage.getReport(id);
       if (!report) {
         return res.status(404).json({ error: "Report not found" });
+      }
+
+      // Reports against moderators (or higher) are leadership-only: a moderator must
+      // never resolve or dismiss a report about themselves or a peer.
+      const reportTarget = report.reportType === "user" ? await storage.getUser(report.targetId) : undefined;
+      const targetIsModerator = !!reportTarget && ["moderator", "head_of_moderation", "founder"].includes(reportTarget.role);
+      if (targetIsModerator) {
+        const reviewer = await storage.getUser(req.session.userId!);
+        if (!reviewer || !["head_of_moderation", "founder"].includes(reviewer.role)) {
+          return res.status(403).json({
+            error: "Reports against a moderator can only be resolved by the Head of Moderation or the Founder.",
+          });
+        }
       }
 
       const sanitizedNotes = reviewNotes ? sanitizeText(reviewNotes) : null;

@@ -1339,16 +1339,19 @@ export default function JobDetailPage() {
   });
 
   const abandonRequestMutation = useMutation({
-    mutationFn: async ({ reason, proofUrl, requestExemption }: { reason: string; proofUrl?: string; requestExemption: boolean }) => {
+    // The file arrives as an argument rather than being read from state: closing the
+    // dialog clears the state, and a send must not lose its proof when that happens.
+    mutationFn: async ({ reason, proofFile, requestExemption }: { reason: string; proofFile?: File | null; requestExemption: boolean }) => {
       let uploadedUrl: string | null = null;
-      if (abandonProofFile) {
+      if (proofFile) {
         const reader = new FileReader();
-        const fileData = await new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(abandonProofFile);
+        const fileData = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => resolve((reader.result as string) || "");
+          reader.onerror = () => reject(new Error("Could not read the selected file. Try a different file."));
+          reader.readAsDataURL(proofFile);
         });
         const uploadRes = await apiRequest("POST", "/api/uploads", {
-          fileName: abandonProofFile.name,
+          fileName: proofFile.name,
           fileData,
         });
         const uploadBody = (await uploadRes.json()) as { url: string };
@@ -1356,7 +1359,7 @@ export default function JobDetailPage() {
       }
       return apiRequest("POST", `/api/jobs/${jobId}/abandon-request`, {
         reason,
-        proofUrl: uploadedUrl || proofUrl || undefined,
+        proofUrl: uploadedUrl || undefined,
         requestExemption,
       });
     },
@@ -1624,6 +1627,7 @@ export default function JobDetailPage() {
   const handleSendAbandonRequest = () => {
     abandonRequestMutation.mutate({
       reason: abandonReason.trim(),
+      proofFile: abandonProofFile,
       requestExemption: abandonRequestExemption,
     });
   };
@@ -2790,6 +2794,9 @@ export default function JobDetailPage() {
               <Dialog
                 open={abandonReasonOpen}
                 onOpenChange={(open) => {
+                  // An outside click must not close the dialog and wipe the typed reason
+                  // and attached proof while the request is still being sent.
+                  if (!open && abandonRequestMutation.isPending) return;
                   setAbandonReasonOpen(open);
                   if (!open) {
                     setAbandonReason("");
@@ -2818,6 +2825,11 @@ export default function JobDetailPage() {
                         onChange={(e) => setAbandonReason(e.target.value)}
                         data-testid="textarea-leave-reason"
                       />
+                      {abandonReason.trim().length < 10 && (
+                        <p className="text-xs text-muted-foreground">
+                          At least 10 characters ({abandonReason.trim().length}/10).
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="abandon-proof">Proof (Optional)</Label>
@@ -2850,6 +2862,7 @@ export default function JobDetailPage() {
                   </div>
                   <DialogFooter>
                     <Button
+                      type="button"
                       variant="outline"
                       onClick={() => setAbandonReasonOpen(false)}
                       data-testid="button-cancel-abandon-request"
@@ -2857,6 +2870,7 @@ export default function JobDetailPage() {
                       Cancel
                     </Button>
                     <Button
+                      type="button"
                       onClick={handleSendAbandonRequest}
                       disabled={abandonRequestMutation.isPending || abandonReason.trim().length < 10}
                       data-testid="button-send-abandon-request"

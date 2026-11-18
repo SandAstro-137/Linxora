@@ -143,7 +143,7 @@ const freelancerSteps: OnboardingStep[] = [
           <li>Click "Offer Team" to request to join</li>
           <li>Or invite friends to jobs you're working on</li>
           <li>Profit is split among team members, and each member's share depends on their level payout</li>
-          <li>Collaborate in the Current Job tab on job details</li>
+          <li>Collaborate in the Current Job tab</li>
         </ul>
       </div>
     ),
@@ -156,9 +156,11 @@ const freelancerSteps: OnboardingStep[] = [
         <p>Set up your profile:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>Go to Profile to set your working hours</li>
-          <li>Your level (1–8) determines your rate for each job: Level 1 = 85%, Level 2 = 87%, Level 3 = 89%, Level 4 = 90%, Level 5 = 92%, Level 6 = 94%, Level 7 = 95%, Level 8 = 97%</li>
-          <li>Levels 2–8 unlock at cumulative lifetime earnings of $50, $200, $750, $2,000, $5,000, $10,000, and $18,000 respectively; Level 1 starts at $0</li>
-          <li>The rate is your share of the job budget; your level updates as eligible earnings are recorded</li>
+          <li>Your level sets your share of each job budget, and it updates automatically as eligible earnings are recorded</li>
+          <li>
+            For the full leveling chart, click the <strong>?</strong> (the question mark in a
+            circle) in the upper-right corner and open the last slide of the guide
+          </li>
         </ul>
       </div>
     ),
