@@ -40,6 +40,7 @@ export function AppSidebar() {
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!user,
+    staleTime: 0,
     refetchInterval: 5000, // Poll every 5 seconds
   });
 
@@ -49,6 +50,7 @@ export function AppSidebar() {
   const { data: notifList = [] } = useQuery<Notification[]>({
     queryKey: ["/api/notifications"],
     enabled: !!user,
+    staleTime: 0,
     refetchInterval: 5000,
   });
   const { data: prefs } = useQuery<UserPreferences>({
@@ -58,21 +60,28 @@ export function AppSidebar() {
 
   // Counts behind the per-section badges. They poll alongside the notification
   // badge so every "you have something new" marker appears together.
+  // staleTime has to be 0 here: the app's default is Infinity, and a badge that
+  // only re-reads on mount is exactly the "nothing new" bug this replaces.
+  const POLL = { staleTime: 0, retry: 1, refetchInterval: 5000 };
   const { data: dmConversations = [] } = useQuery<{ unreadCount?: number }[]>({
     queryKey: ["/api/messages/conversations"],
     enabled: !!user,
-    refetchInterval: 5000,
+    ...POLL,
   });
   const { data: incomingFriendRequests = [] } = useQuery<unknown[]>({
     queryKey: ["/api/friend-requests"],
     enabled: !!user,
-    refetchInterval: 5000,
+    ...POLL,
   });
   const { data: pendingJobInvitations = [] } = useQuery<unknown[]>({
     queryKey: ["/api/invitations/pending"],
     enabled: user?.role === "freelancer",
-    retry: false,
-    refetchInterval: 5000,
+    ...POLL,
+  });
+  const { data: customerRecommendations = [] } = useQuery<unknown[]>({
+    queryKey: ["/api/recommendations/customer"],
+    enabled: user?.role === "customer",
+    ...POLL,
   });
   const SPAM_TYPES = ["direct_message_unknown"];
   const spamFilterOn = prefs?.spamFilterEnabled ?? false;
@@ -97,21 +106,40 @@ export function AppSidebar() {
   const displaySidebarUnreadCount = notificationsOff ? (badgeBaselineRef.current ?? 0) : unreadCount;
 
   const unreadMessageCount = dmConversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
-  const friendRequestCount = Array.isArray(incomingFriendRequests) ? incomingFriendRequests.length : 0;
-  const jobInvitationCount = Array.isArray(pendingJobInvitations) ? pendingJobInvitations.length : 0;
+
+  // A section badge has two possible sources: the record the tab will show
+  // (a pending friend request, a pending invitation) and the unread
+  // notification that announced it. Either one alone can be missing - a
+  // recommendation has no record count for a freelancer, a cleared record
+  // leaves its notification behind - so take whichever is higher.
+  const unreadNotifications = (predicate: (n: Notification) => boolean) =>
+    notifList.filter((n) => !n.read && predicate(n)).length;
+  const friendsBadge = Math.max(
+    Array.isArray(incomingFriendRequests) ? incomingFriendRequests.length : 0,
+    unreadNotifications((n) => n.type === "friend_request")
+  );
+  const jobInvitationsBadge = Math.max(
+    Array.isArray(pendingJobInvitations) ? pendingJobInvitations.length : 0,
+    // Accepted/declined invitations reuse the same type, so only the incoming
+    // "Team invitation" notice counts here.
+    unreadNotifications((n) => n.type === "invitation" && n.title === "Team invitation")
+  );
+  const recommendationsBadge = Math.max(
+    Array.isArray(customerRecommendations) ? customerRecommendations.length : 0,
+    unreadNotifications((n) => n.type === "job_recommendation")
+  );
   // Money arriving (a transfer or a paid money request) is what the wallet has
   // to announce; it clears as soon as the notification is read.
-  const WALLET_NOTIFICATION_TYPES = ["money_received"];
-  const walletNotificationCount = notifList.filter(
-    (n) => !n.read && WALLET_NOTIFICATION_TYPES.includes(n.type)
-  ).length;
+  const walletBadge = unreadNotifications((n) => n.type === "money_received");
+
   // Keyed by route rather than label so every role's wording ("My Wallet" vs
   // "Mod Wallet") picks up the same badge.
   const sectionBadgeCounts: Record<string, number> = {
     "/messages": unreadMessageCount,
-    "/friends": friendRequestCount,
-    "/job-invitations": jobInvitationCount,
-    "/wallet": walletNotificationCount,
+    "/friends": friendsBadge,
+    "/job-invitations": jobInvitationsBadge,
+    "/incoming-recommendations": recommendationsBadge,
+    "/wallet": walletBadge,
   };
 
   const freelancerItems = [
