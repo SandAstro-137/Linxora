@@ -9202,8 +9202,6 @@ Your role is to help users understand how to use Linxova. Here is what you know 
           cancelledFriendRequests: banPenalties.cancelledFriendRequests,
           cancelledCustomerJobs: banPenalties.cancelledJobs.length,
           refundedTotal: banPenalties.refundedTotal,
-          paidOut: banPenalties.paidOut,
-          remainingBalance: banPenalties.remainingBalance,
         });
       } catch (error) {
         console.error("Account status update error:", error);

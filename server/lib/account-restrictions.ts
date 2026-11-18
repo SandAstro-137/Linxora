@@ -148,21 +148,26 @@ export async function cancelCustomerJobsAndRefund(storage: IStorage, userId: str
     }
 
     if (refundAmount > 0) {
-      const wallet = await storage.getWallet(userId);
-      if (wallet) {
-        await storage.updateWallet(userId, {
-          usdtBalance: (parseFloat(wallet.usdtBalance || "0") + refundAmount).toFixed(8),
-        });
-        await storage.createTransaction({
-          walletId: wallet.id,
-          type: "refund",
-          currency: "USDT",
-          amount: refundAmount.toFixed(8),
-          usdAmount: refundAmount.toFixed(2),
-          status: "completed",
-          transactionHash: `ban-refund-${job.id}-${Date.now()}`,
-        });
+      // A missing wallet must never swallow the refund, or the wallet history
+      // and the balance disagree: create it so the money and the log entry
+      // always land together.
+      let wallet = await storage.getWallet(userId);
+      if (!wallet) {
+        wallet = await storage.createWallet({ userId });
       }
+
+      await storage.updateWallet(userId, {
+        usdtBalance: (parseFloat(wallet.usdtBalance || "0") + refundAmount).toFixed(8),
+      });
+      await storage.createTransaction({
+        walletId: wallet.id,
+        type: "refund",
+        currency: "USDT",
+        amount: refundAmount.toFixed(8),
+        usdAmount: refundAmount.toFixed(2),
+        status: "completed",
+        transactionHash: `ban-refund-${job.id}-${Date.now()}`,
+      });
       refundedTotal += refundAmount;
     }
 
@@ -186,35 +191,6 @@ export async function cancelCustomerJobsAndRefund(storage: IStorage, userId: str
   return { cancelledJobs, refundedTotal };
 }
 
-/**
- * Ban only: the wallet balance is sent back out the way the account was paid.
- * The platform pays out to the saved wallet address; without one the balance
- * stays on the wallet for support to settle.
- */
-export async function payoutWalletBalance(storage: IStorage, userId: string) {
-  const wallet = await storage.getWallet(userId);
-  const balance = parseFloat(wallet?.usdtBalance || "0");
-  if (!wallet || !(balance > 0)) return { paidOut: 0, destination: null as string | null };
-
-  const destination = wallet.walletAddress?.trim();
-  if (!destination) {
-    return { paidOut: 0, destination: null, remainingBalance: balance };
-  }
-
-  await storage.updateWallet(userId, { usdtBalance: "0.00000000" });
-  await storage.createTransaction({
-    walletId: wallet.id,
-    type: "withdrawal",
-    currency: "USDT",
-    amount: balance.toFixed(8),
-    usdAmount: balance.toFixed(2),
-    status: "completed",
-    transactionHash: `ban-payout-${Date.now()}`,
-  });
-
-  return { paidOut: balance, destination };
-}
-
 export async function applyAccountRestrictions(
   storage: IStorage,
   userId: string,
@@ -234,14 +210,14 @@ export async function applyAccountRestrictions(
   }
 
   const contact = await applyContactRestrictions(storage, userId);
+  // Refunded escrow stays on the wallet: the account is blocked, not closed,
+  // so the money must still be there if the ban is lifted or support settles
+  // it. Nothing is sent to a wallet address automatically.
   const finances = await cancelCustomerJobsAndRefund(storage, userId);
-  const payout = await payoutWalletBalance(storage, userId);
 
   return {
     ...work,
     ...contact,
     ...finances,
-    paidOut: payout.paidOut,
-    remainingBalance: (payout as { remainingBalance?: number }).remainingBalance ?? 0,
   };
 }
