@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Bell, Users, Briefcase, CheckCheck, ShieldAlert } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth-context";
 import type { UserPreferences } from "@shared/schema";
 
 interface Notification {
@@ -25,9 +26,11 @@ interface Notification {
 }
 
 const SPAM_TYPES = ["direct_message_unknown"];
+const JOB_INVITE_TYPES = ["invitation", "job_invitation", "job_recommendation"];
 
 export default function NotificationsPage() {
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
   
   const { data: notifications } = useQuery<Notification[]>({
     queryKey: ["/api/notifications/log"],
@@ -92,6 +95,14 @@ export default function NotificationsPage() {
       markAsReadMutation.mutate(notification.id);
     }
     
+    // A job invitation belongs in the inbox that can accept or decline it, not
+    // on the job page it points at: freelancers answer invitations, customers
+    // review recommendations.
+    if (JOB_INVITE_TYPES.includes(notification.type)) {
+      setLocation(user?.role === "customer" ? "/incoming-recommendations" : "/job-invitations");
+      return;
+    }
+
     if (notification.redirectUrl) {
       setLocation(notification.redirectUrl);
       return;
@@ -102,7 +113,6 @@ export default function NotificationsPage() {
     const sourceId = notification.sourceId;
     
     switch (notificationType) {
-      case "invitation":
       case "recommendation_accepted":
         setLocation("/job-invitations");
         return;

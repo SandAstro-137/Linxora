@@ -99,10 +99,19 @@ export function AppSidebar() {
   const unreadMessageCount = dmConversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
   const friendRequestCount = Array.isArray(incomingFriendRequests) ? incomingFriendRequests.length : 0;
   const jobInvitationCount = Array.isArray(pendingJobInvitations) ? pendingJobInvitations.length : 0;
+  // Money arriving (a transfer or a paid money request) is what the wallet has
+  // to announce; it clears as soon as the notification is read.
+  const WALLET_NOTIFICATION_TYPES = ["money_received"];
+  const walletNotificationCount = notifList.filter(
+    (n) => !n.read && WALLET_NOTIFICATION_TYPES.includes(n.type)
+  ).length;
+  // Keyed by route rather than label so every role's wording ("My Wallet" vs
+  // "Mod Wallet") picks up the same badge.
   const sectionBadgeCounts: Record<string, number> = {
-    Messages: unreadMessageCount,
-    Friends: friendRequestCount,
-    "Job Invitations": jobInvitationCount,
+    "/messages": unreadMessageCount,
+    "/friends": friendRequestCount,
+    "/job-invitations": jobInvitationCount,
+    "/wallet": walletNotificationCount,
   };
 
   const freelancerItems = [
@@ -249,14 +258,14 @@ export function AppSidebar() {
                           {displaySidebarUnreadCount > 99 ? "99+" : displaySidebarUnreadCount}
                         </span>
                       )}
-                      {item.title !== "Notifications" && (sectionBadgeCounts[item.title] ?? 0) > 0 && (
+                      {item.title !== "Notifications" && (sectionBadgeCounts[item.url] ?? 0) > 0 && (
                         <span
                           className={`ml-auto flex h-[18px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold leading-none tabular-nums ${
-                            (sectionBadgeCounts[item.title] ?? 0) > 99 ? "min-w-[26px] px-1" : "w-[18px]"
+                            (sectionBadgeCounts[item.url] ?? 0) > 99 ? "min-w-[26px] px-1" : "w-[18px]"
                           }`}
                           data-testid={`badge-${item.url.slice(1)}-count`}
                         >
-                          {(sectionBadgeCounts[item.title] ?? 0) > 99 ? "99+" : sectionBadgeCounts[item.title]}
+                          {(sectionBadgeCounts[item.url] ?? 0) > 99 ? "99+" : sectionBadgeCounts[item.url]}
                         </span>
                       )}
                     </Link>

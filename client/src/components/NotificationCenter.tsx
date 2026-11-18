@@ -29,6 +29,9 @@ import type { Notification, UserPreferences } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
 const SPAM_TYPES = ["direct_message_unknown"];
+// Invitations are answered in the invitations/recommendations inbox, never on
+// the job they refer to.
+const JOB_INVITE_TYPES = ["invitation", "job_invitation", "job_recommendation"];
 
 function isSpamNotification(n: Notification, spamFilterEnabled: boolean): boolean {
   return spamFilterEnabled && SPAM_TYPES.includes(n.type);
@@ -199,6 +202,14 @@ export function NotificationCenter() {
     }
     
     setOpen(false);
+
+    // A job invitation belongs in the inbox that can accept or decline it, not
+    // on the job page it points at: freelancers answer invitations, customers
+    // review recommendations.
+    if (JOB_INVITE_TYPES.includes(notification.type)) {
+      setLocation(user?.role === "customer" ? "/incoming-recommendations" : "/job-invitations");
+      return;
+    }
     
     if (notification.redirectUrl) {
       setLocation(notification.redirectUrl);
@@ -220,17 +231,8 @@ export function NotificationCenter() {
     }
     
     switch (notificationType) {
-      case "invitation":
       case "recommendation_accepted":
-      case "job_invitation":
         setLocation("/job-invitations");
-        return;
-      case "job_recommendation":
-        if (user?.role === "customer" && sourceId) {
-          setLocation(`/jobs/${sourceId}`);
-        } else {
-          setLocation("/incoming-recommendations");
-        }
         return;
       case "recommendation_declined":
       case "recommendation_success":
